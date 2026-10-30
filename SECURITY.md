@@ -1,4 +1,4 @@
-# Security Policy
+# Security policy
 
 ## Supported versions
 
@@ -21,12 +21,11 @@ The maintainer acknowledges a report within 7 days and shares an assessment with
 
 - **Backups** copy every edited or deleted file and database into `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/`, which is created with mode 0700. The backups outlive the run and hold the same content as the stores.
 - **Bundles** written by `export` hold the files and database rows recorded for one project path, including transcripts. Selection follows the project path, so the assistants' credential files and tables, such as `auth.json` and `.credentials.json`, stay out of a bundle. An export is still a copy of that state, so transfer it over a channel you trust and delete it on both hosts when the import is done.
-- **Dry runs** only read state. Every write happens under `--apply`, which backs up first.
 
 A bug in the selection or rewrite logic can delete state or leave a session pointing at a dead path, but the tool holds no credentials, opens no network connections, and runs no commands from the assistant stores.
 
 ## Trust model
 
-The command runs with the permissions of the user who starts it and edits that user's assistant stores in place. It trusts the store formats of the assistants it supports, listed in the [README](README.md#tested-with). It aborts when a target database lacks a column a bundle carries, or requires a not-null column the bundle does not fill. Planning opens every database read-only, and each SQL action runs in its own transaction with `sqlite3 -bail`, one per path column on a move and one per database on an import.
+The command runs with the permissions of the user who starts it and edits that user's assistant stores in place. It trusts the store formats of the assistants it supports, listed in the [README](README.md#tested-with).
 
-Running sessions keep appending to transcripts and rewriting shared documents such as `~/.claude.json`. Close sessions working in the affected paths before applying, since the tool does not take an assistant's internal lock.
+The [safety model](README.md#safety-model) covers concurrent sessions and recovery after a failed apply.

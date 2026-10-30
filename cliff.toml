@@ -55,9 +55,11 @@ commit_preprocessors = [
   { pattern = '\(#([0-9]+)\)', replace = '([#$1](https://github.com/hakula139/agent-project-move/pull/$1))' },
 ]
 
-# `<!-- N -->` prefixes, which the body template strips, order the sections.
+# `<!-- N -->` prefixes, which the body template strips, order the sections. The first match wins,
+# so the catch-all `!:` parser precedes the type prefixes. `filter_commits` drops the other types.
 commit_parsers = [
   { message = '^[a-z]+(\([^)]+\))?!:', group = "<!-- 0 -->Breaking changes" },
+
   { message = "^feat", group = "<!-- 1 -->Added" },
   { message = "^fix", group = "<!-- 2 -->Fixed" },
   { message = "^perf", group = "<!-- 3 -->Changed" },

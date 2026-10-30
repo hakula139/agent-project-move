@@ -40,12 +40,6 @@ export def suggested-move [
 ]: nothing -> string {
   if not (valid-path $path) { return "" }
 
-  let claude = ($path | parse --regex '^(?P<repo>.+)/\.claude/worktrees/[^/]+(?:/.*)?$')
-  if ($claude | is-not-empty) {
-    let repo = ($claude | get 0.repo)
-    if ($repo in $repo_roots) and (repo-target $repo $home $temp_roots) { return $repo }
-  }
-
   let sibling = ($path | parse --regex '^(?P<repo>.+?)__worktrees/[^/]+(?:/.*)?$')
   if ($sibling | is-not-empty) {
     let repo = ($sibling | get 0.repo)
@@ -56,7 +50,7 @@ export def suggested-move [
     }
   }
 
-  if ($home != "") and ($path | str starts-with ($home + "/.codex/worktrees/")) {
+  if ($path | str starts-with ($home + "/.codex/worktrees/")) {
     let parts = ($path | str replace ($home + "/.codex/worktrees/") "" | split row "/")
     if ($parts | length) >= 2 {
       let name = ($parts | get 1)
@@ -121,7 +115,6 @@ export def scan-suggestions [
   $paths
   | where {|path| path-missing $path }
   | each {|path|
-    let suggested = if $home == "" { "" } else { suggested-move $path $roots $home $temp_roots }
-    {path: $path, suggested: $suggested}
+    {path: $path, suggested: (suggested-move $path $roots $home $temp_roots)}
   }
 }

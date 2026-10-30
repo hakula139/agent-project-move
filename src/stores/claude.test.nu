@@ -20,3 +20,30 @@ def "test Claude encodes project directory names" [] {
     assert equal (encode-path $expected.path) $expected.encoded $name
   }
 }
+
+def "test a config move rewrites github repository paths" [] {
+  let config = {
+    projects: {"/work/app": {hasTrustDialogAccepted: true}, "/work/other": {}}
+    githubRepoPaths: {"me/app": ["/work/app" "/work/app/sub"], "me/other": ["/work/other"]}
+  }
+
+  let moved = (move-config $config "/work/app" "/work/new")
+
+  assert equal ($moved.projects | columns | sort) ["/work/new" "/work/other"]
+  assert equal $moved.githubRepoPaths {
+    "me/app": ["/work/new" "/work/new/sub"]
+    "me/other": ["/work/other"]
+  }
+}
+
+def "test a config prune drops missing projects and emptied repos" [] {
+  let config = {
+    projects: {"/work/gone": {}, "/work/live": {}}
+    githubRepoPaths: {"me/gone": ["/work/gone"], "me/live": ["/work/live"]}
+  }
+
+  let pruned = (prune-config $config ["/work/gone"])
+
+  assert equal ($pruned.projects | columns) ["/work/live"]
+  assert equal $pruned.githubRepoPaths {"me/live": ["/work/live"]}
+}

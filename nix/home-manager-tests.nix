@@ -16,7 +16,8 @@ let
     touch $out/share/skills/agent-project-move/SKILL.md
   '';
 
-  home =
+  evalHome =
+    module:
     (home-manager.lib.homeManagerConfiguration {
       inherit pkgs;
       modules = [
@@ -31,29 +32,40 @@ let
           programs.agent-project-move = {
             enable = true;
             package = stub;
-            skillDirectories = [ ".claude/skills" ];
           };
         }
+        module
       ];
     }).config;
+
+  home = evalHome { };
+  emptySkills = evalHome {
+    programs.agent-project-move.skillDirectories = [ ];
+    programs.claude-code.enable = true;
+  };
 
   failures = lib.runTests {
     testEnabledInstallsThePackageAndLinksTheSkill = {
       expr = {
         installsPackage = builtins.elem stub home.home.packages;
-        skill = home.programs.agent-project-move.skill;
-        link = home.home.file.".claude/skills/agent-project-move".source;
+        claudeLink = home.home.file.".claude/skills/agent-project-move".source;
+        codexLink = home.home.file.".codex/skills/agent-project-move".source;
       };
 
       expected = {
         installsPackage = true;
-        skill = "${stub}/share/skills/agent-project-move";
-        link = "${stub}/share/skills/agent-project-move";
+        claudeLink = "${stub}/share/skills/agent-project-move";
+        codexLink = "${stub}/share/skills/agent-project-move";
       };
+    };
+
+    testEmptyDirectoriesLinkNothingEvenWithClaudeCode = {
+      expr = builtins.filter (lib.hasInfix "skills/agent-project-move") (
+        builtins.attrNames emptySkills.home.file
+      );
+      expected = [ ];
     };
   };
 in
 assert lib.assertMsg (failures == [ ]) "failed tests: ${builtins.toJSON failures}";
-pkgs.runCommand "agent-project-move-home-manager-module" { } ''
-  touch "$out"
-''
+pkgs.emptyFile
