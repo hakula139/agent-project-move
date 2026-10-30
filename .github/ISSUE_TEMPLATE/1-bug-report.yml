@@ -65,6 +65,6 @@ body:
     id: actual
     attributes:
       label: Actual behavior
-      description: Include the full error text and what the assistant lists after the run.
+      description: Include what the assistant lists after the run.
     validations:
       required: true

@@ -45,6 +45,23 @@ def path-pattern [old: string]: nothing -> string {
   '(?<!\\)"(' + $plain + '|' + $uri + ')(?=["/])'
 }
 
+# The lines ripgrep matched. Exit status 1 means no match.
+export def rg-lines [args: list<string>]: nothing -> list<string> {
+  let run = (^rg ...$args | complete)
+  if $run.exit_code > 1 {
+    error make --unspanned {
+      msg: $"rg failed: ($run.stderr | str trim)"
+      help: "Check that ripgrep can read the searched directories."
+    }
+  }
+  $run.stdout | lines | where {|line| $line != "" }
+}
+
+# The path a matched `"key":"<value>"` token holds, decoded from its JSON escapes.
+export def json-value [value: string]: nothing -> string {
+  $"\"($value)\"" | from json
+}
+
 # The files holding a string token for the path, compressed ones included.
 export def files-with-path [
   old: string
@@ -55,14 +72,8 @@ export def files-with-path [
   if ($existing | is-empty) { return [] }
 
   let globs = ($glob | each {|pattern| ["-g" $pattern] } | flatten)
-  let run = (
-    ^rg -z -P -l --hidden --no-ignore ...$globs -e (path-pattern $old) -- ...$existing
-    | complete
-  )
-  if $run.exit_code > 1 {
-    error make {msg: $"rg failed: ($run.stderr | str trim)"}
-  }
-  $run.stdout | lines | where {|line| $line != "" } | sort
+  rg-lines [-z -P -l --hidden --no-ignore ...$globs -e (path-pattern $old) -- ...$existing]
+  | sort
 }
 
 export def rewrite-text [content: string, old: string, new: string]: nothing -> string {

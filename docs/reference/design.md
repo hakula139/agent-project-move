@@ -4,14 +4,15 @@
 
 ## Invariants
 
-The final state after a `move <old> <new>` is that no structured path field refers to `<old>` or below, every moved session resumes from `<new>`, nothing is duplicated, and memory waiting for consolidation sits in `memory/incoming/`. Six rules follow:
+The final state after a `move <old> <new>` is that no structured path field refers to `<old>` or below, every moved session resumes from `<new>`, nothing is duplicated, and memory waiting for consolidation sits in `memory/incoming/`. These rules follow:
 
 - **Plan from current state.** Selection and every decision read what is on disk now, never what a previous run was expected to do. A transcript is selected because a record's `cwd` is under `<old>`, whatever its first line says. A rerun after a partial failure therefore converges on the same final state, and no step may make a rerun fail forever, as a key collision would.
 - **Rewrite sources of truth and drop derived data.** Transcripts, rollouts, and session rows are rewritten. Anything an assistant derives from them is deleted instead: Claude's `sessions-index.json` when a project directory merges, and Codex's `thread_history` projections when a rewritten rollout changes byte lengths. Nothing derived is maintained by hand.
 - **A Claude project directory's identity is its name.** A directory moves or exports only when its name encodes `<old>` or a path under it. Its owner is the recorded `cwd` whose encoding equals its name, which need not be any transcript's first `cwd`. Transcripts elsewhere that merely reference `<old>` are edited in place and stay in their directory.
 - **Rewrite values generically.** Every JSON string token equal to `<old>` or starting with `<old>/` is rewritten, as a key or a value, at any depth, plain or as a `file://` URI, while every other byte round-trips untouched. Each assistant release adds record kinds, so a field list would never stay complete.
+- **Match and record one spelling each.** `<old>` matches as an exact, case-sensitive string prefix, and each rewritten value takes the spelling the working directory reports at the destination.
 - **Derive destinations from where files land.** An import sets `rollout_path` and similar fields to the path it writes the file to on the target, without mapping the source host's roots.
-- **Missing means gone.** A path under a mount root (`/Volumes/<name>`, `/mnt/<name>`) counts as missing only when that root is mounted. A missing subpath or worktree of a repository that still exists is a move target, because its sessions belong to the repository's history.
+- **Missing means gone.** A path under a mount root (`/Volumes/<name>`, `/mnt/<name>`, `/media/<user>/<name>`, `/run/media/<user>/<name>`) counts as missing only when that root is mounted. A missing subpath or worktree of a repository that still exists is a move target, because its sessions belong to the repository's history.
 
 A backup makes a mistake restorable. An applied run copies everything it edits or deletes, backs up every database, and writes a manifest of every action in order.
 
@@ -51,17 +52,17 @@ Each SQL action runs as its own `sqlite3 -bail` transaction, with `PRAGMA busy_t
 
 ## Backup layout
 
-An applied run creates `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/` with mode 0700:
+An applied run creates `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/` and its `<timestamp>-<pid>/` directory with mode 0700:
 
 - `manifest.json` lists every action in order, including each rename's `to`.
 - Each edited or deleted file is copied under the same absolute path, with its leading `/` removed.
 - Each database is copied with `sqlite3 .backup`.
 
-Restoring reverses the renames and `rmdir`s in reverse order, then restores the databases and copies the files back. [Restore](../../skills/agent-project-move/SKILL.md#restore) has the procedure.
+[Restore](../../skills/agent-project-move/SKILL.md#restore) has the procedure for putting the previous state back.
 
 ## Transfer
 
-`export <old> <dir>` writes one subdirectory per assistant with the files and rows recorded for `<old>`, unchanged, plus `entries.json` listing rows with their column names. It only reads state, so it needs no `--apply`.
+`export <old> <dir>` writes one subdirectory per assistant that records state for `<old>`, with the files and rows it holds unchanged, plus `entries.json` listing rows with their column names. It only reads state, so it needs no `--apply`.
 
 `import <dir>` plans the merge:
 
@@ -76,10 +77,9 @@ Codex trust blocks are not carried, so the target asks for trust once on the fir
 
 ## Merges and memory staging
 
-When two Claude project directories merge, the unique transcripts from both sides are kept and `sessions-index.json` is deleted. If the destination already has a `memory/` directory, the source's memory lands in `<destination>/memory/incoming/<encoded-source>/` untouched, for consolidation by a memory-consolidation skill or by hand. Otherwise it moves in directly, dropping identical duplicates. OMP memory collisions keep the destination file and delete the source copy. The script never merges memory content itself.
+When two Claude project directories merge, the unique transcripts from both sides are kept and `sessions-index.json` is deleted. If the destination already has a `memory/` directory, the source's memory lands in `<destination>/memory/incoming/<source-encoded-name>/` untouched, for consolidation by hand. Otherwise it moves in directly, dropping identical duplicates. OMP memory collisions keep the destination file and delete the source copy. The script never merges memory content itself.
 
 ## Safety
 
 - **No process check.** Running assistants already share these stores. SQLite serializes writers, session files are appended only by their own session and keep receiving appends across a rename, and `~/.claude.json` is a last-writer-wins document that concurrent sessions already rewrite.
-- **Close sessions before applying.** An `edit` replaces a file through a temporary file, so a session writing at that moment loses those writes.
 - **A file-phase failure needs the backup.** Rewritten transcripts no longer name the subpaths that selected their directories, so restore from the run's backup and rerun. An SQL-phase failure recovers from a plain rerun.

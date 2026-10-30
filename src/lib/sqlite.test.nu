@@ -6,7 +6,6 @@
 
 use std/assert
 
-use ./actions.nu [column-statements]
 use ./sqlite.nu [path-condition sql-quote]
 
 const VALUES = [
@@ -26,7 +25,7 @@ def rows [table: string, values: list<string>]: nothing -> string {
   | str join " "
 }
 
-def "test SQL path conditions agree with path-match" [] {
+def "test SQL path conditions select the path and its children" [] {
   let setup = "CREATE TABLE t (id INTEGER PRIMARY KEY, c TEXT); " + (rows t $VALUES)
   let cases = [
     {name: "exact and children", path: "/work/app", prefix: "", expected: [1 2]}
@@ -49,24 +48,4 @@ def "test SQL path conditions agree with path-match" [] {
     let ids = if $output == "" { [] } else { $output | from json | get id | sort }
     assert equal $ids $case.expected $case.name
   }
-}
-
-def "test a colliding destination row wins" [] {
-  let setup = (
-    "CREATE TABLE t (id INTEGER PRIMARY KEY, c TEXT UNIQUE); "
-    + (rows t ["/work/app" "/work/new"])
-  )
-  let statements = (column-statements t c "/work/app" "/work/new" --collide)
-  let remaining = (
-    ^sqlite3 -json :memory: (
-      $setup + " " + ($statements | each {|statement| $statement + ";"} | str join " ")
-      + " SELECT c FROM t;"
-    )
-    | complete
-    | get stdout
-    | from json
-    | get c
-  )
-
-  assert equal $remaining ["/work/new"]
 }

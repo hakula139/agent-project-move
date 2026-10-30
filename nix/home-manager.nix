@@ -19,7 +19,7 @@ let
   skillLinks = lib.listToAttrs (
     map (directory: {
       name = "${directory}/agent-project-move";
-      value.source = cfg.skill;
+      value.source = "${cfg.package}/share/skills/agent-project-move";
     }) cfg.skillDirectories
   );
 in
@@ -33,14 +33,13 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       default = mkAgentProjectMove pkgs;
-      defaultText = lib.literalExpression "agent-project-move built from this flake";
+      defaultText = lib.literalMD "agent-project-move built from this flake";
       description = "Package that provides the `agent-project-move` command.";
     };
 
     skillDirectories = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [ ];
-      example = [
+      default = [
         ".claude/skills"
         ".codex/skills"
       ];
@@ -48,16 +47,6 @@ in
         Home-relative directories that each receive a link to the skill directory. Codex skips
         a skill whose `SKILL.md` is itself a symlink.
       '';
-    };
-
-    skill = lib.mkOption {
-      type = lib.types.path;
-      readOnly = true;
-      default = "${cfg.package}/share/skills/agent-project-move";
-      defaultText = lib.literalExpression ''
-        "''${config.programs.agent-project-move.package}/share/skills/agent-project-move"
-      '';
-      description = "Read-only path to the installed skill directory.";
     };
   };
 

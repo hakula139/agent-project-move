@@ -33,8 +33,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
+
       - name: Install changelog parser
         uses: taiki-e/install-action@parse-changelog
+
+      - name: Check the package version
+        shell: bash
+        run: |
+          version=$(nix eval --raw .#default.version)
+          if [[ "$version" != "${GITHUB_REF_NAME#v}" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the package version $version"
+            exit 1
+          fi
 
       - name: Publish release
         env:

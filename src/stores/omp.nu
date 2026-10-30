@@ -22,7 +22,7 @@ use ../lib/paths.nu [
   path-match
   valid-path
 ]
-use ../lib/rewrite.nu [files-with-path rewrite-text]
+use ../lib/rewrite.nu [files-with-path json-value rewrite-text rg-lines]
 use ../lib/sqlite.nu [
   check-columns
   path-condition
@@ -35,7 +35,7 @@ use ../lib/sqlite.nu [
 ]
 
 # --------------------------------------------------------------------------------------------------
-# Encodings
+# Locations
 # --------------------------------------------------------------------------------------------------
 
 def agent-dir []: nothing -> string {
@@ -57,6 +57,10 @@ def memory-root []: nothing -> string { state-root | path join memories }
 def resolved-path [path: string]: nothing -> string {
   ^realpath -m $path | str trim
 }
+
+# --------------------------------------------------------------------------------------------------
+# Encodings
+# --------------------------------------------------------------------------------------------------
 
 # Mirrors OMP: session directories resolve the cwd, home, and temp dir through realpath, while
 # memory directories encode the raw cwd.
@@ -91,7 +95,7 @@ export def session-encode-here [path: string]: nothing -> string {
 }
 
 export def memory-encode [path: string]: nothing -> string {
-  let stripped = ((normalize-path $path) | str replace --regex '^/' '')
+  let stripped = (normalize-path $path | str replace --regex '^/' '')
   "--" + ($stripped | str replace --all --regex '[/\\:]' '-') + "--"
 }
 
@@ -104,18 +108,10 @@ def session-cwds [roots: list<string>]: nothing -> list<string> {
   let existing = ($roots | where {|root| $root | path exists })
   if ($existing | is-empty) { return [] }
 
-  let run = (
-    ^rg -m1 -o --no-filename --no-messages -g '*.jsonl' '"cwd":"[^"]*"' ...$existing
-    | complete
-  )
-  if $run.exit_code > 1 {
-    error make {msg: $"rg failed in ($existing | str join ', '): ($run.stderr | str trim)"}
-  }
-  $run.stdout
-  | lines
-  | where {|line| $line != "" }
-  | each {|line| $line | str replace --regex '^"cwd":"' '' | str replace --regex '"$' '' }
-  | each {|value| ('"' + $value + '"' | from json) }
+  rg-lines [-m1 -o --no-filename --no-messages -g '*.jsonl' '"cwd":"[^"]*"' ...$existing]
+  | parse --regex '^"cwd":"(?<cwd>[^"]*)"$'
+  | get cwd
+  | each {|value| json-value $value }
 }
 
 export def recorded-paths []: nothing -> list<string> {
@@ -155,11 +151,14 @@ export def scan []: nothing -> list<record> {
   let paths = (recorded-paths)
   $paths
   | each {|path|
-    let session_count = (
-      glob (session-root | path join (session-encode-here $path) '**/*.jsonl')
-      | length
-    )
-    {assistant: omp, path: $path, sessions: $session_count, last_used: null}
+    let dir = (session-root | path join (session-encode-here $path))
+    let files = (files-under $dir | where {|file| $file | str ends-with ".jsonl" })
+    let last_used = if ($files | is-empty) {
+      null
+    } else {
+      ls ...$files | get modified | math max
+    }
+    {assistant: omp, path: $path, sessions: ($files | length), last_used: $last_used}
   }
   | sort-by path
 }
@@ -170,13 +169,10 @@ export def scan []: nothing -> list<record> {
 
 def session-actions [candidates: list<string>, old: string, new: string]: nothing -> list<record> {
   let session_files = (files-with-path $old [(session-root) (archive-root)])
+  let rewrite = {|content| rewrite-text $content $old $new }
   mut actions = (
     $session_files
-    | each {|file|
-      edit-action omp sessions $file {|content|
-        rewrite-text $content $old $new
-      } "rewrite session cwd"
-    }
+    | each {|file| edit-action omp sessions $file $rewrite "rewrite session cwd" }
   )
 
   for path in $candidates {
@@ -410,24 +406,25 @@ def export-files [candidates: list<string>]: nothing -> list<record> {
 }
 
 def history-tables [db: string, old: string]: nothing -> list<record> {
-  let history = if ($db | path exists) {
+  if not ($db | path exists) { return [] }
+  let history = (
     sqlite-rows $db "SELECT * FROM history"
-    | where {|row| ($row.cwd | describe) == "string" and (path-match $old $row.cwd) }
-  } else { [] }
-  let recaps = if ($db | path exists) {
+    | where {|row| path-match $old $row.cwd }
+  )
+  let recaps = (
     sqlite-rows $db "SELECT * FROM session_recaps"
     | where {|row| path-match $old $row.cwd }
-  } else { [] }
-  let session_titles = if ($db | path exists) {
-    let sessions = (
-      ($history | get -o session_id | compact)
-      ++ ($recaps | get -o session_id | compact)
-    )
-    let ids = ($sessions | uniq)
-    if ($ids | is-empty) { [] } else {
-      sqlite-rows $db $"SELECT * FROM session_titles WHERE session_id IN \((sql-list $ids)\)"
-    }
-  } else { [] }
+  )
+  let sessions = (
+    ($history | get -o session_id | compact)
+    ++ ($recaps | get -o session_id | compact)
+  )
+  let ids = ($sessions | uniq)
+  let session_titles = if ($ids | is-empty) {
+    []
+  } else {
+    sqlite-rows $db $"SELECT * FROM session_titles WHERE session_id IN \((sql-list $ids)\)"
+  }
 
   [
     {
@@ -460,18 +457,21 @@ def history-tables [db: string, old: string]: nothing -> list<record> {
 }
 
 def agent-tables [db: string, old: string]: nothing -> list<record> {
-  let threads = if ($db | path exists) {
+  if not ($db | path exists) { return [] }
+  let threads = (
     sqlite-rows $db "SELECT * FROM threads"
     | where {|row| path-match $old $row.cwd }
-  } else { [] }
-  let thread_ids = ($threads | get -o id | compact)
-  let stage1 = if ($db | path exists) and ($thread_ids | is-not-empty) {
+  )
+  let thread_ids = ($threads | get -o id)
+  let stage1 = if ($thread_ids | is-not-empty) {
     sqlite-rows $db $"SELECT * FROM stage1_outputs WHERE thread_id IN \((sql-list $thread_ids)\)"
-  } else { [] }
-  let jobs = if ($db | path exists) {
+  } else {
+    []
+  }
+  let jobs = (
     sqlite-rows $db "SELECT * FROM jobs WHERE job_key LIKE 'global:%'"
     | where {|row| path-match $old ($row.job_key | str substring 7..) }
-  } else { [] }
+  )
 
   [
     {
@@ -537,18 +537,20 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     ++ ((bundle-table $bundle history).rows | get -o session_id | compact)
     | uniq
   )
+
   let local_sessions = (
     (if ($agent_db | path exists) {
-      sqlite-rows $agent_db "SELECT id FROM threads" | get -o id | default []
+      sqlite-rows $agent_db "SELECT id FROM threads" | get -o id
     } else {
       []
     })
     ++ (if ($history_db | path exists) {
-      sqlite-rows $history_db "SELECT session_id FROM history" | get -o session_id | default []
+      sqlite-rows $history_db "SELECT session_id FROM history" | get -o session_id
     } else {
       []
     })
   )
+
   let session_dirs = (
     [(session-root) (archive-root)]
     | each {|root|
@@ -557,6 +559,7 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     | flatten
   )
   let session_files = ($bundle.files | where {|file| $file.kind in [sessions archives] })
+
   let already_imported = (
     ($bundle_sessions | all {|id| $id in $local_sessions })
     and ($session_files | all {|file|
@@ -585,7 +588,12 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       'sessions' => (session-root | path join (session-encode-here $file.project) $file.name)
       'archives' => (archive-root | path join (session-encode-here $file.project) $file.name)
       'memories' => (memory-root | path join (memory-encode $file.project) $file.name)
-      _ => (error make {msg: $"Unknown OMP file kind ($file.kind)"})
+      _ => {
+        error make --unspanned {
+          msg: $"Unknown OMP file kind ($file.kind)"
+          help: "Rerun with the version that exported this bundle."
+        }
+      }
     }
     if ($file.kind in [sessions archives]) {
       let entry = {kind: $file.kind, name: ($file.name | path basename), target: $target}
@@ -595,7 +603,10 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     }
     if ($target | path exists) {
       if (same-content $file.bundle $target) { continue }
-      error make {msg: $"Import collision: ($target)"}
+      error make --unspanned {
+        msg: $"($target) already exists with content that differs from the bundle's copy"
+        help: "Compare the two files. Delete or rename the local file if the bundle's copy should win, then rerun the import."
+      }
     }
     if $file.kind == memories {
       let identical = (
@@ -656,7 +667,7 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   $actions
 }
 
-export def rollout-target [value: any, targets: list<record>]: nothing -> any {
+def rollout-target [value: any, targets: list<record>]: nothing -> any {
   if ($value | describe) != "string" { return $value }
 
   let kind = if ($value | str contains "/archive/sessions/") { "archives" } else { "sessions" }
