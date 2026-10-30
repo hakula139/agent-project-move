@@ -48,10 +48,10 @@ This file holds the rules for every change and points to the conventions for eac
 Run after implementation and before review:
 
 ```bash
-nix flake check                                # Hooks, the module tests, and every Nushell test
-nix build                                      # Build the command, its wrapper, and the installed skill
-nix develop -c nu scripts/nu-test.nu <file>... # Run one or more test files directly
-nix run . -- scan                              # Exercise a subcommand through the packaged wrapper
+nix flake check                                  # Hooks, the module tests, and every Nushell test
+nix build                                        # Build the command, its wrapper, and the installed skill
+nix develop -c nu scripts/nu-test.nu <file>...   # Run one or more test files directly
+nix run . -- scan                                # Exercise a subcommand through the packaged wrapper
 ```
 
 [Development](docs/conventions/development.md#ci) describes the CI jobs and what gates a merge.

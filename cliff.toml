@@ -58,7 +58,6 @@ commit_preprocessors = [
 # `<!-- N -->` prefixes, which the body template strips, order the sections.
 commit_parsers = [
   { message = '^[a-z]+(\([^)]+\))?!:', group = "<!-- 0 -->Breaking changes" },
-
   { message = "^feat", group = "<!-- 1 -->Added" },
   { message = "^fix", group = "<!-- 2 -->Fixed" },
   { message = "^perf", group = "<!-- 3 -->Changed" },
