@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  nix:
+    name: Nix (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: Linux
+            runner: ubuntu-latest
+          - os: macOS
+            runner: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Run flake check
+        run: nix flake check --keep-going --print-build-logs
+
+      - name: Build package
+        if: ${{ !cancelled() }}
+        run: nix build --no-link --print-build-logs
+
+  result:
+    name: CI Result
+    # A skipped job counts as a passing required check, so the gate must run after failures too.
+    if: ${{ !cancelled() }}
+    needs: [nix]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    steps:
+      - name: Check results
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GATE_ID: ${{ job.check_run_id }}
+        run: |
+          # `needs` misses a matrix leg cancelled before it starts, so read each job from the API.
+          failed=$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" \
+              --paginate \
+              --slurp |
+              jq -r --argjson gate "$GATE_ID" '
+                [.[].jobs[]] as $jobs
+                | first($jobs[] | select(.id == $gate))
+                  // error("job \($gate) is missing from this run attempt")
+                # Jobs of a calling workflow share this run, so check only names with this prefix.
+                | (.name | sub("[^/]*$"; "")) as $prefix
+                | $jobs[]
+                | select(.id != $gate and (.name | startswith($prefix)))
+                | select(.conclusion != "success" and .conclusion != "skipped")
+                | "::error::\(.name): \(.conclusion // .status)"
+              '
+          )
+
+          if [[ -n "$failed" ]]; then
+            echo "$failed"
+            exit 1
+          fi

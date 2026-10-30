@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a crash, an error, or behavior that differs from the docs
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search [existing issues](https://github.com/hakula139/agent-project-move/issues?q=is%3Aissue) first, and add a reaction to a matching one when you find it.
+
+        Transcripts and paths can hold private data. Redact paths, tokens, and conversation text from everything you paste below.
+
+  - type: input
+    id: version
+    attributes:
+      label: agent-project-move version
+      description: The release tag or the commit you run.
+      placeholder: vX.Y.Z
+    validations:
+      required: true
+
+  - type: textarea
+    id: assistants
+    attributes:
+      label: Assistant versions
+      description: Versions of the assistants whose state the command read, such as `claude --version` and `codex --version`.
+      placeholder: |
+        Claude Code 2.1.312
+        Codex 0.165.0
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: OS and Nushell
+      description: Operating system, architecture, and `nu --version`.
+      placeholder: macOS arm64, Nushell 0.116.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: The exact command, including flags and whether it ran with `--apply`.
+      placeholder: agent-project-move move ~/src/app ~/work/app
+    validations:
+      required: true
+
+  - type: textarea
+    id: plan
+    attributes:
+      label: Plan or error
+      description: The dry-run table or the error text. Text is easier to search than a screenshot.
+      render: text
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the full error text and what the assistant lists after the run.
+    validations:
+      required: true
