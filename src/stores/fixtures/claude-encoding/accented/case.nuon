@@ -1,0 +1,5 @@
+{
+  # Escaped so an editor that normalizes to NFD cannot change the expected encoding.
+  path: "/work/caf\u{e9}"
+  encoded: "-work-caf-"
+}

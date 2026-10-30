@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: CI
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  publish:
+    name: Publish GitHub Release
+    if: ${{ github.ref_type == 'tag' }}
+    needs: [ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install changelog parser
+        uses: taiki-e/install-action@parse-changelog
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          parse-changelog CHANGELOG.md "${GITHUB_REF_NAME#v}" > release-notes.md
+
+          options=(--verify-tag --title "$GITHUB_REF_NAME" --notes-file release-notes.md)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            options+=(--prerelease)
+          fi
+
+          gh release create "$GITHUB_REF_NAME" "${options[@]}"
