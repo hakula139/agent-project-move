@@ -1,1 +1,2 @@
 *.nu text eol=lf
+bin/agent-project-move text eol=lf

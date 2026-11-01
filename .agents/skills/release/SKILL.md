@@ -5,13 +5,15 @@ description: Cut an agent-project-move release, from the release PR through the 
 
 # Cut an agent-project-move release
 
-Pushing a tag that matches `v[0-9]+.*` starts `.github/workflows/release.yml`, which runs CI and publishes a GitHub Release with the tag's `CHANGELOG.md` section as its notes. A tag with a prerelease suffix, such as `v0.1.0-rc.1`, publishes a prerelease.
+Pushing a tag that matches `v[0-9]+.*` starts `.github/workflows/release.yml`, which runs CI and publishes a GitHub Release with the tag's `CHANGELOG.md` section as its notes.
+
+Report the URLs of the release PR and the GitHub Release.
 
 ## Versioning
 
-- **Before 1.0:** tag `v0.N.0` whenever a user-visible batch lands, and `v0.N.M` for a fix to shipped behavior. A change to the stability surface can land in any of these, and the release notes name it under Breaking changes.
-- **After 1.0:** a breaking change to the stability surface bumps the major version, a user-visible addition or change bumps the minor version, and a fix bumps the patch version.
-- **Prereleases:** a tag with a suffix such as `-rc.1` publishes a prerelease and its section lists only changes since the previous tag.
+- **Before 1.0**: tag `v0.N.0` whenever a user-visible batch lands, and `v0.N.M` for a fix to shipped behavior. A change to the stability surface can land in any of these, and the release notes name it under Breaking changes.
+- **After 1.0**: a breaking change to the stability surface bumps the major version, a user-visible addition or change bumps the minor version, and a fix bumps the patch version.
+- **Prereleases**: a tag with a suffix such as `-rc.1` publishes a prerelease and its section lists only changes since the previous tag.
 
 ### Stability surface
 
@@ -37,7 +39,10 @@ Curate the draft for users by describing what they can now do and what now works
 ## Prepare a release
 
 1. Branch off `main` as `chore/release-vX.Y.Z`.
-2. Inside the dev shell, prepend the section and add its compare link above the first one at the end of `CHANGELOG.md`:
+
+2. Set `version` in `nix/agent-project-move.nix` to `X.Y.Z`, since the publish job fails when the tag and the package version differ.
+
+3. Inside the dev shell, prepend the section and add its compare link above the first one at the end of `CHANGELOG.md`:
 
    ```bash
    git cliff --unreleased --tag vX.Y.Z --prepend CHANGELOG.md
@@ -49,10 +54,10 @@ Curate the draft for users by describing what they can now do and what now works
    ```
 
    For the first release, link `https://github.com/hakula139/agent-project-move/releases/tag/vX.Y.Z` instead.
-3. Curate the section and run the [verification](../../../AGENTS.md#verification) block. Because `cspell` scans `CHANGELOG.md`, add any unknown words to `.cspell/words.txt`.
-4. Commit, open a PR titled `chore(release): vX.Y.Z`, record the checks, and merge once CI passes.
 
-The steps easiest to skip are curating the section before opening the release PR, tagging only after separate approval, and verifying publication once the Release workflow finishes. Report the URLs of the release PR and the GitHub Release.
+4. Curate the section and run the [verification](../../../AGENTS.md#verification) block.
+
+5. Commit, open a PR titled `chore(release): vX.Y.Z`, record the checks, and merge once CI passes.
 
 ## Tag
 

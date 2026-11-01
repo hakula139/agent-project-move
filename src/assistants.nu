@@ -11,22 +11,30 @@ use ./stores/codex.nu
 use ./stores/omp.nu
 use ./stores/opencode.nu
 
-export const ASSISTANTS = [claude codex opencode omp]
+const ASSISTANTS = [claude codex opencode omp]
 export const ALL_ASSISTANTS = ($ASSISTANTS | str join ",")
 
 export def parse-assistants [value: string]: nothing -> list<string> {
   let names = (
     $value
-    | str replace --all --regex '[\[\]]' ''
-    | split row --regex '[\s,]+'
+    | split row ","
+    | each {|name| $name | str trim }
     | where {|name| $name != "" }
     | uniq
   )
-  if ($names | is-empty) { return $ASSISTANTS }
+  if ($names | is-empty) {
+    error make --unspanned {
+      msg: "No assistant selected"
+      help: $"Pass a comma-separated list such as ($ASSISTANTS | str join ',')."
+    }
+  }
 
   let unknown = ($names | where {|name| $name not-in $ASSISTANTS })
   if ($unknown | is-not-empty) {
-    error make {msg: $"Unknown assistant: ($unknown | str join ', '). Choose from ($ASSISTANTS | str join ', ')."}
+    error make --unspanned {
+      msg: $"Unknown assistant: ($unknown | str join ', ')"
+      help: $"Choose from ($ASSISTANTS | str join ', ')."
+    }
   }
   $names
 }
@@ -49,11 +57,7 @@ def assistant-recorded-paths [assistant: string]: nothing -> list<string> {
   }
 }
 
-def assistant-plan-move [
-  assistant: string
-  old: string
-  new: string
-]: nothing -> list<record> {
+def assistant-plan-move [assistant: string, old: string, new: string]: nothing -> list<record> {
   match $assistant {
     'claude' => { claude plan-move $old $new }
     'codex' => { codex plan-move $old $new }
@@ -62,10 +66,7 @@ def assistant-plan-move [
   }
 }
 
-def assistant-plan-prune [
-  assistant: string
-  paths: list<string>
-]: nothing -> list<record> {
+def assistant-plan-prune [assistant: string, paths: list<string>]: nothing -> list<record> {
   match $assistant {
     'claude' => { claude plan-prune $paths }
     'codex' => { codex plan-prune $paths }
@@ -74,10 +75,7 @@ def assistant-plan-prune [
   }
 }
 
-export def assistant-export-bundle [
-  assistant: string
-  old: string
-]: nothing -> record {
+export def assistant-export-bundle [assistant: string, old: string]: nothing -> record {
   match $assistant {
     'claude' => { claude export-bundle $old }
     'codex' => { codex export-bundle $old }
@@ -86,10 +84,7 @@ export def assistant-export-bundle [
   }
 }
 
-export def assistant-plan-import [
-  assistant: string
-  bundle: record
-]: nothing -> list<record> {
+export def assistant-plan-import [assistant: string, bundle: record]: nothing -> list<record> {
   match $assistant {
     'claude' => { claude plan-import $bundle }
     'codex' => { codex plan-import $bundle }
@@ -102,6 +97,12 @@ export def scan-all [selected: list<string>]: nothing -> list<record> {
   $selected | each {|assistant| assistant-scan $assistant } | flatten
 }
 
+export def all-recorded-paths [selected: list<string>]: nothing -> list<string> {
+  let rows = (scan-all $selected | get -o path | where {|path| valid-path $path })
+  let recorded = ($selected | each {|assistant| assistant-recorded-paths $assistant } | flatten)
+  $rows | append $recorded | uniq
+}
+
 export def plan-move [
   selected: list<string>
   old: string
@@ -111,23 +112,10 @@ export def plan-move [
 }
 
 export def prune-missing-paths [selected: list<string>]: nothing -> list<string> {
-  let rows = (scan-all $selected)
-  let recorded = ($selected | each {|assistant| assistant-recorded-paths $assistant } | flatten)
-  $rows
-  | get -o path
-  | where {|path| valid-path $path }
-  | append $recorded
-  | uniq
-  | where {|path| path-missing $path }
+  all-recorded-paths $selected | where {|path| path-missing $path }
 }
 
-export def plan-prune [
-  selected: list<string>
-  keep: list<string> = []
-  --paths: oneof<list<string>, nothing> = null
-]: nothing -> list<record> {
-  let missing = if $paths == null { prune-missing-paths $selected } else { $paths }
-  let filtered = ($missing | where {|path| not (match-any $keep $path) })
-  if ($filtered | is-empty) { return [] }
-  $selected | each {|assistant| assistant-plan-prune $assistant $filtered } | flatten
+export def plan-prune [selected: list<string>, paths: list<string>]: nothing -> list<record> {
+  if ($paths | is-empty) { return [] }
+  $selected | each {|assistant| assistant-plan-prune $assistant $paths } | flatten
 }

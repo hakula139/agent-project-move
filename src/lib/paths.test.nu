@@ -13,6 +13,8 @@ def "test absent mount roots keep paths present" [] {
   let cases = [
     {name: "an absent volume", path: $"/Volumes/($name)/work/app", missing: false}
     {name: "an absent mount", path: $"/mnt/($name)/app", missing: false}
+    {name: "an absent media mount", path: $"/media/($name)/drive/app", missing: false}
+    {name: "an absent run-media mount", path: $"/run/media/($name)/drive/app", missing: false}
     {name: "an absent directory", path: $"/home/($name)/app", missing: true}
   ]
 
@@ -33,7 +35,7 @@ def "test a destination must be distinct and outside the source" [] {
       name: "a case-only change"
       old: "/work/app"
       new: "/work/App"
-      error: "Case-only"
+      error: "letter case"
     }
     {
       name: "a child of the source"

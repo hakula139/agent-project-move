@@ -24,7 +24,10 @@ export def sql-list [values: list]: nothing -> string {
 export def sqlite-rows [db: string, query: string]: nothing -> list {
   let run = ($query | ^sqlite3 -readonly -json $db | complete)
   if $run.exit_code != 0 {
-    error make {msg: $"sqlite3 failed on ($db): ($run.stderr | str trim)"}
+    error make --unspanned {
+      msg: $"sqlite3 failed on ($db): ($run.stderr | str trim)"
+      help: $"Close the assistant that uses ($db) and rerun the same command."
+    }
   }
   let output = ($run.stdout | str trim)
   if $output == "" { [] } else { $output | from json }
@@ -34,7 +37,7 @@ export def sqlite-columns [db: string, table: string]: nothing -> list<string> {
   sqlite-rows $db $"PRAGMA table_info\(($table)\)" | get name
 }
 
-export def sqlite-has-table [db: string, table: string]: nothing -> bool {
+def sqlite-has-table [db: string, table: string]: nothing -> bool {
   let query = $"SELECT name FROM sqlite_master WHERE type = 'table' AND name = '($table)'"
   sqlite-rows $db $query | is-not-empty
 }
@@ -93,14 +96,17 @@ export def check-columns [
 ]: nothing -> nothing {
   let local = (table-columns $db $table)
   if ($local | is-empty) {
-    error make {msg: $"($store) is missing the ($table) table: start ($store) once on this host"}
+    error make --unspanned {
+      msg: $"($store) is missing the ($table) table"
+      help: $"Start ($store) once on this host, then rerun the import."
+    }
   }
   let missing = ($columns | where {|column| $column not-in $local })
   if ($missing | is-not-empty) {
-    error make {msg: (
-      $"($store) ($table) lacks carried columns ($missing | str join ', '), "
-      + $"local has ($local | str join ', ')"
-    )}
+    error make --unspanned {
+      msg: $"This host's ($store) has no column ($missing | str join ', ') in ($table), which the bundle contains"
+      help: $"Update ($store) on this host to the source host's version, start it once, then rerun the import."
+    }
   }
   let required = (
     sqlite-rows $db $"PRAGMA table_info\(($table)\)"
@@ -110,7 +116,10 @@ export def check-columns [
   )
   if ($required | is-not-empty) {
     let names = ($required | str join ', ')
-    error make {msg: $"($store) ($table) requires columns the bundle lacks ($names)"}
+    error make --unspanned {
+      msg: $"($store) ($table) requires columns the bundle lacks ($names)"
+      help: $"Update ($store) on the source host, export again, then rerun the import."
+    }
   }
 }
 
@@ -168,6 +177,9 @@ export def run-sql [
   )
   let run = ($sql | ^sqlite3 -bail $db | complete)
   if $run.exit_code != 0 {
-    error make {msg: $"sqlite3 failed on ($db): ($run.stderr | str trim)"}
+    error make --unspanned {
+      msg: $"sqlite3 failed on ($db): ($run.stderr | str trim)"
+      help: $"Close the assistant that uses ($db) and rerun the same command."
+    }
   }
 }

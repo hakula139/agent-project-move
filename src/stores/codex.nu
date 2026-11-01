@@ -104,94 +104,99 @@ export def scan []: nothing -> list<record> {
 # Trust blocks
 # --------------------------------------------------------------------------------------------------
 
-def trust-blocks []: nothing -> record {
+# Trailing comment lines, from the first comment on, lead the next header.
+def split-leading [body: list<string>]: nothing -> record {
+  let trailing = (
+    $body
+    | reverse
+    | take while {|line| ($line | str trim) == "" or ($line | str starts-with "#") }
+    | reverse
+  )
+  let leading = ($trailing | skip while {|line| ($line | str trim) == "" })
+  {body: ($body | take (($body | length) - ($leading | length))), leading: $leading}
+}
+
+# Split the config at every table header. Lines before the first form a headerless section.
+def config-sections [content: string]: nothing -> list<record> {
+  mut sections = []
+  mut current: oneof<record, nothing> = null
+
+  for line in ($content | lines) {
+    if ($line | str starts-with "[") {
+      let header = ($line | parse --regex $TRUST_HEADER)
+      let path = (if ($header | is-empty) { null } else { $header | get 0.path })
+      if $current != null {
+        let split = (split-leading $current.body)
+        $current = ($current | upsert body $split.body)
+        $sections = ($sections | append $current)
+        $current = {header: $line, path: $path, leading: $split.leading, body: []}
+      } else {
+        $current = {header: $line, path: $path, leading: [], body: []}
+      }
+    } else if $current == null {
+      $current = {header: null, path: null, leading: [], body: [$line]}
+    } else {
+      $current = ($current | update body { $in | append $line })
+    }
+  }
+  if $current != null { $sections = ($sections | append $current) }
+  $sections
+}
+
+def section-lines [section: record]: nothing -> list<string> {
+  if $section.header == null {
+    $section.body
+  } else {
+    $section.leading ++ [$section.header] ++ $section.body
+  }
+}
+
+def trust-blocks-in [content: string]: nothing -> list<record> {
+  config-sections $content | where {|section| $section.path != null }
+}
+
+def trust-blocks []: nothing -> list<record> {
   let file = (config-path)
-  if not ($file | path exists) { return {} }
-  trust-blocks-from (open --raw $file)
+  if not ($file | path exists) { return [] }
+  trust-blocks-in (open --raw $file)
 }
 
 export def move-trust [content: string, old: string, new: string]: nothing -> string {
-  let lines = ($content | lines)
-  let existing = (trust-blocks-from $content)
-  mut kept = []
-  mut skipping = false
-  mut moved = []
-
-  for line in $lines {
-    let header = ($line | parse --regex $TRUST_HEADER)
-    if ($header | is-not-empty) {
-      let path = ($header | get 0.path)
-      if (path-match $old $path) {
-        $skipping = true
-        let target = (path-map $old $new $path)
-        if $target not-in ($existing | columns) {
-          let body = (
-            $existing
-            | transpose key body
-            | where key == $path
-            | get -o 0.body
-            | default []
-          )
-          let block = if ($body | is-empty) { ["trust_level = \"trusted\"" ""] } else { $body }
-          $moved = ($moved | append ([$"[projects.\"($target)\"]"] ++ $block))
-        }
+  let sections = (config-sections $content)
+  let existing = ($sections | get -o path | compact)
+  let kept = (
+    $sections
+    | where {|section| ($section.path == null) or (not (path-match $old $section.path)) }
+  )
+  let moved = (
+    $sections
+    | where {|section| ($section.path != null) and (path-match $old $section.path) }
+    | each {|section|
+      let target = (path-map $old $new $section.path)
+      if $target in $existing {
+        null
       } else {
-        $skipping = false
-        $kept = ($kept | append $line)
+        {
+          header: $"[projects.\"($target)\"]"
+          path: $target
+          leading: $section.leading
+          body: $section.body
+        }
       }
-    } else if ($line | str starts-with "[") {
-      $skipping = false
-      $kept = ($kept | append $line)
-    } else if not $skipping {
-      $kept = ($kept | append $line)
     }
-  }
-
-  let additions = if ($moved | is-empty) { [] } else { $moved | flatten }
-  (($kept ++ $additions) | str join "\n") + "\n"
+    | compact
+  )
+  let lines = (($kept ++ $moved) | each {|section| section-lines $section } | flatten)
+  ($lines | str join "\n") + "\n"
 }
 
-def trust-blocks-from [content: string]: nothing -> record {
-  let lines = ($content | lines)
-  mut blocks = {}
-  mut current: oneof<string, nothing> = null
-  mut body = []
-
-  for line in $lines {
-    let header = ($line | parse --regex $TRUST_HEADER)
-    if ($header | is-not-empty) {
-      if $current != null { $blocks = ($blocks | merge {($current): $body}) }
-      $current = ($header | get 0.path)
-      $body = []
-    } else if ($line | str starts-with "[") {
-      if $current != null { $blocks = ($blocks | merge {($current): $body}) }
-      $current = null
-      $body = []
-    } else if $current != null {
-      $body = ($body | append $line)
-    }
-  }
-  if $current != null { $blocks = ($blocks | merge {($current): $body}) }
-  $blocks
-}
-
-def prune-trust [content: string, paths: list<string>]: nothing -> string {
-  let lines = ($content | lines)
-  mut kept = []
-  mut skipping = false
-
-  for line in $lines {
-    let header = ($line | parse --regex $TRUST_HEADER)
-    if ($header | is-not-empty) {
-      $skipping = (match-any $paths ($header | get 0.path))
-      if not $skipping { $kept = ($kept | append $line) }
-    } else if ($line | str starts-with "[") {
-      $skipping = false
-      $kept = ($kept | append $line)
-    } else if not $skipping {
-      $kept = ($kept | append $line)
-    }
-  }
+export def prune-trust [content: string, paths: list<string>]: nothing -> string {
+  let kept = (
+    config-sections $content
+    | where {|section| not (($section.path != null) and (match-any $paths $section.path)) }
+    | each {|section| section-lines $section }
+    | flatten
+  )
   if ($kept | is-empty) { "" } else { ($kept | str join "\n") + "\n" }
 }
 
@@ -201,7 +206,7 @@ def prune-trust [content: string, paths: list<string>]: nothing -> string {
 
 def trust-actions [old: string, new: string]: nothing -> list<record> {
   let config = (config-path)
-  let match = (trust-blocks | columns | any {|path| path-match $old $path })
+  let match = (trust-blocks | any {|block| path-match $old $block.path })
   if ($config | path exists) and $match {
     let edit = (edit-action codex config $config {|content|
       move-trust $content $old $new
@@ -237,10 +242,12 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
   if $state == null { return [] }
 
   let home = (root)
+  let rewrite = {|content| rewrite-text $content $old $new }
   let rollouts = (files-with-path $old [
     ($home | path join sessions)
     ($home | path join archived_sessions)
   ])
+
   let desktop = (files-with-path $old [($home | path join .codex-global-state.json)])
 
   let threads = (sqlite-rows $state "SELECT * FROM threads")
@@ -263,14 +270,12 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
     ] $old $new
   )
   for file in $rollouts {
-    $actions = ($actions | append (edit-action codex rollouts $file {|content|
-      rewrite-text $content $old $new
-    } "rewrite cwd"))
+    $actions = ($actions | append (edit-action codex rollouts $file $rewrite "rewrite cwd"))
   }
   for file in $desktop {
-    $actions = ($actions | append (edit-action codex desktop-state $file {|content|
-      rewrite-text $content $old $new
-    } "rewrite desktop state"))
+    $actions = (
+      $actions | append (edit-action codex desktop-state $file $rewrite "rewrite desktop state")
+    )
   }
   $actions = ($actions ++ (projection-actions (history-db) $edited_ids $old $new))
   $actions = ($actions ++ (trust-actions $old $new))
@@ -289,7 +294,7 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
     sqlite-rows $state "SELECT * FROM threads"
     | where {|row| match-any $paths $row.cwd }
   )
-  let ids = ($threads | get -o id | compact)
+  let ids = ($threads | get -o id)
   mut actions = []
 
   for row in $threads {
@@ -324,7 +329,7 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
   }
 
   let config = (config-path)
-  let trust_match = (trust-blocks | columns | any {|path| match-any $paths $path })
+  let trust_match = (trust-blocks | any {|block| match-any $paths $block.path })
   if ($config | path exists) and $trust_match {
     $actions = ($actions | append (edit-action codex config $config {|content|
       prune-trust $content $paths
@@ -389,17 +394,12 @@ export def export-bundle [old: string]: nothing -> record {
     }
   ]
 
-  {
-    assistant: codex
-    old: $old
-    files: $files
-    tables: $tables
-  }
+  {assistant: codex, old: $old, files: $files, tables: $tables}
 }
 
-export def rollout-target [file: record]: nothing -> string {
+def rollout-target [file: record]: nothing -> string {
   let name = ($file.name | into string)
-  if (($file | get -o compress | default false)) and not ($name | str ends-with ".zst") {
+  if ($file | get -o compress | default false) and not ($name | str ends-with ".zst") {
     $name + ".zst"
   } else {
     $name
@@ -411,7 +411,10 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   let projects = (bundle-table $bundle projects)
   let threads = (bundle-table $bundle threads)
   if $state_db == null and (($projects.rows | is-not-empty) or ($threads.rows | is-not-empty)) {
-    error make {msg: "Codex import found no state database. Start Codex once on this host"}
+    error make --unspanned {
+      msg: "Codex import found no state database"
+      help: "Start Codex once on this host, then rerun the import."
+    }
   }
   if ($projects.rows | is-not-empty) {
     check-columns $state_db projects $projects.columns "Codex"
@@ -422,9 +425,9 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   let imported = if $state_db == null {
     []
   } else {
-    sqlite-rows $state_db "SELECT id FROM threads" | get -o id | default []
+    sqlite-rows $state_db "SELECT id FROM threads" | get -o id
   }
-  if (($threads.rows | get -o id | compact) | all {|id| $id in $imported }) {
+  if (($threads.rows | get -o id) | all {|id| $id in $imported }) {
     return []
   }
   mut actions = []
@@ -440,7 +443,10 @@ export def plan-import [bundle: record]: nothing -> list<record> {
         same-content $file.bundle $target
       }
       if $equal { continue }
-      error make {msg: $"Import collision: ($target)"}
+      error make --unspanned {
+        msg: $"($target) already exists with content that differs from the bundle's copy"
+        help: "Compare the two files. Delete or rename the local file if the bundle's copy should win, then rerun the import."
+      }
     }
     let write = (copy-action codex rollouts $file.bundle $target "import rollout")
     $actions = ($actions | append $write)

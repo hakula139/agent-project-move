@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Agent Project Move: OpenCode
 # ==================================================================================================
-# OpenCode state, held in one SQLite database.
+# OpenCode state, held in one SQLite database, plus the snapshot directories a move renames.
 # ==================================================================================================
 
 use ../lib/actions.nu [action column-actions rename-action same-tree sql-action]
@@ -40,66 +40,21 @@ def db []: nothing -> string {
 
 def snapshot-root []: nothing -> string { data-root | path join snapshot }
 
-def snapshot-actions [
-  projects: list<record>
-  directories: list<record>
-  sessions: list<record>
-  workspaces: list<record>
-  old: string
-  new: string
-]: nothing -> list<record> {
-  let sources = [
-    ($projects | each {|row| {project: $row.id, path: $row.worktree}})
-    ($directories | each {|row| {project: $row.project_id, path: $row.directory}})
-    ($sessions | each {|row| {project: $row.project_id, path: $row.directory}})
-    ($workspaces | each {|row| {project: $row.project_id, path: $row.directory}})
-  ]
-  let locations = (
-    $sources
-    | flatten
-    | where {|row| ($row.path | describe) == "string" and (path-match $old $row.path) }
-    | uniq
-  )
+# --------------------------------------------------------------------------------------------------
+# Scan
+# --------------------------------------------------------------------------------------------------
 
-  mut actions = []
-  for location in $locations {
-    let source = (snapshot-root | path join $location.project (sha1-hex $location.path))
-    if not ($source | path exists) { continue }
-    let target_path = (path-map $old $new $location.path)
-    let target = (snapshot-root | path join $location.project (sha1-hex $target_path))
-    if ($target | path exists) {
-      if not (same-tree $source $target) {
-        error make {msg: $"Snapshot collision: ($target)"}
-      }
-    } else {
-      let rename = (rename-action opencode snapshots $source $target "rename snapshot")
-      $actions = ($actions | append $rename)
-    }
-  }
-  $actions
-}
-
-def sandboxes [value: any]: nothing -> list {
-  if ($value | describe) != "string" { return [] }
-  $value | from json
-}
+# The store records paths only through its scan rows.
+export def recorded-paths []: nothing -> list<string> { [] }
 
 def session-total [rows: list, base: string]: nothing -> int {
   let values = (
     $rows
     | where {|row| path-match $base $row.directory }
     | get -o sessions
-    | default []
   )
-  if ($values | is-empty) { 0 } else { $values | each {|value| $value | into int } | math sum }
+  $values | each {|value| $value | into int } | append 0 | math sum
 }
-
-# The store records paths only through its scan rows.
-export def recorded-paths []: nothing -> list<string> { [] }
-
-# --------------------------------------------------------------------------------------------------
-# Scan
-# --------------------------------------------------------------------------------------------------
 
 export def scan []: nothing -> list<record> {
   let database = (db)
@@ -158,7 +113,7 @@ export def scan []: nothing -> list<record> {
     {
       assistant: opencode
       path: $group.path
-      sessions: (if ($counts | is-empty) { 0 } else { $counts | math sum })
+      sessions: ($counts | append 0 | math sum)
       last_used: ($timestamps | last)
     }
   }
@@ -168,6 +123,48 @@ export def scan []: nothing -> list<record> {
 # --------------------------------------------------------------------------------------------------
 # Move
 # --------------------------------------------------------------------------------------------------
+
+def snapshot-actions [
+  projects: list<record>
+  directories: list<record>
+  sessions: list<record>
+  workspaces: list<record>
+  old: string
+  new: string
+]: nothing -> list<record> {
+  let sources = [
+    ($projects | each {|row| {project: $row.id, path: $row.worktree} })
+    ($directories | each {|row| {project: $row.project_id, path: $row.directory} })
+    ($sessions | each {|row| {project: $row.project_id, path: $row.directory} })
+    ($workspaces | each {|row| {project: $row.project_id, path: $row.directory} })
+  ]
+  let locations = (
+    $sources
+    | flatten
+    | where {|row| path-match $old $row.path }
+    | uniq
+  )
+
+  mut actions = []
+  for location in $locations {
+    let source = (snapshot-root | path join $location.project (sha1-hex $location.path))
+    if not ($source | path exists) { continue }
+    let target_path = (path-map $old $new $location.path)
+    let target = (snapshot-root | path join $location.project (sha1-hex $target_path))
+    if ($target | path exists) {
+      if not (same-tree $source $target) {
+        error make --unspanned {
+          msg: $"OpenCode snapshot ($target) already exists with different content"
+          help: "Compare the two directories, keep one, then rerun the move. Nothing was written."
+        }
+      }
+    } else {
+      let rename = (rename-action opencode snapshots $source $target "rename snapshot")
+      $actions = ($actions | append $rename)
+    }
+  }
+  $actions
+}
 
 export def plan-move [old: string, new: string]: nothing -> list<record> {
   let database = (db)
@@ -268,6 +265,11 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
 # Transfer
 # --------------------------------------------------------------------------------------------------
 
+def sandboxes [value: any]: nothing -> list {
+  if ($value | describe) != "string" { return [] }
+  $value | from json
+}
+
 def export-selection [database: string, old: string]: nothing -> record {
   let projects = (sqlite-rows $database "SELECT * FROM project")
   let directories = (sqlite-rows $database "SELECT * FROM project_directory")
@@ -282,8 +284,7 @@ def export-selection [database: string, old: string]: nothing -> record {
     $directories | where {|row| path-match $old $row.directory }
   )
   let selected_workspaces = (
-    $workspaces
-    | where {|row| ($row.directory | describe) == "string" and (path-match $old $row.directory) }
+    $workspaces | where {|row| path-match $old $row.directory }
   )
 
   let referenced = (
@@ -296,8 +297,8 @@ def export-selection [database: string, old: string]: nothing -> record {
     | where {|row|
       (
         (path-match $old $row.worktree)
-        or (($row.id in $referenced))
-        or ((sandboxes $row.sandboxes) | any {|sandbox| path-match $old $sandbox })
+        or ($row.id in $referenced)
+        or (sandboxes $row.sandboxes | any {|sandbox| path-match $old $sandbox })
       )
     }
   )
@@ -316,11 +317,7 @@ def export-selection [database: string, old: string]: nothing -> record {
   }
 }
 
-def table-spec [
-  database: string
-  table: string
-  rows: list
-]: nothing -> record {
+def table-spec [database: string, table: string, rows: list]: nothing -> record {
   {
     db: opencode
     table: $table
@@ -391,22 +388,18 @@ export def export-bundle [old: string]: nothing -> record {
 
 export def plan-import [bundle: record]: nothing -> list<record> {
   let database = (db)
-  let order = [
-    project
-    project_directory
-    workspace
-    session
-    event_sequence
-    event
-    message
-    part
-    session_message
-    session_input
-    session_share
-    todo
-    session_context_epoch
-    permission
-  ]
+  let order = (
+    [
+      project
+      project_directory
+      workspace
+      session
+      event_sequence
+      event
+    ]
+    ++ $CHILD_TABLES
+    ++ [permission]
+  )
   let specs = (
     $order
     | each {|table|
@@ -420,11 +413,11 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   )
   let sessions = (bundle-table $bundle session)
   let local = if ($database | path exists) {
-    sqlite-rows $database "SELECT id FROM session" | get -o id | default []
+    sqlite-rows $database "SELECT id FROM session" | get -o id
   } else {
     []
   }
-  if ($sessions.rows | get -o id | compact | all {|id| $id in $local }) {
+  if ($sessions.rows | get -o id | all {|id| $id in $local }) {
     return []
   }
   let statements = (

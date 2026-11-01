@@ -15,24 +15,6 @@ def "test missing paths suggest their existing repository" [] {
   let codex_worktree = "/home/me/.codex/worktrees/abc/app"
   let cases = [
     {
-      name: "a Claude worktree"
-      path: "/work/app/.claude/worktrees/feat-x"
-      roots: [$app]
-      expected: $app
-    }
-    {
-      name: "a nested Claude worktree path"
-      path: "/work/app/.claude/worktrees/feat-x/src"
-      roots: [$app]
-      expected: $app
-    }
-    {
-      name: "a Claude worktree of an unknown repo"
-      path: "/work/gone/.claude/worktrees/feat-x"
-      roots: [$app]
-      expected: ""
-    }
-    {
       name: "a sibling worktree"
       path: "/work/app__worktrees/feat-x"
       roots: [$app]
@@ -108,12 +90,6 @@ def "test missing paths suggest their existing repository" [] {
       name: "a path under a temp root"
       path: "/tmp/app/.claude/worktrees/feat-x"
       roots: ["/tmp/app"]
-      expected: ""
-    }
-    {
-      name: "a path under TMPDIR"
-      path: "/var/folders/t/T/app/.claude/worktrees/feat-x"
-      roots: ["/var/folders/t/T/app"]
       expected: ""
     }
     {

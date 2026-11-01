@@ -15,23 +15,29 @@ export def bundle-table [bundle: record, table: string]: nothing -> record {
 export def write-bundle [directory: string, bundle: record]: nothing -> nothing {
   let base = ($directory | path join $bundle.assistant)
   mkdir $base
-  mut files = []
-
-  for file in $bundle.files {
-    let key = $"($file.kind)|($file.project)|($file.name)"
-    let name = (sha1-hex $key) + "-" + ($file.name | path basename)
-    let relative = ([files $name] | path join)
-    let target = ($base | path join $relative)
-    mkdir ($target | path dirname)
-
-    ^cp --preserve=mode,timestamps $file.source $target
-    $files = ($files | append ($file | reject source | upsert bundle $relative))
+  ^chmod 700 $base
+  if ($bundle.files | is-not-empty) {
+    mkdir ($base | path join files)
   }
+  let files = (
+    $bundle.files
+    | each {|file|
+      let key = $"($file.kind)|($file.project)|($file.name)"
+      let name = (sha1-hex $key) + "-" + ($file.name | path basename)
+      let relative = ([files $name] | path join)
+      let target = ($base | path join $relative)
+
+      ^cp --preserve=timestamps $file.source $target
+      ^chmod 600 $target
+      $file | reject source | upsert bundle $relative
+    }
+  )
 
   $bundle
   | upsert files $files
   | to json
   | save --force ($base | path join entries.json)
+  ^chmod 600 ($base | path join entries.json)
 }
 
 export def read-bundle [directory: string, assistant: string]: nothing -> any {
@@ -45,9 +51,12 @@ export def read-bundle [directory: string, assistant: string]: nothing -> any {
     | each {|file|
       let path = ($base | path join $file.bundle)
       if not ($path | path exists) {
-        error make {msg: $"Bundle incomplete: missing ($path). Recopy the bundle before importing."}
+        error make --unspanned {
+          msg: $"Bundle incomplete: missing ($path)"
+          help: "Recopy the bundle from the source host, then rerun the import."
+        }
       }
-      $file | upsert source $path | upsert bundle $path
+      $file | upsert bundle $path
     }
   )
   $data | upsert files $files

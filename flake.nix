@@ -45,6 +45,7 @@
     let
       inherit (nixpkgs) lib;
 
+      # git-hooks.nix has dropped x86_64-darwin, which Nixpkgs supports only through 26.05.
       systems = [
         "aarch64-darwin"
         "aarch64-linux"
@@ -59,8 +60,12 @@
         in
         lib.genAttrs outputs (output: builtins.mapAttrs (_: attrs: attrs.${output}) bySystem);
 
-      # nixos-26.05 ships Nushell 0.112.2, and the modules need `str lowercase` from 0.114.
-      nushellFor = pkgs: nixpkgs-unstable.legacyPackages.${pkgs.stdenv.hostPlatform.system}.nushell;
+      nushellFor =
+        pkgs:
+        if lib.versionAtLeast pkgs.nushell.version "0.116" then
+          pkgs.nushell
+        else
+          nixpkgs-unstable.legacyPackages.${pkgs.stdenv.hostPlatform.system}.nushell;
 
       mkAgentProjectMove =
         pkgs: pkgs.callPackage ./nix/agent-project-move.nix { nushell = nushellFor pkgs; };
@@ -88,6 +93,7 @@
         nushell = nushellFor pkgs;
 
         agentProjectMove = mkAgentProjectMove pkgs;
+        overlaid = (pkgs.extend self.overlays.default).agent-project-move;
 
         # ------------------------------------------------------------------------------------------
         # Pre-commit Hooks
@@ -100,6 +106,7 @@
           editorconfig-checker.enable = true;
           end-of-file-fixer.enable = true;
           nixfmt.enable = true;
+          shellcheck.enable = true;
           statix.enable = true;
           taplo.enable = true;
 
@@ -118,9 +125,7 @@
 
           nu-check = {
             enable = true;
-            name = "nu-check";
             description = "Run Nushell's diagnostic check on .nu files.";
-            package = nushell;
             entry = lib.getExe (
               pkgs.writeShellApplication {
                 name = "nu-check";
@@ -129,12 +134,20 @@
               }
             );
             files = "\\.nu$";
-            types = [ "file" ];
           };
 
           prettier = {
             enable = true;
             files = "\\.(js|json|jsonc|ya?ml)$";
+          };
+
+          # `shfmt` reads `.editorconfig` only when the entry passes no formatting flag.
+          shfmt = {
+            enable = true;
+            settings = {
+              language-dialect = null;
+              simplify = false;
+            };
           };
 
           trim-trailing-whitespace = {
@@ -154,7 +167,6 @@
 
         flock = lib.getExe pkgs.flock;
         git = lib.getExe pkgs.git;
-
       in
       {
         # ------------------------------------------------------------------------------------------
@@ -181,7 +193,7 @@
           shellHook = ''
             if common=$(${git} rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &&
               top=$(${git} rev-parse --show-toplevel 2>/dev/null) &&
-              [ -f "$top/flake.nix" ] && grep -q agent-project-move "$top/flake.nix"; then
+              [ -f "$top/src/agent-project-move.nu" ]; then
               (
                 ${flock} 9
                 ${preCommit.config.installationScript}
@@ -205,30 +217,39 @@
         checks = {
           pre-commit = preCommit;
 
-          tests =
-            pkgs.runCommand "agent-project-move-tests"
-              {
-                nativeBuildInputs = [
-                  pkgs.findutils
-                  pkgs.ripgrep
-                  pkgs.sqlite
-                  pkgs.zstd
-                ];
-              }
-              ''
-                cd ${./.}
-                ${lib.getExe nushell} --no-config-file scripts/nu-test.nu $(find src -name '*.test.nu' | sort)
-                touch "$out"
-              '';
-
           home-manager = import ./nix/home-manager-tests.nix {
             inherit home-manager pkgs;
             homeModule = self.homeModules.default;
           };
 
           overlay =
-            assert (pkgs.extend self.overlays.default).agent-project-move.drvPath == agentProjectMove.drvPath;
+            assert overlaid.drvPath == agentProjectMove.drvPath;
             pkgs.emptyFile;
+
+          tests =
+            let
+              source = lib.fileset.toSource {
+                root = ./.;
+                fileset = lib.fileset.unions [
+                  ./scripts
+                  ./src
+                ];
+              };
+            in
+            pkgs.runCommand "agent-project-move-tests"
+              {
+                nativeBuildInputs = [
+                  pkgs.sqlite
+                  nushell
+                ];
+              }
+              ''
+                cd ${source}
+                shopt -s globstar nullglob
+                files=(src/**/*.test.nu)
+                nu --no-config-file scripts/nu-test.nu "''${files[@]}"
+                touch "$out"
+              '';
         };
 
         # ------------------------------------------------------------------------------------------

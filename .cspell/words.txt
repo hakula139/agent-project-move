@@ -6,6 +6,7 @@ cwds
 dflt
 dont
 editorconfig
+endeavouros
 findutils
 hakula
 jsonc
@@ -13,8 +14,8 @@ jsonl
 nixfmt
 nixos
 nixpkgs
-nushell
 nuon
+nushell
 omp
 opencode
 pcre
@@ -23,6 +24,8 @@ pname
 prek
 ripgrep
 rollouts
+shfmt
+shopt
 sqlite
 statix
 stdenv
@@ -30,6 +33,7 @@ subpaths
 substituters
 taiki
 taplo
+unspanned
 worktree
 worktrees
 zstd

@@ -16,11 +16,11 @@ Root: `$CLAUDE_CONFIG_DIR`, defaulting to `~/.claude`. The global document is `$
 
 A directory name encodes a path by replacing each UTF-16 code unit outside `[a-zA-Z0-9]` with one `-`, truncating to 200 characters, and appending `-` plus a base36 hash of the whole path when it overflows. A surrogate pair becomes two dashes.
 
-Selection reads every `cwd` a top-level transcript records in one `rg` pass, so a session that changed directories is attributed to each path it used. A directory counts as owned when a recorded `cwd` whose encoding equals its name lies under `<old>`.
+Selection reads every `cwd` a top-level transcript records in one `rg` pass, so a session that changed directories is attributed to each path it used.
 
-A prune deletes a directory only when every `cwd` it records lies under the pruned paths and no existing path encodes to its name. `sessions-index.json` is stale derived data and is deleted when a project directory merges.
+A prune deletes a directory only when every `cwd` it records lies under the pruned paths and no existing path encodes to its name.
 
-When a merge lands on a destination that already has `memory/`, the source memory moves to `<destination>/memory/incoming/<source-encoded-name>/` unchanged. Otherwise it moves in directly, dropping identical duplicates. Memory content is never merged.
+Merges, including memory staging, follow [Design](design.md#merges-and-memory-staging).
 
 ## Codex
 
@@ -37,7 +37,7 @@ Root: `$CODEX_HOME`, defaulting to `~/.codex`. The state database is the highest
 
 A history projection is exact or absent. When both spellings of the path keep the byte length of their JSON-escaped form, the thread's rows stay and their `item_json` paths are rewritten. Otherwise the thread's projection rows are deleted, with `thread_history_projection_state` first so its trigger clears `thread_realtime_items`. Codex rebuilds the projection on the thread's first resume, after `codex unarchive` for an archived thread, so reads and the transcript preview show nothing until then. Threads without a rollout keep their rows.
 
-A prune deletes the rollouts and `threads` rows with foreign keys on, then the removed threads' history projection rows explicitly, because that database has no cascades. An export carries no projection rows.
+A prune deletes the rollouts and `threads` rows with foreign keys on, then the removed threads' history projection rows explicitly, because that database has no cascades.
 
 ## OpenCode
 

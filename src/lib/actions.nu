@@ -4,6 +4,7 @@
 # Action records, directory merges, file copies and backups, and applying a plan.
 # ==================================================================================================
 
+use ./output.nu [plural print-table]
 use ./rewrite.nu [file-uri json-escape rewrite-text]
 use ./sqlite.nu [path-condition run-sql sql-quote sqlite-rows]
 
@@ -56,23 +57,23 @@ export def sql-action [
   db: string
   statements: list<string>
   description: string
-  --derived # Brings derived data in line before a source write ends its selection
-  --rows-first # Deletes rows before the files they reference
+  --derived # Bring derived data in line before a source write ends its selection
+  --rows-first # Delete rows before the files they reference
   --foreign-keys # Delete child rows through the schema's cascades
 ]: nothing -> record {
   action $assistant $store sql $db $description
   | merge {
-      statements: $statements
-      phase: (if $derived { "derived" } else { null })
-      rows_first: $rows_first
-      foreign_keys: $foreign_keys
-    }
+    statements: $statements
+    phase: (if $derived { "derived" } else { null })
+    rows_first: $rows_first
+    foreign_keys: $foreign_keys
+  }
 }
 
 def json-column-statements [
+  db: string
   table: string
   column: string
-  db: string
   old: string
   new: string
 ]: nothing -> list<string> {
@@ -141,7 +142,7 @@ export def column-actions [
     let prefix = ($spec | get -o prefix | default "")
     let condition = (path-condition $column [$old] --prefix $prefix)
     let statements = if ($spec | get -o json | default false) {
-      json-column-statements $table $column $db $old $new
+      json-column-statements $db $table $column $old $new
     } else {
       let exists = (
         sqlite-rows $db (
@@ -206,7 +207,10 @@ export def merge-actions [
   let source_type = ($source | path type)
   let target_type = ($target | path type)
   if $source_type != $target_type {
-    error make {msg: $"Rename collision: ($source) and ($target) have different kinds"}
+    error make --unspanned {
+      msg: $"Both ($source) and ($target) exist as different kinds"
+      help: "Move or delete one of them, then rerun the move. Nothing was written."
+    }
   }
 
   if $source_type != "dir" {
@@ -216,7 +220,10 @@ export def merge-actions [
     if (same-content $source $target) {
       return [(action $assistant $store delete $source "duplicate of the destination")]
     }
-    error make {msg: $"Rename collision: ($source) and ($target) differ."}
+    error make --unspanned {
+      msg: $"Both ($source) and ($target) exist with different content"
+      help: "Keep one copy, moving or deleting the other, then rerun the move. Nothing was written."
+    }
   }
 
   mut actions = []
@@ -239,15 +246,21 @@ export def merge-actions [
 export def decompress-file [path: string]: nothing -> string {
   let run = (^zstd -dc $path | complete)
   if $run.exit_code != 0 {
-    error make {msg: $"zstd failed to read ($path)"}
+    error make --unspanned {
+      msg: $"zstd failed to read ($path): ($run.stderr | str trim)"
+      help: $"Check that ($path) is a valid zstd file."
+    }
   }
   $run.stdout
 }
 
-export def compress-file [content: string, target: string]: nothing -> nothing {
+def compress-file [content: string, target: string]: nothing -> nothing {
   let run = ($content | ^zstd -q -f -o $target | complete)
   if $run.exit_code != 0 {
-    error make {msg: $"zstd failed on ($target): ($run.stderr | str trim)"}
+    error make --unspanned {
+      msg: $"zstd failed on ($target): ($run.stderr | str trim)"
+      help: $"Check that ($target) is writable."
+    }
   }
 }
 
@@ -273,7 +286,10 @@ def edit-file [path: string, transform: closure]: nothing -> nothing {
   let compress = ($path | str ends-with ".zst")
   let content = if $compress { decompress-file $path } else { open --raw $path }
   if ($content | describe) != "string" {
-    error make {msg: $"Refusing to edit binary file ($path)"}
+    error make --unspanned {
+      msg: $"Refusing to edit the binary file ($path)"
+      help: "Convert the file to UTF-8, or move it by hand."
+    }
   }
   let updated = (do $transform $content)
   if $updated == $content { return }
@@ -293,7 +309,12 @@ def execute-action [action: record]: nothing -> nothing {
     'edit' => { edit-file $action.path $action.transform }
     'delete' => { rm --recursive --force $action.path }
     'rmdir' => { ^rmdir $action.path }
-    _ => { error make {msg: $"Unknown action ($action.op)"} }
+    _ => {
+      error make --unspanned {
+        msg: $"Unknown action ($action.op)"
+        help: "Rerun with the version that planned this action."
+      }
+    }
   }
 }
 
@@ -352,13 +373,18 @@ export def apply-all [actions: list<record>, --apply]: nothing -> nothing {
   let ordered = ($derived ++ $tail)
 
   if not $apply {
-    print ($ordered | each {|action| manifest-view $action | default "" to } | table)
+    $ordered | each {|action| manifest-view $action | default "" to } | print-table
+    let count = ($ordered | length)
+    print $"Dry run: ($count) (plural $count 'action' 'actions') planned, nothing written. Rerun with --apply to write the plan. A backup goes to (backup-root) first."
     return
   }
 
   let stamp = (date now | format date '%Y%m%dT%H%M%S')
-  let backup_dir = (backup-root | path join $"($stamp)-($nu.pid)")
+  let root = (backup-root)
+  let backup_dir = ($root | path join $"($stamp)-($nu.pid)")
   let databases = ($actions | where op == sql | get path | uniq)
+  mkdir $root
+  ^chmod 700 $root
   mkdir $backup_dir
   ^chmod 700 $backup_dir
   $ordered
@@ -374,7 +400,10 @@ export def apply-all [actions: list<record>, --apply]: nothing -> nothing {
     mkdir ($destination | path dirname)
     let run = (^sqlite3 $db $".backup '($destination)'" | complete)
     if $run.exit_code != 0 {
-      error make {msg: $"SQLite backup failed on ($db): ($run.stderr | str trim)"}
+      error make --unspanned {
+        msg: $"SQLite backup failed on ($db): ($run.stderr | str trim)"
+        help: $"Close the assistant that uses ($db) and rerun the same command."
+      }
     }
   }
   print $"Backed up to ($backup_dir)"
@@ -388,5 +417,7 @@ export def apply-all [actions: list<record>, --apply]: nothing -> nothing {
     }
   }
 
-  print $"Applied ($actions | length) actions."
+  let count = ($actions | length)
+  print $"Applied ($count) (plural $count 'action' 'actions')."
+  print $"Run 'agent-project-move scan' to check the result, and keep ($backup_dir) until you have."
 }

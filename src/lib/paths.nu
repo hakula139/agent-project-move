@@ -19,16 +19,22 @@ export def normalize-path [
 
 export def check-destination [old: string, new: string]: nothing -> nothing {
   if $old == $new {
-    error make {msg: "Source and destination are the same path"}
+    error make --unspanned {
+      msg: "Source and destination are the same path"
+      help: "Nothing was written."
+    }
   }
   if ($old | str lowercase) == ($new | str lowercase) {
-    error make {msg: (
-      "Case-only moves are not supported. "
-      + "Rename the directory and move its state to a different path."
-    )}
+    error make --unspanned {
+      msg: "A move that changes only letter case is not supported"
+      help: $"Go through a temporary name: rename the directory to ($old).tmp, run 'move ($old) ($old).tmp', then rename it to ($new) and run 'move ($old).tmp ($new)'."
+    }
   }
   if (path-match $old $new) {
-    error make {msg: $"Destination ($new) is under the source ($old)"}
+    error make --unspanned {
+      msg: $"Destination ($new) is under the source ($old)"
+      help: "Choose a destination outside the source tree. Nothing was written."
+    }
   }
 }
 
@@ -55,12 +61,25 @@ export def files-under [dir: string]: nothing -> list<string> {
   (^find $dir -type f | lines | sort)
 }
 
+# Whether a path is missing. A path under an unmounted drive root counts as present, so a prune
+# does not delete state for a disk that is merely detached.
 export def path-missing [path: string]: nothing -> bool {
   if ($path | path exists) { return false }
   let parts = ($path | str replace --regex '^/' '' | split row '/')
   if ($parts | length) < 2 { return true }
-  let root = "/" + ($parts | take 2 | str join "/")
-  if ($root | str starts-with "/Volumes/") or ($root | str starts-with "/mnt/") {
+  let root = if ($parts | length) >= 4 and ($parts | first 2 | str join "/") == "run/media" {
+    "/" + ($parts | take 4 | str join "/")
+  } else if ($parts | length) >= 3 and ($parts | first 1 | first) == "media" {
+    "/" + ($parts | take 3 | str join "/")
+  } else {
+    "/" + ($parts | take 2 | str join "/")
+  }
+  if (
+    ($root | str starts-with "/Volumes/")
+    or ($root | str starts-with "/mnt/")
+    or ($root | str starts-with "/media/")
+    or ($root | str starts-with "/run/media/")
+  ) {
     $root | path exists
   } else {
     true
