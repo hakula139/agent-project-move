@@ -36,6 +36,6 @@ These traps assume the Nushell Book's [Thinking in Nu](https://www.nushell.sh/bo
 Give a script a `<script>.test.nu` beside it when its output is easy to get subtly wrong, such as a path encoding, a rewrite, or a SQL condition.
 
 - **Tests**: commands named `test <behavior>` in plain words, asserting with `std/assert`.
-- **Structured inputs**: write JSON and JSONL test inputs as Nushell records and lists, serialized with `to json --raw` and joined with `"\n"` for JSONL.
+- **Structured inputs**: write JSON and JSONL test inputs as Nushell records and lists, serialized with `to json`, or with `to json --raw` per line for JSONL.
 - **Fixtures**: when several cases differ only in document-like or byte-sensitive inputs, make them golden files under `stores/fixtures/<group>/<case>/`, where a `case.nuon` holds what the files cannot express. Copy each input into a `mktemp` directory before running the script, so the script never writes to a fixture.
 - **Test data**: use invented names such as `/home/u/src/app`, never a path from a real machine.
