@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -69,10 +68,8 @@ jobs:
                 [.[].jobs[]] as $jobs
                 | first($jobs[] | select(.id == $gate))
                   // error("job \($gate) is missing from this run attempt")
-                # Jobs of a calling workflow share this run, so check only names with this prefix.
-                | (.name | sub("[^/]*$"; "")) as $prefix
                 | $jobs[]
-                | select(.id != $gate and (.name | startswith($prefix)))
+                | select(.id != $gate)
                 | select(.conclusion != "success" and .conclusion != "skipped")
                 | "::error::\(.name): \(.conclusion // .status)"
               '

@@ -6,9 +6,10 @@ on:
   workflow_dispatch:
     inputs:
       notes:
-        description: Tag whose release notes to republish from this ref's CHANGELOG.md
+        description: >-
+          Tag whose release notes to republish from this ref's CHANGELOG.md
+          (leave empty on a tag to publish its release)
         type: string
-        required: true
 
 permissions:
   contents: read
