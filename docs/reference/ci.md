@@ -1,6 +1,8 @@
 # CI
 
-CI runs on pushes to `main`, pull requests, and manual dispatch, and the release workflow calls it again for each tag before publishing. The `nix` job runs `nix flake check` and `nix build` on Linux and macOS.
+CI runs on pushes to `main`, pull requests, and manual dispatch. The `nix` job runs `nix flake check` and `nix build` on Linux and macOS.
+
+The release workflow waits for a push or dispatched CI run on the tagged commit, then pins the tag's package closures in Cachix under `agent-project-move-<tag>-<system>` and publishes the GitHub Release from the tag's `CHANGELOG.md` section. A manual dispatch with `notes` republishes a tag's notes without building. `nix-cache.yml` pins a tag's closures and can be dispatched to restore a pin. [RELEASING.md](../../RELEASING.md) covers both procedures.
 
 Branch protection requires only `CI Result`, which reads every job of the run attempt from the Actions API and fails when any job other than itself concluded anything except success or skipped. A matrix leg cancelled before a runner picks it up never reaches `needs`, so list each new job in the gate's `needs`. A skipped job counts as passing, which is why the gate runs after a failure too.
 

@@ -4,6 +4,11 @@ on:
   push:
     tags: ['v[0-9]+.*']
   workflow_dispatch:
+    inputs:
+      notes:
+        description: Tag whose release notes to republish from this ref's CHANGELOG.md
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -13,18 +18,61 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  ci:
-    name: CI
+  tagged-ci:
+    name: Check Tagged Commit CI
+    if: ${{ github.ref_type == 'tag' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       actions: read
-      contents: read
-    uses: ./.github/workflows/ci.yml
-    secrets: inherit
+    steps:
+      - name: Wait for CI on the tagged commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Pull request runs test a merge commit, so only push and dispatched runs count.
+          while true; do
+            verdict=$(
+              gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=100" \
+                --paginate \
+                --slurp |
+                jq -r '[.[].workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")]
+                  | if any(.[]; .conclusion == "success") then
+                      "passed \(map(select(.conclusion == "success"))[0].html_url)"
+                    elif any(.[]; .status != "completed") then "running"
+                    else "failed" end'
+            )
+            case "$verdict" in
+              passed*)
+                echo "CI passed on $GITHUB_SHA: ${verdict#passed }"
+                exit 0
+                ;;
+              running)
+                sleep 30
+                ;;
+              *)
+                echo "::error::No push or dispatched CI run passed on $GITHUB_SHA." \
+                  "Rerun its failed jobs, or run ci.yml on $GITHUB_REF_NAME, then rerun this job."
+                exit 1
+                ;;
+            esac
+          done
+
+  nix:
+    name: Pin Nix packages
+    if: ${{ github.ref_type == 'tag' }}
+    needs: tagged-ci
+    uses: ./.github/workflows/nix-cache.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
   publish:
     name: Publish GitHub Release
     if: ${{ github.ref_type == 'tag' }}
-    needs: [ci]
+    needs: [tagged-ci, nix]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -60,3 +108,25 @@ jobs:
           fi
 
           gh release create "$GITHUB_REF_NAME" "${options[@]}"
+
+  notes:
+    name: Republish Release Notes
+    if: ${{ inputs.notes }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install changelog parser
+        uses: taiki-e/install-action@parse-changelog
+
+      - name: Republish notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.notes }}
+        run: |
+          parse-changelog CHANGELOG.md "${TAG#v}" > release-notes.md
+          gh release edit "$TAG" --notes-file release-notes.md

@@ -7,12 +7,12 @@ Conventions for commits, branches, pull requests, and issues.
 - Keep each commit to one logical change. Use the imperative mood for its title, formatted as `type(scope): description`. For substantial changes, add a body explaining the problem, rationale, and tradeoffs.
 - Choose one of these types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`, `build`, `chore`, `style`, or `revert`.
 - Use the most specific scope the change touches, such as a store (`claude`, `codex`), a helper (`actions`, `sqlite`), or a documentation target (`README`, `design`). Omit the scope for changes that span the repository.
-- If a change breaks the [stability surface](../../.agents/skills/release/SKILL.md#stability-surface), add `!` after the scope, as in `feat(claude)!: ...`.
+- If a change breaks the [stability surface](../../RELEASING.md#stability-surface), add `!` after the scope, as in `feat(claude)!: ...`.
 - Name branches `<type>/<short-name>`, using the same types.
 
 ## Pull requests
 
-- Merge into `main` only with squash merges. The squash commit uses the PR title, which becomes the PR's draft [changelog](../../.agents/skills/release/SKILL.md#changelog) entry, so write the title for users.
+- Merge into `main` only with squash merges. The squash commit uses the PR title, which becomes the PR's draft [changelog](../../RELEASING.md#changelog) entry, so write the title for users.
 - Fill in `.github/pull_request_template.md`.
 - Assign the PR to `hakula139` and add one type label:
 
@@ -31,7 +31,7 @@ Conventions for commits, branches, pull requests, and issues.
 ## Review and merge
 
 - Review each PR once. Fix every finding, including suggestions, verify the fixes with the [verification](../../AGENTS.md#verification) block, and merge without a second review round.
-- Tags and releases need the approval the [release skill](../../.agents/skills/release/SKILL.md) describes.
+- Tags and releases need the approval [RELEASING.md](../../RELEASING.md) describes.
 
 ## Issues
 
