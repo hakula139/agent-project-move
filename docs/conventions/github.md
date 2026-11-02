@@ -32,7 +32,6 @@ Conventions for commits, branches, pull requests, and issues.
 
 - Review each PR once. Fix every finding, including suggestions, verify the fixes with the [verification](../../AGENTS.md#verification) block, and merge without a second review round.
 - Tags and releases need the approval the [release skill](../../.agents/skills/release/SKILL.md) describes.
-- Keep each line of work's open PRs in a single stack, with each PR based on the one before it and no more than three unmerged at a time. Land the bottom PR before opening another.
 
 ## Issues
 
