@@ -51,7 +51,7 @@ commit_preprocessors = [
   # Backtick inline HTML so Markdown renders it as code. `(^|[^`])` stands in for the lookbehind
   # that Rust regex lacks, so already-fenced spans stay as they are.
   { pattern = '(^|[^`])(<\/?[a-zA-Z][^>]*>)', replace = '$1`$2`' },
-  # GitHub does not autolink `#N` in rendered files.
+  # GitHub does not autolink `#N` in rendered Markdown files.
   { pattern = '\(#([0-9]+)\)', replace = '([#$1](https://github.com/hakula139/agent-project-move/pull/$1))' },
 ]
 

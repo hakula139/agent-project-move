@@ -20,7 +20,7 @@ concurrency:
 jobs:
   tagged-ci:
     name: Check Tagged Commit CI
-    if: ${{ github.ref_type == 'tag' }}
+    if: ${{ github.ref_type == 'tag' && !inputs.notes }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -61,7 +61,7 @@ jobs:
 
   nix:
     name: Pin Nix packages
-    if: ${{ github.ref_type == 'tag' }}
+    if: ${{ github.ref_type == 'tag' && !inputs.notes }}
     needs: tagged-ci
     uses: ./.github/workflows/nix-cache.yml
     with:
