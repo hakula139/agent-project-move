@@ -143,6 +143,10 @@ Each assistant changes its local storage without notice. `agent-project-move` is
 
 A newer version can add a database, a table, or a path-bearing column this tool does not know about, and those paths then stay stale after a move. Path values in JSON transcripts are rewritten wherever they appear, so new record kinds are covered. If a move leaves sessions behind, open an issue with the release tag or commit you run and the assistant's version.
 
+## Releases
+
+Releases follow the [versioning policy](RELEASING.md#versioning), and stable releases keep the [stability surface](RELEASING.md#stability-surface) compatible within a minor version.
+
 ## Agent skill
 
 The repository ships an [Agent Skill](skills/agent-project-move/SKILL.md) that surveys recorded paths, confirms the plan with you, applies it, and verifies the result.

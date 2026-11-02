@@ -6,7 +6,9 @@ cwds
 dflt
 dont
 editorconfig
+elif
 endeavouros
+esac
 findutils
 hakula
 jsonc
