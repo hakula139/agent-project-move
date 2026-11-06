@@ -5,7 +5,7 @@ indent_style = space
 indent_size = 2
 
 # shfmt reads these EditorConfig properties, and uses tabs for a shell file no section covers.
-[{*.sh,*.zsh}]
+[*.{sh,zsh}]
 indent_style = space
 indent_size = 2
 binary_next_line = true
