@@ -1,8 +1,8 @@
 # Releasing
 
-Pushing a tag that matches `v[0-9]+.*` starts `.github/workflows/release.yml`, which waits for a passing CI run on the tagged commit, pins the tag's package closures in the `hakula` Cachix cache as `agent-project-move-<tag>-<system>`, and publishes a GitHub Release with the tag's `CHANGELOG.md` section as its notes.
+Pushing a tag that matches `v[0-9]+.*` starts `.github/workflows/tag.yml`, which checks the package version and calls devkit's `release.yml`; that workflow waits for a passing CI run on the tagged commit, pins the tag's package closures in the `hakula` Cachix cache as `agent-project-move-<tag>-<system>`, and publishes a GitHub Release with the tag's `CHANGELOG.md` section as its notes.
 
-To restore a published tag's cache pin, run `gh workflow run nix-cache.yml -f tag=vX.Y.Z`.
+To restore a published tag's cache pin, run `gh workflow run nix-cache.yml --ref vX.Y.Z`.
 
 ## Versioning
 
@@ -30,10 +30,17 @@ Transcript and database rewrites follow each assistant's own store, so an assist
 - Each `(#N)` links to its PR.
 - `--prepend` adds one section while preserving the rest. Avoid `--output CHANGELOG.md`, which regenerates the whole file and drops every curated section and compare link.
 
-The GitHub Release keeps its own copy of the notes, so once a PR that corrects a published section merges, run the Release workflow on `main` with the tag in its `notes` input, which republishes the tag's section and builds nothing:
+The GitHub Release keeps its own copy of the notes. To refresh it from an edited `CHANGELOG.md`, fetch `parse-changelog` and edit the release only if the parse succeeds. Replace `x86_64-unknown-linux-musl` below with your system's target, such as `aarch64-apple-darwin` on a Mac:
 
 ```bash
-gh workflow run release.yml --ref main -f notes=vX.Y.Z
+dir=$(mktemp -d)
+gh release download \
+  -R taiki-e/parse-changelog \
+  -p 'parse-changelog-x86_64-unknown-linux-musl.tar.gz' \
+  --dir "$dir"
+tar -xzf "$dir"/parse-changelog-*.tar.gz -C "$dir"
+"$dir/parse-changelog" CHANGELOG.md X.Y.Z >"$dir/notes.md" \
+  && gh release edit vX.Y.Z --notes-file "$dir/notes.md"
 ```
 
 ### Curate the section
@@ -53,7 +60,7 @@ The draft lists PR titles, which are too short to explain each change to users. 
 
 1. Branch off `main` as `chore/release-vX.Y.Z`.
 
-2. Set `version` in `nix/agent-project-move.nix` to `X.Y.Z`, since the publish job fails when the tag and the package version differ.
+2. Set `version` in `flake.nix` to `X.Y.Z`, since the version job fails when the tag and the package version differ.
 
 3. Inside the dev shell, which provides git-cliff, prepend the section. Because `cliff.toml` bounds sections at stable tags only, a prerelease adds a `--tag-pattern` that bounds its section at every tag:
 
@@ -79,13 +86,13 @@ The draft lists PR titles, which are too short to explain each change to users. 
 
 6. Run the [verification block](AGENTS.md#verification).
 
-7. Commit, then open a PR titled `chore(release): vX.Y.Z`. Record the checks in the PR's Test plan. The diff should touch only `nix/agent-project-move.nix`, `CHANGELOG.md`, and possibly `.cspell/words.txt`.
+7. Commit, then open a PR titled `chore(release): vX.Y.Z`. Record the checks in the PR's Test plan. The diff should touch only `flake.nix`, `CHANGELOG.md`, and possibly `.cspell/words.txt`.
 
 8. Merge after CI passes and the review is approved. If another PR merges first, recreate the branch from `main` and repeat the steps before curation, because updating the branch leaves a section that misses the new commit.
 
 ## Tag
 
-Pushing the tag starts the Release workflow and is hard to undo, so get approval for it separately from the release PR.
+Pushing the tag starts the Tag Release workflow and is hard to undo, so get approval for it separately from the release PR.
 
 Tag the release PR's squash commit by its SHA, since a later PR may already sit on top of `main`:
 
@@ -95,18 +102,18 @@ sha=$(gh pr view <release-pr> --json mergeCommit --jq .mergeCommit.oid)
 git tag vX.Y.Z "$sha" && git push origin vX.Y.Z
 ```
 
-The workflow reuses the CI run that the merge started on `main` and waits up to an hour for it to finish. It publishes nothing unless a push or dispatched CI run on that commit passed, so a tag on a commit that never ran CI on `main` needs `gh workflow run ci.yml --ref vX.Y.Z` first, and a failed run needs its failed jobs rerun. Then rerun the Release workflow's failed jobs.
+The workflow reuses the CI run that the merge started on `main` and waits up to two hours for it to finish. It publishes nothing unless a push or dispatched CI run on that commit passed, so a tag on a commit that never ran CI on `main` needs `gh workflow run ci.yml --ref vX.Y.Z` first, and a failed run needs its failed jobs rerun. Then rerun the Tag Release workflow's failed jobs.
 
 ## Verify publication
 
-Watch the [Release workflow](https://github.com/hakula139/agent-project-move/actions/workflows/release.yml) with `gh run watch` and check:
+Watch the [Tag Release workflow](https://github.com/hakula139/agent-project-move/actions/workflows/tag.yml) with `gh run watch` and check:
 
 - The release notes match the changelog section, and a prerelease tag published a prerelease.
 - `nix run github:hakula139/agent-project-move/vX.Y.Z -- scan` starts and prints its table.
 
 ## Re-cut an existing tag
 
-The PR-based flow tags only reviewed, CI-green commits, so re-cutting should be rare. If a release still needs to be redone, let any in-flight release run finish first. To rebuild the same commit, delete only the release with `gh release delete vX.Y.Z --yes` and run the Release workflow from the Actions tab against the tag with an empty `notes` input. To release a different commit, delete the release and its tag, then move and push the tag:
+The PR-based flow tags only reviewed, CI-green commits, so re-cutting should be rare. If a release still needs to be redone, let any in-flight release run finish first. To rebuild the same commit, delete only the release with `gh release delete vX.Y.Z --yes` and rerun the Tag Release workflow from the Actions tab against the tag. To release a different commit, delete the release and its tag, then move and push the tag:
 
 ```bash
 gh release delete vX.Y.Z --cleanup-tag --yes

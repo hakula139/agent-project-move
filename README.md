@@ -41,7 +41,7 @@ nix profile install github:hakula139/agent-project-move
 
 The package wraps the command with `sqlite3`, `ripgrep`, `zstd`, and the coreutils, diffutils, and findutils it needs, so nothing else has to be on `PATH`. It covers `aarch64-darwin`, `aarch64-linux`, and `x86_64-linux`, while other Unix platforms use the plain install. Flakes must be enabled, as in `nix --extra-experimental-features 'nix-command flakes' run ...` on a stock install.
 
-The first run may ask to allow the project's Cachix cache. Declining is fine, since the package builds from cache.nixos.org. The overlay and module use the consumer's Nushell when it is 0.116 or later, and fall back to `nixpkgs-unstable` below that, so keep `inputs.agent-project-move.inputs.nixpkgs-unstable` on its own pin.
+The first run may ask to allow the project's Cachix cache. Declining is fine, since the package builds from cache.nixos.org. The overlay and module use the Nushell from the consuming package set when it is 0.116 or later, and devkit's `nixpkgs-unstable` below that.
 
 Home Manager users add the flake input and import the module:
 
@@ -54,7 +54,7 @@ imports = [ inputs.agent-project-move.homeModules.default ];
 programs.agent-project-move.enable = true;
 ```
 
-The module installs the command and links the skill into `~/.claude/skills` and `~/.codex/skills`. Set `programs.agent-project-move.skillDirectories` to change the list, or use `overlays.default` to install the package through an overlay.
+The module installs the command and links the skill into `~/.agents/skills` and `~/.claude/skills`. Set `programs.agent-project-move.skillDirectories` to change the list, or use `overlays.default` to install the package through an overlay.
 
 ### Plain install
 

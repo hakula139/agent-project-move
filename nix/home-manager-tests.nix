@@ -48,14 +48,14 @@ let
     testEnabledInstallsThePackageAndLinksTheSkill = {
       expr = {
         installsPackage = builtins.elem stub home.home.packages;
+        agentsLink = home.home.file.".agents/skills/agent-project-move".source;
         claudeLink = home.home.file.".claude/skills/agent-project-move".source;
-        codexLink = home.home.file.".codex/skills/agent-project-move".source;
       };
 
       expected = {
         installsPackage = true;
+        agentsLink = "${stub}/share/skills/agent-project-move";
         claudeLink = "${stub}/share/skills/agent-project-move";
-        codexLink = "${stub}/share/skills/agent-project-move";
       };
     };
 

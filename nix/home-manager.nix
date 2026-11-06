@@ -3,6 +3,7 @@
 # ==================================================================================================
 
 {
+  devkit,
   mkAgentProjectMove,
 }:
 
@@ -15,13 +16,6 @@
 
 let
   cfg = config.programs.agent-project-move;
-
-  skillLinks = lib.listToAttrs (
-    map (directory: {
-      name = "${directory}/agent-project-move";
-      value.source = "${cfg.package}/share/skills/agent-project-move";
-    }) cfg.skillDirectories
-  );
 in
 {
   # ------------------------------------------------------------------------------------------------
@@ -37,17 +31,7 @@ in
       description = "Package that provides the `agent-project-move` command.";
     };
 
-    skillDirectories = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [
-        ".claude/skills"
-        ".codex/skills"
-      ];
-      description = ''
-        Home-relative directories that each receive a link to the skill directory. Codex skips
-        a skill whose `SKILL.md` is itself a symlink.
-      '';
-    };
+    skillDirectories = lib.mkOption devkit.lib.skillDirectoriesOption;
   };
 
   # ------------------------------------------------------------------------------------------------
@@ -55,6 +39,10 @@ in
   # ------------------------------------------------------------------------------------------------
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.package ];
-    home.file = skillLinks;
+    home.file = devkit.lib.skillLinks {
+      inherit (cfg) package;
+      name = "agent-project-move";
+      directories = cfg.skillDirectories;
+    };
   };
 }

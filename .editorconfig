@@ -1,5 +1,11 @@
 root = true
 
+[{*.sh,*.zsh}]
+indent_style = space
+indent_size = 2
+binary_next_line = true
+switch_case_indent = true
+
 [*.nu]
 indent_style = space
 indent_size = 2

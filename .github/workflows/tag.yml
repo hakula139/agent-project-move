@@ -1,0 +1,40 @@
+name: Tag Release
+
+on:
+  push:
+    tags: ['v[0-9]+.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  version:
+    name: Check Tag Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Nix
+        uses: hakula139/devkit/actions/setup-nix@v1.0.0-rc.1
+
+      - name: Check the package version
+        run: |
+          version=$(nix eval --raw .#default.version)
+          if [[ "v$version" != "$GITHUB_REF_NAME" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the package version $version"
+            exit 1
+          fi
+
+  release:
+    needs: version
+    permissions:
+      actions: read
+      contents: write
+    uses: hakula139/devkit/.github/workflows/release.yml@v1.0.0-rc.1
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}

@@ -17,10 +17,9 @@
   # ------------------------------------------------------------------------------------------------
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
-    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    git-hooks-nix = {
-      url = "github:cachix/git-hooks.nix";
+    devkit = {
+      url = "github:hakula139/devkit/v1.0.0-rc.1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -37,38 +36,37 @@
     {
       self,
       nixpkgs,
-      nixpkgs-unstable,
-      git-hooks-nix,
+      devkit,
       home-manager,
       ...
     }:
     let
       inherit (nixpkgs) lib;
 
-      # git-hooks.nix has dropped x86_64-darwin, which Nixpkgs supports only through 26.05.
-      systems = [
-        "aarch64-darwin"
-        "aarch64-linux"
-        "x86_64-linux"
-      ];
-
-      eachSystem =
-        f:
-        let
-          bySystem = lib.genAttrs systems f;
-          outputs = builtins.attrNames bySystem.${builtins.head systems};
-        in
-        lib.genAttrs outputs (output: builtins.mapAttrs (_: attrs: attrs.${output}) bySystem);
-
-      nushellFor =
-        pkgs:
-        if lib.versionAtLeast pkgs.nushell.version "0.116" then
-          pkgs.nushell
-        else
-          nixpkgs-unstable.legacyPackages.${pkgs.stdenv.hostPlatform.system}.nushell;
+      mkDk = pkgs: devkit.lib.mkLib pkgs;
 
       mkAgentProjectMove =
-        pkgs: pkgs.callPackage ./nix/agent-project-move.nix { nushell = nushellFor pkgs; };
+        pkgs:
+        (mkDk pkgs).mkNuApplication {
+          pname = "agent-project-move";
+          version = "0.1.0";
+          src = ./src;
+          skills = [ ./skills/agent-project-move ];
+          runtimeInputs = with pkgs; [
+            coreutils
+            diffutils
+            findutils
+            ripgrep
+            sqlite
+            zstd
+          ];
+          meta = {
+            description = "Move, prune, and transfer the project state stored by coding agents";
+            homepage = "https://github.com/hakula139/agent-project-move";
+            license = lib.licenses.mit;
+            platforms = lib.platforms.all;
+          };
+        };
 
       # A key lets the module system deduplicate the module when it is imported twice.
       homeModuleKey = "${self}/flake.nix#homeModules.default";
@@ -83,90 +81,26 @@
         _class = "homeManager";
         _file = homeModuleKey;
         key = homeModuleKey;
-        imports = [ (import ./nix/home-manager.nix { inherit mkAgentProjectMove; }) ];
+        imports = [
+          (import ./nix/home-manager.nix {
+            inherit devkit mkAgentProjectMove;
+          })
+        ];
       };
     }
-    // eachSystem (
+    // devkit.lib.eachSystem devkit.lib.systems (
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        nushell = nushellFor pkgs;
+        dk = mkDk pkgs;
 
         agentProjectMove = mkAgentProjectMove pkgs;
         overlaid = (pkgs.extend self.overlays.default).agent-project-move;
 
-        # ------------------------------------------------------------------------------------------
-        # Pre-commit Hooks
-        # ------------------------------------------------------------------------------------------
-        hooks = {
-          actionlint.enable = true;
-          check-added-large-files.enable = true;
-          check-yaml.enable = true;
-          deadnix.enable = true;
-          editorconfig-checker.enable = true;
-          end-of-file-fixer.enable = true;
-          nixfmt.enable = true;
-          shellcheck.enable = true;
-          statix.enable = true;
-          taplo.enable = true;
-
-          cspell = {
-            enable = true;
-            args = [
-              "--no-progress"
-              "--no-must-find-files"
-            ];
-          };
-
-          markdownlint = {
-            enable = true;
-            args = [ "--fix" ];
-          };
-
-          nu-check = {
-            enable = true;
-            description = "Run Nushell's diagnostic check on .nu files.";
-            entry = lib.getExe (
-              pkgs.writeShellApplication {
-                name = "nu-check";
-                runtimeInputs = [ nushell ];
-                text = ''exec nu --no-config-file ${./scripts/nu-check.nu} "$@"'';
-              }
-            );
-            files = "\\.nu$";
-          };
-
-          prettier = {
-            enable = true;
-            files = "\\.(js|json|jsonc|ya?ml)$";
-          };
-
-          # `shfmt` reads `.editorconfig` only when the entry passes no formatting flag.
-          shfmt = {
-            enable = true;
-            settings = {
-              language-dialect = null;
-              simplify = false;
-            };
-          };
-
-          trim-trailing-whitespace = {
-            enable = true;
-            # Preserve Markdown's two-trailing-space hard-break syntax.
-            args = [ "--markdown-linebreak-ext=md" ];
-          };
-        };
-
-        preCommit = git-hooks-nix.lib.${system}.run {
+        preCommit = dk.preCommit {
           src = ./.;
-          package = pkgs.prek;
-          # Fixtures are byte-for-byte inputs, so no hook may rewrite them.
-          excludes = [ "(^|/)fixtures/" ];
-          inherit hooks;
+          hooks.nu-check.enable = true;
         };
-
-        flock = lib.getExe pkgs.flock;
-        git = lib.getExe pkgs.git;
       in
       {
         # ------------------------------------------------------------------------------------------
@@ -176,31 +110,17 @@
           name = "agent-project-move-dev";
 
           packages = [
-            nushell
+            dk.nushell
+            dk.nu-test
             pkgs.git-cliff
             pkgs.ripgrep
             pkgs.sqlite
             pkgs.zstd
-          ]
-          ++ preCommit.enabledPackages
-          ++ [ preCommit.config.package ];
+          ];
 
-          # git-hooks.nix sets a hooks path relative to the main checkout, which linked worktrees
-          # cannot resolve (cachix/git-hooks.nix#688). Unset it to use the shared hooks directory.
-          # The lock prevents concurrent loads from setting the path during `pre-commit install`,
-          # which rejects it. Install only when the current repository is this project, since
-          # `nix develop` can borrow this toolchain from a sibling repository.
-          shellHook = ''
-            if common=$(${git} rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &&
-              top=$(${git} rev-parse --show-toplevel 2>/dev/null) &&
-              [ -f "$top/src/agent-project-move.nu" ]; then
-              (
-                ${flock} 9
-                ${preCommit.config.installationScript}
-                ${git} config --local --unset-all core.hooksPath || true
-              ) 9>"$common/git-hooks.lock"
-            fi
-          '';
+          inputsFrom = [
+            preCommit.shell
+          ];
         };
 
         # ------------------------------------------------------------------------------------------
@@ -215,7 +135,7 @@
         # Checks
         # ------------------------------------------------------------------------------------------
         checks = {
-          pre-commit = preCommit;
+          pre-commit = preCommit.check;
 
           home-manager = import ./nix/home-manager-tests.nix {
             inherit home-manager pkgs;
@@ -226,30 +146,10 @@
             assert overlaid.drvPath == agentProjectMove.drvPath;
             pkgs.emptyFile;
 
-          tests =
-            let
-              source = lib.fileset.toSource {
-                root = ./.;
-                fileset = lib.fileset.unions [
-                  ./scripts
-                  ./src
-                ];
-              };
-            in
-            pkgs.runCommand "agent-project-move-tests"
-              {
-                nativeBuildInputs = [
-                  pkgs.sqlite
-                  nushell
-                ];
-              }
-              ''
-                cd ${source}
-                shopt -s globstar nullglob
-                files=(src/**/*.test.nu)
-                nu --no-config-file scripts/nu-test.nu "''${files[@]}"
-                touch "$out"
-              '';
+          tests = dk.nuTests {
+            src = ./.;
+            runtimeInputs = [ pkgs.sqlite ];
+          };
         };
 
         # ------------------------------------------------------------------------------------------

@@ -19,20 +19,19 @@
 .
 ├── .agents/                # Agent skills, linked from `.claude/`
 ├── .cspell/                # Project spelling dictionary
-├── .github/                # CI and release workflows, issue forms, shared setup action
+├── .github/                # CI and release workflows and issue forms
 ├── bin/                    # POSIX shell launcher for a plain install
 ├── docs/
 │   ├── conventions/        # GitHub and Nushell conventions
 │   └── reference/          # CI, design, and assistant stores
-├── nix/                    # Package, Home Manager module, and module tests
-├── scripts/                # Vendored Nushell test runner and diagnostic check
+├── nix/                    # Home Manager module and its tests
 ├── skills/                 # Agent Skill directories installed by the package
 └── src/                    # The command, orchestration, helpers, and one module per store
 ```
 
 ## Rules for every change
 
-- Run the pre-commit hooks on every commit. In each new checkout or worktree, run `nix develop -c true` once to generate the hook config. Never bypass the hooks with `--no-verify` or `PRE_COMMIT_ALLOW_NO_CONFIG`. When a hook, test, or CI job fails, fix its cause, and keep a skip, ignore entry, or retry only where it is the design, such as the excluded fixtures.
+- Run the pre-commit hooks on every commit. In each new checkout or worktree, run `nix develop -c true` once to install them. Never bypass the hooks with `--no-verify` or `PRE_COMMIT_ALLOW_NO_CONFIG`. When a hook, test, or CI job fails, fix its cause, and keep a skip, ignore entry, or retry only where it is the design, such as the excluded fixtures.
 - Wrap code and comments at 100 columns, counting the indent, end section banners at column 100, and keep a single-line string literal whole at any length.
 - Add new words to `.cspell/words.txt` in alphabetical order. `cspell` scans Nushell sources too, so a new word in a comment fails the same way as one in `README.md`.
 - Update whatever the change makes stale: the README's usage, tested versions, and safety model, the reference pages, the skill under `skills/`, and the Home Manager module in `nix/home-manager.nix` when the command or its skill changes what it installs.
@@ -44,9 +43,9 @@
 Run after implementation and before review:
 
 ```bash
-nix flake check                                  # Hooks, the Home Manager module tests, and every Nushell test
+nix flake check --all-systems                    # Hooks, the Home Manager module tests, and every Nushell test
 nix build                                        # Build the command, its wrapper, and the installed skill
-nix develop -c nu scripts/nu-test.nu <file>...   # Run one or more test files directly
+nix develop -c nu-test <file>...                 # Run one or more test files directly
 nix run . -- scan                                # Exercise a subcommand through the packaged wrapper
 ```
 
