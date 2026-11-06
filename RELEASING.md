@@ -1,8 +1,8 @@
 # Releasing
 
-Pushing a tag that matches `v[0-9]+.*` starts `.github/workflows/tag.yml`, which checks the package version and calls devkit's `release.yml`; that workflow waits for a passing CI run on the tagged commit, pins the tag's package closures in the `hakula` Cachix cache as `agent-project-move-<tag>-<system>`, and publishes a GitHub Release with the tag's `CHANGELOG.md` section as its notes.
+Pushing a tag that matches `v[0-9]+.*` starts `.github/workflows/tag.yml`, which checks the package version and calls devkit's `release.yml`. That workflow waits for a passing CI run on the tagged commit, pins the tag's package closures in the `hakula` Cachix cache as `agent-project-move-<tag>-<system>`, and publishes a GitHub Release with the tag's `CHANGELOG.md` section as its notes.
 
-To restore a published tag's cache pin, run `gh workflow run nix-cache.yml --ref vX.Y.Z`.
+To restore a published tag's cache pin, run `gh workflow run nix-cache.yml --ref vX.Y.Z`. The `v0.1.0` tag predates the thin caller, so restoring its pin takes `gh workflow run nix-cache.yml --ref v0.1.0 -f tag=v0.1.0`.
 
 ## Versioning
 
@@ -113,7 +113,7 @@ Watch the [Tag Release workflow](https://github.com/hakula139/agent-project-move
 
 ## Re-cut an existing tag
 
-The PR-based flow tags only reviewed, CI-green commits, so re-cutting should be rare. If a release still needs to be redone, let any in-flight release run finish first. To rebuild the same commit, delete only the release with `gh release delete vX.Y.Z --yes` and rerun the Tag Release workflow from the Actions tab against the tag. To release a different commit, delete the release and its tag, then move and push the tag:
+The PR-based flow tags only reviewed, CI-green commits, so re-cutting should be rare. If a release still needs to be redone, let any in-flight release run finish first. To rebuild the same commit, delete only the release with `gh release delete vX.Y.Z --yes` and rerun the tag's existing Tag Release run with `gh run rerun <id>`. Once the rerun window has passed, delete and re-push the tag instead. To release a different commit, delete the release and its tag, then move and push the tag:
 
 ```bash
 gh release delete vX.Y.Z --cleanup-tag --yes

@@ -67,7 +67,7 @@ git clone https://github.com/hakula139/agent-project-move ~/.local/share/agent-p
 ~/.local/share/agent-project-move/bin/agent-project-move setup
 ```
 
-`setup` links the launcher into `~/.local/bin` and the skill into `~/.claude/skills`, `${CODEX_HOME:-~/.codex}/skills`, and `$CLAUDE_CONFIG_DIR/skills` when that variable names a different directory. It warns when `~/.local/bin` is not on `PATH`, refuses to replace an entry it did not create, and is safe to rerun. `git pull` updates the clone, and rerun `setup` after moving the clone somewhere else.
+`setup` links the launcher into `~/.local/bin` and the skill into `~/.agents/skills` and `~/.claude/skills`. It warns when `~/.local/bin` is not on `PATH`, refuses to replace an entry it did not create, and is safe to rerun. `git pull` updates the clone, and rerun `setup` after moving the clone somewhere else.
 
 ## Safety model
 

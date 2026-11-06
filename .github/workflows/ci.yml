@@ -21,35 +21,11 @@ jobs:
     secrets:
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-  build:
-    name: Build package (${{ matrix.os }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: Linux
-            runner: ubuntu-latest
-          - os: macOS
-            runner: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Nix
-        uses: hakula139/devkit/actions/setup-nix@v1.0.0-rc.1
-        with:
-          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-
-      - name: Build package
-        run: nix build --no-link --print-build-logs
-
   result:
     name: CI Result
-    # A skipped job counts as a passing required check, so the gate must run after failures too.
+    # A skipped required check passes, so the gate must run after failures too.
     if: ${{ !cancelled() }}
-    needs: [nix, build]
+    needs: [nix]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

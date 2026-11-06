@@ -43,11 +43,9 @@
     let
       inherit (nixpkgs) lib;
 
-      mkDk = pkgs: devkit.lib.mkLib pkgs;
-
       mkAgentProjectMove =
         pkgs:
-        (mkDk pkgs).mkNuApplication {
+        (devkit.lib.mkLib pkgs).mkNuApplication {
           pname = "agent-project-move";
           version = "0.1.0";
           src = ./src;
@@ -92,7 +90,7 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        dk = mkDk pkgs;
+        dk = devkit.lib.mkLib pkgs;
 
         agentProjectMove = mkAgentProjectMove pkgs;
         overlaid = (pkgs.extend self.overlays.default).agent-project-move;
@@ -145,6 +143,8 @@
           overlay =
             assert overlaid.drvPath == agentProjectMove.drvPath;
             pkgs.emptyFile;
+
+          package = agentProjectMove;
 
           tests = dk.nuTests {
             src = ./.;

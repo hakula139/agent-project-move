@@ -135,6 +135,13 @@ def link-entry [link: string, target: string]: nothing -> string {
   $"linked: ($link)"
 }
 
+export def skill-links []: nothing -> list<string> {
+  [
+    ($env.HOME | path join .agents skills agent-project-move)
+    ($env.HOME | path join .claude skills agent-project-move)
+  ]
+}
+
 export def setup []: nothing -> nothing {
   check-tools
 
@@ -155,14 +162,7 @@ export def setup []: nothing -> nothing {
   }
 
   let skill = ($ROOT | path join skills agent-project-move)
-  let claude_link = ($env.HOME | path join .claude skills agent-project-move)
-  print (link-entry $claude_link $skill)
-  let configured = ($env.CLAUDE_CONFIG_DIR? | default "")
-  if $configured != "" and (
-    ($configured | path expand) != (($env.HOME | path join .claude) | path expand)
-  ) {
-    print (link-entry ($configured | path join skills agent-project-move) $skill)
+  for link in (skill-links) {
+    print (link-entry $link $skill)
   }
-  let codex_home = ($env.CODEX_HOME? | default ($env.HOME | path join .codex))
-  print (link-entry ($codex_home | path join skills agent-project-move) $skill)
 }

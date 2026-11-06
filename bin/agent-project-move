@@ -1,6 +1,6 @@
 #!/bin/sh
-if [ "$(uname -s)" = Darwin ] && prefix=$(brew --prefix coreutils 2>/dev/null) &&
-  [ -d "$prefix/libexec/gnubin" ]; then
+if [ "$(uname -s)" = Darwin ] && prefix=$(brew --prefix coreutils 2>/dev/null) \
+  && [ -d "$prefix/libexec/gnubin" ]; then
   PATH="$prefix/libexec/gnubin:$PATH"
   export PATH
 fi
