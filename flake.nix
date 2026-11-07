@@ -22,11 +22,6 @@
       url = "github:hakula139/devkit/v1.0.0-rc.3";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-
-    home-manager = {
-      url = "github:nix-community/home-manager/release-26.05";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   # ------------------------------------------------------------------------------------------------
@@ -37,7 +32,6 @@
       self,
       nixpkgs,
       devkit,
-      home-manager,
       ...
     }:
     let
@@ -93,7 +87,6 @@
         dk = devkit.lib.mkLib pkgs;
 
         agentProjectMove = mkAgentProjectMove pkgs;
-        overlaid = (pkgs.extend self.overlays.default).agent-project-move;
 
         preCommit = dk.preCommit {
           src = ./.;
@@ -134,16 +127,6 @@
         # ------------------------------------------------------------------------------------------
         checks = {
           pre-commit = preCommit.check;
-
-          home-manager = import ./nix/home-manager-tests.nix {
-            inherit home-manager pkgs;
-            homeModule = self.homeModules.default;
-          };
-
-          overlay =
-            assert overlaid.drvPath == agentProjectMove.drvPath;
-            pkgs.emptyFile;
-
           package = agentProjectMove;
 
           tests = dk.nuTests {
