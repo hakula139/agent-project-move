@@ -27,10 +27,10 @@
 Run after implementation and before review:
 
 ```bash
-nix flake check --all-systems                    # Hooks, the package build, the module evaluation, and every Nushell test
-nix build                                        # Build the command, its wrapper, and the installed skill
-nix develop -c nu-test <file>...                 # Run one or more test files directly
-nix run . -- scan                                # Exercise a subcommand through the packaged wrapper
+nix flake check --all-systems
+nix build
+nix develop -c nu-test <file>...
+nix run . -- scan
 ```
 
 ## Documentation maintenance
