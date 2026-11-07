@@ -38,8 +38,6 @@ export def suggested-move [
   home: string
   temp_roots: list<string>
 ]: nothing -> string {
-  if not (valid-path $path) { return "" }
-
   let sibling = ($path | parse --regex '^(?P<repo>.+?)__worktrees/[^/]+(?:/.*)?$')
   if ($sibling | is-not-empty) {
     let repo = ($sibling | get 0.repo)
@@ -81,11 +79,7 @@ def repo-ancestors [path: string]: nothing -> list<string> {
   $roots
 }
 
-def repo-roots-for [
-  paths: list<string>
-  home: string
-  temp_roots: list<string>
-]: nothing -> list<string> {
+def repo-roots-for [paths: list<string>]: nothing -> list<string> {
   let recorded = (
     $paths
     | where {|path| (not (path-missing $path)) and ($path | path join .git | path exists) }
@@ -100,7 +94,6 @@ def repo-roots-for [
   $recorded
   | append $ancestors
   | uniq
-  | where {|root| ($root != $home) and (not (match-any $temp_roots $root)) }
   | sort
 }
 
@@ -110,7 +103,7 @@ export def scan-suggestions [
   temp_roots: list<string>
 ]: nothing -> list<record> {
   let paths = ($rows | get -o path | where {|path| valid-path $path } | uniq)
-  let roots = (repo-roots-for $paths $home $temp_roots)
+  let roots = (repo-roots-for $paths)
 
   $paths
   | where {|path| path-missing $path }
