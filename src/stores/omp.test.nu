@@ -38,7 +38,9 @@ def "test OMP encodes memory directories from the absolute path" [] {
     }
   ]
 
-  for case in $cases {
-    assert equal (memory-encode $case.path) $case.encoded $case.name
+  with-env {HOME: "/home/tester", TMPDIR: "/tmp"} {
+    for case in $cases {
+      assert equal (memory-encode $case.path) $case.encoded $case.name
+    }
   }
 }
