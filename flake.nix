@@ -101,6 +101,8 @@
             nixfmt.enable = true;
             nu-check.enable = true;
             prettier.enable = true;
+            shellcheck.enable = true;
+            shfmt.enable = true;
             sort-file-contents.enable = true;
             statix.enable = true;
             taplo.enable = true;
