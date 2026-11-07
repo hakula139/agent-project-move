@@ -1,6 +1,6 @@
 # Releasing
 
-Pushing a tag that matches `v[0-9]+.*` starts `.github/workflows/tag.yml`, which checks the package version and calls devkit's `release.yml`. That workflow waits for a passing CI run on the tagged commit, pins the tag's package closures in the `hakula` Cachix cache as `agent-project-move-<tag>-<system>`, and publishes a GitHub Release with the tag's `CHANGELOG.md` section as its notes.
+Pushing a tag that matches `v[0-9]+.*` starts `.github/workflows/tag.yml`, which checks the package version and calls devkit's `release.yml`, as [devkit's release guide](https://github.com/hakula139/devkit/blob/v1.0.0-rc.3/docs/releasing.md#release-your-repository) describes.
 
 To restore a published tag's cache pin, run `gh workflow run nix-cache.yml --ref vX.Y.Z`. The `v0.1.0` tag predates the thin caller, so restoring its pin takes `gh workflow run nix-cache.yml --ref v0.1.0 -f tag=v0.1.0`.
 
@@ -23,25 +23,9 @@ Transcript and database rewrites follow each assistant's own store, so an assist
 
 ## Changelog
 
-[git-cliff](https://git-cliff.org) drafts each release's `CHANGELOG.md` section from `cliff.toml`, and the release PR curates the draft into the published notes.
+[git-cliff](https://git-cliff.org) drafts each release's `CHANGELOG.md` section from the squash-merged PR titles that `cliff.toml` keeps, and the release PR curates the draft into the published notes. `--prepend` adds one section while preserving the rest. Avoid `--output CHANGELOG.md`, which regenerates the whole file and drops every curated section and compare link.
 
-- Each squash-merged PR title becomes one draft entry.
-- `feat`, `fix`, `perf`, and `revert` titles appear under Added, Fixed, Changed, and Removed, respectively. Titles with `!` appear under Breaking changes. Other types are skipped, including routine `chore(deps)` and `chore(flake)` bumps.
-- Each `(#N)` links to its PR.
-- `--prepend` adds one section while preserving the rest. Avoid `--output CHANGELOG.md`, which regenerates the whole file and drops every curated section and compare link.
-
-The GitHub Release keeps its own copy of the notes. To refresh it from an edited `CHANGELOG.md`, fetch `parse-changelog` and edit the release only if the parse succeeds. Replace `x86_64-unknown-linux-musl` below with your system's target, such as `aarch64-apple-darwin` on a Mac:
-
-```bash
-dir=$(mktemp -d)
-gh release download \
-  -R taiki-e/parse-changelog \
-  -p 'parse-changelog-x86_64-unknown-linux-musl.tar.gz' \
-  --dir "$dir"
-tar -xzf "$dir"/parse-changelog-*.tar.gz -C "$dir"
-"$dir/parse-changelog" CHANGELOG.md X.Y.Z >"$dir/notes.md" \
-  && gh release edit vX.Y.Z --notes-file "$dir/notes.md"
-```
+The GitHub Release keeps its own copy of the notes. To refresh it from an edited `CHANGELOG.md`, follow [devkit's republish steps](https://github.com/hakula139/devkit/blob/v1.0.0-rc.3/docs/releasing.md#republish-release-notes).
 
 ### Curate the section
 
