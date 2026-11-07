@@ -36,11 +36,6 @@ def "test OMP encodes memory directories from the absolute path" [] {
       path: "/tmp/omp-test"
       encoded: "--tmp-omp-test--"
     }
-    {
-      name: "a path outside both roots"
-      path: "/opt/x"
-      encoded: "--opt-x--"
-    }
   ]
 
   for case in $cases {

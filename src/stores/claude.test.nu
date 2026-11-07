@@ -29,7 +29,10 @@ def "test a config move rewrites github repository paths" [] {
 
   let moved = (move-config $config "/work/app" "/work/new")
 
-  assert equal ($moved.projects | columns | sort) ["/work/new" "/work/other"]
+  assert equal ($moved.projects | sort) {
+    "/work/new": {hasTrustDialogAccepted: true}
+    "/work/other": {}
+  }
   assert equal $moved.githubRepoPaths {
     "me/app": ["/work/new" "/work/new/sub"]
     "me/other": ["/work/other"]

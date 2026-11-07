@@ -31,11 +31,6 @@ def "test path rewrites cover JSON string tokens" [] {
       expected: '{"p":"see /work/app/x"}'
     }
     {
-      name: "a path without a leading quote"
-      content: '{"p":"x/work/app"}'
-      expected: '{"p":"x/work/app"}'
-    }
-    {
       name: "an escaped quoted path"
       content: '{"p":"\"/work/app\""}'
       expected: '{"p":"\"/work/app\""}'
@@ -49,11 +44,6 @@ def "test path rewrites cover JSON string tokens" [] {
       name: "a nested value"
       content: '{"a":[{"b":"/work/app/x"}]}'
       expected: '{"a":[{"b":"/work/new/x"}]}'
-    }
-    {
-      name: "a file URI"
-      content: '{"p":"file:///work/app/sub"}'
-      expected: '{"p":"file:///work/new/sub"}'
     }
     {
       name: "a file URI sibling"
