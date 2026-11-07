@@ -127,7 +127,6 @@
         # ------------------------------------------------------------------------------------------
         checks = {
           pre-commit = preCommit.check;
-          package = agentProjectMove;
 
           home-module =
             let
@@ -149,6 +148,8 @@
               };
             in
             pkgs.writeText "home-module.json" (builtins.toJSON eval.config.home);
+
+          package = agentProjectMove;
 
           tests = dk.nuTests {
             src = ./.;
