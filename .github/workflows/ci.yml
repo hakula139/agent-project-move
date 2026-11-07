@@ -21,6 +21,7 @@ jobs:
 
   result:
     name: CI Result
+    # A skipped required check passes, so the gate must run after failures too.
     if: ${{ !cancelled() }}
     needs: [nix]
     runs-on: ubuntu-latest
