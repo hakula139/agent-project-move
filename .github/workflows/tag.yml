@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Nix
-        uses: hakula139/devkit/actions/setup-nix@88f619538cc3a79bf223e538504251264e02b4e9
+        uses: hakula139/devkit/actions/setup-nix@b3c36cb40179dcc4c226b0fee6e474577accecfb
 
       - name: Check the package version
         run: |
@@ -35,6 +35,6 @@ jobs:
     permissions:
       actions: read
       contents: write
-    uses: hakula139/devkit/.github/workflows/release.yml@88f619538cc3a79bf223e538504251264e02b4e9
+    uses: hakula139/devkit/.github/workflows/release.yml@b3c36cb40179dcc4c226b0fee6e474577accecfb
     secrets:
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
