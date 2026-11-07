@@ -12,7 +12,7 @@ Conventions for commits, branches, pull requests, and issues.
 
 ## Pull requests
 
-- Merge into `main` only with squash merges. The squash commit uses the PR title, which becomes the PR's draft [changelog](../../RELEASING.md#changelog) entry, so write the title for users.
+- Merge into `main` only with squash merges. The squash commit uses the PR title, which becomes the PR's draft [changelog](../../RELEASING.md#preparation-and-verification) entry, so write the title for users.
 - Fill in `.github/pull_request_template.md`.
 - Assign the PR to `hakula139` and add one type label:
 
