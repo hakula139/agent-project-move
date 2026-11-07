@@ -9,5 +9,5 @@ Read `RELEASING.md` at the repo root and execute its procedure step by step, sin
 
 - [Curate the section](../../../RELEASING.md#curate-the-section) before opening the release PR.
 - [Tag](../../../RELEASING.md#tag) only after separate approval.
-- [Verify publication](../../../RELEASING.md#verify-publication) once the Release workflow finishes.
+- [Verify publication](../../../RELEASING.md#verify-publication) once the Tag Release workflow finishes.
 - Report the URLs of the release PR and the GitHub Release.

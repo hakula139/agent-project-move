@@ -3,7 +3,9 @@ cachix
 codex
 coreutils
 cwds
+devkit
 dflt
+direnv
 dont
 editorconfig
 elif

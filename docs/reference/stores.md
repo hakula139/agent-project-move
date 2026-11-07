@@ -16,7 +16,7 @@ Root: `$CLAUDE_CONFIG_DIR`, defaulting to `~/.claude`. The global document is `$
 
 A directory name encodes a path by replacing each UTF-16 code unit outside `[a-zA-Z0-9]` with one `-`, truncating to 200 characters, and appending `-` plus a base36 hash of the whole path when it overflows. A surrogate pair becomes two dashes.
 
-Selection reads every `cwd` a top-level transcript records in one `rg` pass, so a session that changed directories is attributed to each path it used.
+A session that changed directories is attributed to every `cwd` its transcript records.
 
 A prune deletes a directory only when every `cwd` it records lies under the pruned paths and no existing path encodes to its name.
 
@@ -61,7 +61,7 @@ Root: `$PI_CODING_AGENT_DIR`, defaulting to `~/.omp/agent`. Session and archive 
 
 | State                                                | A move rewrites                                                                  |
 | ---------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `sessions/<encoded>/`, `archive/sessions/<encoded>/` | Every path value in a session or archive file, found by one `rg -m1` scan        |
+| `sessions/<encoded>/`, `archive/sessions/<encoded>/` | Every path value in a session or archive file                                    |
 | `agent.db` `threads.cwd`                             | A path column                                                                    |
 | `agent.db` `threads.rollout_path`                    | Mapped from the old session directory to the new one                             |
 | `agent.db` `jobs.job_key`                            | `global:<path>`, where a colliding key keeps the destination row                 |

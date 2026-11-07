@@ -48,7 +48,7 @@ A dry run prints the order below and stops. `--apply` writes a backup, runs the 
 2. **Per assistant, the row actions that must precede files**, such as a prune's row deletes, so a failure leaves that assistant's files or rows for the rerun.
 3. **Per assistant, file actions**, then the rest of that assistant's statements.
 
-Each SQL action runs as its own `sqlite3 -bail` transaction, with `PRAGMA busy_timeout = 5000` and `BEGIN IMMEDIATE`, so a move issues one per path column and an import one per database. A prune adds `PRAGMA foreign_keys = ON` so the schema's cascades delete child rows. Planning opens every database read-only.
+A prune's SQL actions turn on `PRAGMA foreign_keys` so the schema's cascades delete child rows. Planning opens every database read-only.
 
 ## Backup layout
 

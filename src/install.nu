@@ -155,14 +155,11 @@ export def setup []: nothing -> nothing {
   }
 
   let skill = ($ROOT | path join skills agent-project-move)
-  let claude_link = ($env.HOME | path join .claude skills agent-project-move)
-  print (link-entry $claude_link $skill)
+  let claude_dir = ($env.HOME | path join .claude)
+  print (link-entry ($env.HOME | path join .agents skills agent-project-move) $skill)
+  print (link-entry ($claude_dir | path join skills agent-project-move) $skill)
   let configured = ($env.CLAUDE_CONFIG_DIR? | default "")
-  if $configured != "" and (
-    ($configured | path expand) != (($env.HOME | path join .claude) | path expand)
-  ) {
+  if $configured != "" and (($configured | path expand) != ($claude_dir | path expand)) {
     print (link-entry ($configured | path join skills agent-project-move) $skill)
   }
-  let codex_home = ($env.CODEX_HOME? | default ($env.HOME | path join .codex))
-  print (link-entry ($codex_home | path join skills agent-project-move) $skill)
 }

@@ -2,11 +2,8 @@
 
 The command and its tests are Nushell. General Nushell conventions and traps live in the [`nushell` skill](https://github.com/hakula139/nixos-config/blob/main/home/modules/llm-assistants/shared/skills/nushell/SKILL.md) that nixos-config installs, and this page covers the module layout and the rules specific to agent-project-move.
 
-## Project layout
+## Modules
 
-`src/` holds the entry at its root, `lib/` holds helpers shared across modules, and `stores/` holds one interchangeable module per assistant behind a shared interface.
-
-- **Modules**: the entry is `<name>.nu` and holds `main` with its subcommands. Modules are `<module>.nu` files named by their noun, a module's test sits beside it as `<module>.test.nu`, and byte-exact inputs live under `stores/fixtures/<group>/<case>/`.
 - **Exports**: export only what another module or the module's test calls. Layer modules so dependencies point one way: generic helpers, then stores, then orchestration, then the entry.
 - **Imports**: import a module by name when its commands share verbs with siblings, so calls read `claude plan-move`. Otherwise list the imported commands (`use ./paths.nu [path-map path-match]`), so a reader sees where each name comes from. Tests may `use ./<module>.nu *`.
 
@@ -24,5 +21,4 @@ The command and its tests are Nushell. General Nushell conventions and traps liv
 
 Path encodings, rewrites, and SQL conditions are easy to get subtly wrong, so cover them with tests.
 
-- **Tests**: commands named `test <behavior>` in plain words, asserting with `std/assert`.
 - **Test data**: use invented names such as `/home/u/src/app`, never a path from a real machine.

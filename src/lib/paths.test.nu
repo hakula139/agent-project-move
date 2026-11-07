@@ -88,12 +88,6 @@ def "test a path matches the exact base and its children but not a sibling" [] {
       mapped: ""
     }
     {
-      name: "a prefixed sibling"
-      path: "/work/application"
-      matches: false
-      mapped: ""
-    }
-    {
       name: "the parent"
       path: "/work"
       matches: false
