@@ -8,6 +8,6 @@ permissions:
 
 jobs:
   nix:
-    uses: hakula139/devkit/.github/workflows/nix-cache.yml@44782b619d0c4cd9562c5000f6230aa9582e67ac
+    uses: hakula139/devkit/.github/workflows/nix-cache.yml@61682dd34d15732234bac835f3603de8de5b86f1
     secrets:
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
