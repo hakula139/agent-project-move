@@ -43,4 +43,4 @@ The `v0.1.0` tag predates the thin caller, so restoring its pin requires:
 gh workflow run nix-cache.yml --ref v0.1.0 -f tag=v0.1.0
 ```
 
-[release-guide]: https://github.com/hakula139/devkit/blob/61682dd34d15732234bac835f3603de8de5b86f1/docs/releasing.md#cut-a-release
+[release-guide]: https://github.com/hakula139/devkit/blob/e0d835ba91cf38c7f6d950c8a56c0d68e74366bd/docs/releasing.md#cut-a-release
