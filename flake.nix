@@ -129,6 +129,27 @@
           pre-commit = preCommit.check;
           package = agentProjectMove;
 
+          home-module =
+            let
+              eval = lib.evalModules {
+                class = "homeManager";
+                modules = [
+                  self.homeModules.default
+                  {
+                    options.home = {
+                      packages = lib.mkOption { type = lib.types.anything; };
+                      file = lib.mkOption { type = lib.types.anything; };
+                    };
+                    config = {
+                      _module.args.pkgs = pkgs;
+                      programs.agent-project-move.enable = true;
+                    };
+                  }
+                ];
+              };
+            in
+            pkgs.writeText "home-module.json" (builtins.toJSON eval.config.home);
+
           tests = dk.nuTests {
             src = ./.;
             runtimeInputs = [ pkgs.sqlite ];
