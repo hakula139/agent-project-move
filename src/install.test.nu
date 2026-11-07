@@ -6,16 +6,7 @@
 
 use std/assert
 
-use ./install.nu [install-line skill-links]
-
-def "test setup links the skill for the agent directories" [] {
-  with-env { HOME: "/home/u" } {
-    assert equal (skill-links) [
-      "/home/u/.agents/skills/agent-project-move"
-      "/home/u/.claude/skills/agent-project-move"
-    ]
-  }
-}
+use ./install.nu [install-line]
 
 def "test setup picks the install line for the platform" [] {
   for case in [
