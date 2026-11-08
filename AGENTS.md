@@ -8,7 +8,6 @@
 | ---------------------------------------------- | --------------------------------------------------------------------------- |
 | A `.nu` file or a `.test.nu` file              | [Nushell](docs/conventions/nushell.md)                                      |
 | CI or a workflow                               | [devkit's CI guide](https://github.com/hakula139/devkit/blob/v1/docs/ci.md) |
-| Commits, branches, pull requests, or issues    | [GitHub](docs/conventions/github.md)                                        |
 | A store module or an assistant's on-disk state | [Assistant stores](docs/reference/stores.md)                                |
 | Move, transfer, prune, or backup behavior      | [Design](docs/reference/design.md)                                          |
 | A release                                      | [RELEASING.md](RELEASING.md)                                                |

@@ -1,8 +1,8 @@
 # Releasing
 
-Follow the [shared release procedure][release-guide] for preparation, notes curation, the release PR, approved tagging, and recovery. This document defines the agent-project-move release contract.
+Use the [release skill][release-skill] for preparation, notes curation, the release PR, approved tagging, and recovery. This document defines the agent-project-move release contract.
 
-Pushing a tag matching `v[0-9]+.*` starts `.github/workflows/tag.yml`, which checks the package version and calls devkit's release workflow. Notes come from `CHANGELOG.md` using the repository's `cliff.toml`.
+Pushing a tag matching `v[0-9]+.*` starts devkit's shared release workflow. It validates the package version against the tag, waits for CI, and publishes notes from `CHANGELOG.md` using the shared changelog configuration.
 
 ## Versioning
 
@@ -25,7 +25,7 @@ Transcript and database rewrites follow each assistant's own store, so an assist
 
 Set `version` in `flake.nix` to the release number, update the changelog, and run the [verification block](AGENTS.md#verification). The release PR changes `flake.nix`, `CHANGELOG.md`, and any required spelling entries in `.cspell/words.txt`.
 
-The changelog uses compare references. Add the new section's reference above the existing references, comparing a stable release with the previous stable tag and a prerelease with the previous tag. Preserve this format when following the shared drafting procedure.
+PR titles become draft changelog entries, so describe the user-visible effect. Mark changes to the stability surface with `!` in the conventional commit title.
 
 After publication, verify that `nix run github:hakula139/agent-project-move/vX.Y.Z -- scan` starts and prints its table.
 
@@ -37,10 +37,4 @@ To restore a published tag's cache pin, run:
 gh workflow run nix-cache.yml --ref vX.Y.Z
 ```
 
-The `v0.1.0` tag predates the thin caller, so restoring its pin requires:
-
-```bash
-gh workflow run nix-cache.yml --ref v0.1.0 -f tag=v0.1.0
-```
-
-[release-guide]: https://github.com/hakula139/devkit/blob/v1/docs/releasing.md#cut-a-release
+[release-skill]: https://github.com/hakula139/plugins/blob/main/plugins/hakula-workflow/skills/release/SKILL.md
