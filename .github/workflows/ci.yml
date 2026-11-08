@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   nix:
-    uses: hakula139/devkit/.github/workflows/nix.yml@v1.0.0-rc.3
+    uses: hakula139/devkit/.github/workflows/nix.yml@v1.0.0
     secrets:
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
@@ -30,4 +30,4 @@ jobs:
       actions: read
     steps:
       - name: Check results
-        uses: hakula139/devkit/actions/ci-result@v1.0.0-rc.3
+        uses: hakula139/devkit/actions/ci-result@v1.0.0
