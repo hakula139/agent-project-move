@@ -4,14 +4,14 @@
 
 ## Read before you edit
 
-| When the change touches                        | Read                                                                                                                                                |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A `.nu` file or a `.test.nu` file              | [Nushell](docs/conventions/nushell.md)                                                                                                              |
-| CI or a workflow                               | [devkit's CI guide](https://github.com/hakula139/devkit/blob/e0d835ba91cf38c7f6d950c8a56c0d68e74366bd/README.md#adopt-the-ci-workflow-and-the-gate) |
-| Commits, branches, pull requests, or issues    | [GitHub](docs/conventions/github.md)                                                                                                                |
-| A store module or an assistant's on-disk state | [Assistant stores](docs/reference/stores.md)                                                                                                        |
-| Move, transfer, prune, or backup behavior      | [Design](docs/reference/design.md)                                                                                                                  |
-| A release                                      | [RELEASING.md](RELEASING.md)                                                                                                                        |
+| When the change touches                        | Read                                                                        |
+| ---------------------------------------------- | --------------------------------------------------------------------------- |
+| A `.nu` file or a `.test.nu` file              | [Nushell](docs/conventions/nushell.md)                                      |
+| CI or a workflow                               | [devkit's CI guide](https://github.com/hakula139/devkit/blob/v1/docs/ci.md) |
+| Commits, branches, pull requests, or issues    | [GitHub](docs/conventions/github.md)                                        |
+| A store module or an assistant's on-disk state | [Assistant stores](docs/reference/stores.md)                                |
+| Move, transfer, prune, or backup behavior      | [Design](docs/reference/design.md)                                          |
+| A release                                      | [RELEASING.md](RELEASING.md)                                                |
 
 ## Rules for every change
 
