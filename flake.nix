@@ -19,7 +19,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
     devkit = {
-      url = "github:hakula139/devkit/v1.0.0-rc.3";
+      url = "github:hakula139/devkit/v2";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -90,7 +90,23 @@
 
         preCommit = dk.preCommit {
           src = ./.;
-          hooks.nu-check.enable = true;
+          hooks = {
+            actionlint.enable = true;
+            check-yaml.enable = true;
+            cspell.enable = true;
+            deadnix.enable = true;
+            dprint.enable = true;
+            editorconfig-checker.enable = true;
+            markdownlint-cli2.enable = true;
+            nixfmt.enable = true;
+            nu-check.enable = true;
+            prettier.enable = true;
+            shellcheck.enable = true;
+            shfmt.enable = true;
+            sort-file-contents.enable = true;
+            statix.enable = true;
+            taplo.enable = true;
+          };
         };
       in
       {
