@@ -7,7 +7,7 @@
 | When the change touches                        | Read                                                                        |
 | ---------------------------------------------- | --------------------------------------------------------------------------- |
 | A `.nu` file or a `.test.nu` file              | [Nushell](docs/conventions/nushell.md)                                      |
-| CI or a workflow                               | [devkit's CI guide](https://github.com/hakula139/devkit/blob/v2/docs/ci.md) |
+| CI or a workflow                               | [devkit's CI guide](https://github.com/hakula139/devkit/blob/v3/docs/ci.md) |
 | A store module or an assistant's on-disk state | [Assistant stores](docs/reference/stores.md)                                |
 | Move, transfer, prune, or backup behavior      | [Design](docs/reference/design.md)                                          |
 | A release                                      | [RELEASING.md](RELEASING.md)                                                |
