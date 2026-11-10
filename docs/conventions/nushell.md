@@ -4,8 +4,8 @@ The command and its tests are Nushell. General Nushell conventions and traps liv
 
 ## Modules
 
-- **Exports**: export only what another module or the module's test calls. Layer modules so dependencies point one way: generic helpers, then stores, then orchestration, then the entry.
-- **Imports**: import a module by name when its commands share verbs with siblings, so calls read `claude plan-move`. Otherwise list the imported commands (`use ./paths.nu [path-map path-match]`), so a reader sees where each name comes from. Tests may `use ./<module>.nu *`.
+- **Layers**: dependencies point one way, from the helpers in `lib/` to the stores, then `assistants.nu` and `suggestions.nu`, then the entry.
+- **Stores**: the store modules share verbs, so `assistants.nu` imports each by name and calls read `claude plan-move`.
 
 ## Traps
 
