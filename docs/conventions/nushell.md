@@ -9,9 +9,9 @@ The command and its tests are Nushell. General Nushell conventions and traps liv
 
 ## Traps
 
-- **`edit-file` refuses a file that `open --raw` collects to `binary`.** `src/lib/actions.nu` checks the content's shape with `describe` before rewriting a file.
+- **`edit-file` refuses a file that `open --raw` collects to `binary`.** `lib/actions.nu` checks the content's shape with `describe` before rewriting a file.
 - **`url encode` escapes characters a file URI keeps.** To match the `file://` URIs Codex builds with the url crate, pass only non-ASCII characters and the crate's escape set (controls, space, `"#%<>?{}`, the backtick, and `\`) through `url encode --all`.
-- **Read `$env.HOME` at call time.** Every `$env.HOME` read in `src/` happens then, in the stores, the entry, the backup base in `src/lib/actions.nu`, and `src/install.nu`, which lets a test swap `HOME` with `with-env`. This overrides the skill's advice to build home paths from `$nu.home-dir`.
+- **Read `$env.HOME` at call time.** Every `$env.HOME` read in the scripts happens then, in the stores, the entry, and the backup base in `lib/actions.nu`, which lets a test swap `HOME` with `with-env`. This overrides the skill's advice to build home paths from `$nu.home-dir`.
 
 ## Testing
 

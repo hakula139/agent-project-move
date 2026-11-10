@@ -3,7 +3,7 @@
 [![CI](https://github.com/hakula139/agent-project-move/actions/workflows/ci.yml/badge.svg)](https://github.com/hakula139/agent-project-move/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Repair the project paths recorded by [Claude Code](https://claude.com/claude-code), [Codex](https://openai.com/codex/), [OpenCode](https://opencode.ai), and [OMP](https://omp.sh) after a directory moves, transfer sessions between hosts, and prune state whose directory is gone.
+Repair the project paths recorded by [Claude Code](https://claude.com/claude-code), [Codex](https://openai.com/codex/), and [OMP](https://omp.sh) after a directory moves, transfer sessions between hosts, and prune state whose directory is gone.
 
 ## The problem
 
@@ -25,6 +25,45 @@ Coding assistants key their sessions, memory, and history by absolute directory 
 
 ## Install
 
+The repository is a Claude Code and Codex plugin, and `skills/agent-project-move/` is an [Agent Skill](https://agentskills.io) that any skill installer can copy. Every route outside Nix runs the bundled Nushell script with the tools on your own `PATH`, so check the [requirements](#requirements) first.
+
+### Requirements
+
+Native Windows is unsupported. Outside Nix, the command needs Nushell 0.116 or later, GNU coreutils, `sqlite3` 3.33 or later, `ripgrep` built with PCRE2, and `zstd`. The skill checks for them and names what is missing. Homebrew and Arch package Nushell, and other platforms install it from the [installation guide](https://www.nushell.sh/book/installation.html). On macOS, the launcher puts Homebrew's coreutils `gnubin` directory first on `PATH` when it is installed.
+
+### Claude Code plugin
+
+```bash
+claude plugin marketplace add hakula139/agent-project-move
+claude plugin install agent-project-move@agent-project-move
+```
+
+Pin a release with `hakula139/agent-project-move#vX.Y.Z`. The plugin puts `bin/agent-project-move` on the Bash tool's `PATH`, and the skill answers to `/agent-project-move` and `/agent-project-move:agent-project-move`.
+
+### Codex plugin
+
+```bash
+codex plugin marketplace add hakula139/agent-project-move
+codex plugin add agent-project-move@agent-project-move
+```
+
+Pin a release with `--ref vX.Y.Z` on `marketplace add`. Codex lists the skill as `agent-project-move:agent-project-move`.
+
+### Skill directories
+
+For OMP, or for any of the three assistants without a plugin, clone the repository and link the skill directory where each assistant reads skills:
+
+```bash
+git clone https://github.com/hakula139/agent-project-move ~/.local/share/agent-project-move
+ln -s ~/.local/share/agent-project-move/skills/agent-project-move ~/.agents/skills/agent-project-move
+ln -s ~/.local/share/agent-project-move/skills/agent-project-move ~/.claude/skills/agent-project-move
+ln -s ~/.local/share/agent-project-move/bin/agent-project-move ~/.local/bin/agent-project-move
+```
+
+Codex and OMP read `~/.agents/skills`, while Claude Code and OMP read `~/.claude/skills`. Link the whole skill directory, never `SKILL.md` alone, because Codex skips a `SKILL.md` that is itself a symlink. The last link, which is optional, puts the command on your terminal's `PATH`. `git pull` updates the clone, and `git checkout vX.Y.Z` pins a release.
+
+Skill installers copy only the skill directory: `npx skills add hakula139/agent-project-move` installs it into `~/.agents/skills` and links it for Claude Code, and Codex's `$skill-installer` takes `--repo hakula139/agent-project-move --path skills/agent-project-move`.
+
 ### Nix
 
 Run it without installing:
@@ -39,7 +78,7 @@ Or install it into your profile:
 nix profile install github:hakula139/agent-project-move
 ```
 
-The package wraps the command with `sqlite3`, `ripgrep`, `zstd`, and the coreutils, diffutils, and findutils it needs, so nothing else has to be on `PATH`. It covers `aarch64-darwin`, `aarch64-linux`, and `x86_64-linux`, while other Unix platforms use the plain install. Flakes must be enabled, as in `nix --extra-experimental-features 'nix-command flakes' run ...` on a stock install.
+The package wraps the command with `sqlite3`, `ripgrep`, `zstd`, and the coreutils, diffutils, and findutils it needs, so nothing else has to be on `PATH`. It covers `aarch64-darwin`, `aarch64-linux`, and `x86_64-linux`, while other Unix platforms use one of the routes above. Flakes must be enabled, as in `nix --extra-experimental-features 'nix-command flakes' run ...` on a stock install.
 
 The first run may ask to allow the project's Cachix cache. Declining is fine, since the package builds from cache.nixos.org. The overlay and module use the Nushell from the consuming package set when it is 0.116 or later, and devkit's `nixpkgs-unstable` below that.
 
@@ -56,19 +95,6 @@ programs.agent-project-move.enable = true;
 
 The module installs the command and links the skill into `~/.agents/skills` and `~/.claude/skills`. Set `programs.agent-project-move.skillDirectories` to change the list, or use `overlays.default` to install the package through an overlay.
 
-### Plain install
-
-Native Windows is unsupported. A plain install reads your own `PATH` and needs Nushell 0.116 or later, GNU coreutils, `sqlite3` 3.33 or later, `ripgrep` built with PCRE2, and `zstd`. `setup` prints the install line for anything missing. Homebrew and Arch package Nushell, and other platforms install it from the [installation guide](https://www.nushell.sh/book/installation.html). On macOS, the launcher puts Homebrew's coreutils `gnubin` directory first on `PATH` when it is installed.
-
-Clone the repository to `~/.local/share/agent-project-move` and run its setup:
-
-```bash
-git clone https://github.com/hakula139/agent-project-move ~/.local/share/agent-project-move
-~/.local/share/agent-project-move/bin/agent-project-move setup
-```
-
-`setup` links the launcher into `~/.local/bin` and the skill into `~/.agents/skills`, `~/.claude/skills`, and `$CLAUDE_CONFIG_DIR/skills` when that variable names a different directory. It warns when `~/.local/bin` is not on `PATH`, refuses to replace an entry it did not create, and is safe to rerun. `git pull` updates the clone, and rerun `setup` after moving the clone somewhere else.
-
 ## Safety model
 
 Before any `--apply`, exit every assistant session working in the affected projects. A session that writes during the apply loses those writes, and a running Claude Code can rewrite `~/.claude.json` at the same moment. Your own agent session counts.
@@ -80,7 +106,7 @@ If a run stops partway, rerun the same command. It plans from what is on disk an
 
 ## Usage
 
-`-a` takes a comma-separated list of `claude`, `codex`, `opencode`, and `omp`, and leaving it out selects all four.
+`-a` takes a comma-separated list of `claude`, `codex`, and `omp`, and leaving it out selects all three.
 
 ### Scan
 
@@ -138,7 +164,6 @@ Each assistant changes its local storage without notice. `agent-project-move` is
 | ----------- | ------- |
 | Claude Code | 2.1.312 |
 | Codex       | 0.165.0 |
-| OpenCode    | 1.19.5  |
 | OMP         | 18.13.2 |
 
 A newer version can add a database, a table, or a path-bearing column this tool does not know about, and those paths then stay stale after a move. Path values in JSON transcripts are rewritten wherever they appear, so new record kinds are covered. If a move leaves sessions behind, open an issue with the release tag or commit you run and the assistant's version.
@@ -151,18 +176,17 @@ Releases follow the [versioning policy](RELEASING.md#versioning), and stable rel
 
 The repository ships an [Agent Skill](skills/agent-project-move/SKILL.md) that surveys recorded paths, confirms the plan with you, applies it, and verifies the result.
 
-The skill runs `agent-project-move` from `PATH`. If the command is not installed, run `nix run github:hakula139/agent-project-move -- <args>` or install it first. Link the whole skill directory, never `SKILL.md` alone, because Codex skips a `SKILL.md` that is itself a symlink. Start a new assistant session after linking, or run `/reload-plugins` in OMP.
+The skill runs `agent-project-move` from `PATH`, and falls back to the script bundled in its own directory when the command is not installed. Start a new assistant session after installing it, or run `/reload-plugins` in OMP.
 
 ### Triggering it
 
-| Assistant   | Explicit invocation                                        |
-| ----------- | ---------------------------------------------------------- |
-| Claude Code | `/agent-project-move`                                      |
-| Codex       | `$agent-project-move`, or pick it from `/skills`           |
-| OMP         | `/skill:agent-project-move`                                |
-| OpenCode    | No command. Ask in natural language and it loads the skill |
+| Assistant   | Explicit invocation                              |
+| ----------- | ------------------------------------------------ |
+| Claude Code | `/agent-project-move`                            |
+| Codex       | `$agent-project-move`, or pick it from `/skills` |
+| OMP         | `/skill:agent-project-move`                      |
 
-When your own session's working directory is under the old or new path, or the plan edits `~/.claude.json`, the skill hands you the `--apply` command to run after you exit the assistant.
+When your own session's working directory is under the old or new path, or the plan edits `~/.claude.json`, the skill hands you the `--apply` command to run after you exit the assistant. Without the command on your terminal's `PATH`, run `bin/agent-project-move` from the clone or the installed plugin's directory, or `nix run github:hakula139/agent-project-move --`.
 
 Example prompts:
 

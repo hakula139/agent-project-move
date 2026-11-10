@@ -1,6 +1,6 @@
 # AGENTS.md: agent-project-move
 
-`agent-project-move` is a Nushell command and an agent skill that repair the project paths recorded by Claude Code, Codex, OpenCode, and OMP after a directory moves, transfer sessions between hosts, and prune state whose directory is gone.
+`agent-project-move` is a Nushell command and an agent skill that repair the project paths recorded by Claude Code, Codex, and OMP after a directory moves, transfer sessions between hosts, and prune state whose directory is gone.
 
 ## Read before you edit
 
@@ -17,6 +17,7 @@
 - Run the pre-commit hooks on every commit. In each new checkout or worktree, run `nix develop -c true` once to install them. Never bypass the hooks with `--no-verify` or `PRE_COMMIT_ALLOW_NO_CONFIG`, and fix the cause whenever a hook, test, or CI job fails.
 - Wrap code and comments at 100 columns, counting the indent, end section banners at column 100, and keep a single-line string literal whole at any length.
 - Update whatever the change makes stale: the README's usage, tested versions, and safety model, the reference pages, the skill under `skills/`, and the Home Manager module in `nix/home-manager.nix` when the command or its skill changes what it installs.
+- Keep `skills/agent-project-move/` self-contained, because skill installers copy only that directory and its `SKILL.md` runs the bundled `scripts/` by a relative path. Leave `${CLAUDE_SKILL_DIR}` out of `SKILL.md`, since Codex and OMP read it literally.
 - The store formats in [Assistant stores](docs/reference/stores.md) are the ones the modules read, and a release of any assistant can change them, so check a store claim against a run.
 - Issues, pull requests, and their comments link only public material. Never reference local working notes, private paths, or private repositories.
 
@@ -34,8 +35,8 @@ Each rule has one home, which other pages link to. Add to this file or `docs/` o
 
 - `README.md` is for a user evaluating or running the tool: the problem it solves, prerequisites, install, usage, safety, and the assistant versions it is tested with. Keep internal progress out.
 - `AGENTS.md` and `docs/` are for whoever changes the code.
-- `docs/reference/` explains how the tool and each store behave, while `skills/agent-project-move/SKILL.md` follows a reader through a move, transfer, prune, or restore. The skill restates only what an agent needs to run and recover a procedure, since only its directory is installed.
+- `docs/reference/` explains how the tool and each store behave, while `skills/agent-project-move/SKILL.md` follows a reader through a move, transfer, prune, or restore. The skill restates only what an agent needs to run and recover a procedure, since skill installers copy only its directory.
 
 ## Code review
 
-Review the change and its affected callers against the convention docs, and check in particular that functions answering the same question across the four stores share shape, naming, and return type, and that logic two stores need lives in `lib/`.
+Review the change and its affected callers against the convention docs, and check in particular that functions answering the same question across the three stores share shape, naming, and return type, and that logic two stores need lives in `lib/`.

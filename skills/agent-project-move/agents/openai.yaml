@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Agent Project Move'
+  short_description: 'Repair agent session paths after a project moves'
+  default_prompt: 'Use $agent-project-move to move my agent sessions to where this project now lives.'

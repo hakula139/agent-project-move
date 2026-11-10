@@ -175,10 +175,6 @@ export def same-content [left: string, right: string]: nothing -> bool {
   (^cmp -s $left $right | complete).exit_code == 0
 }
 
-export def same-tree [left: string, right: string]: nothing -> bool {
-  (^diff -rq $left $right | complete).exit_code == 0
-}
-
 # Whether two paths name one directory, including two spellings of it on a case-insensitive volume.
 export def same-directory [left: string, right: string]: nothing -> bool {
   if $left == $right { return true }

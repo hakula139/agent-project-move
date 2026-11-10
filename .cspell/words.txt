@@ -7,7 +7,6 @@ devkit
 dflt
 direnv
 editorconfig
-endeavouros
 findutils
 hakula
 jsonl

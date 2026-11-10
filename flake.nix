@@ -41,8 +41,8 @@
         pkgs:
         (devkit.lib.mkLib pkgs).mkNuApplication {
           pname = "agent-project-move";
-          version = "0.1.0";
-          src = ./src;
+          inherit (lib.importJSON ./.claude-plugin/plugin.json) version;
+          src = ./skills/agent-project-move/scripts;
           skills = [ ./skills/agent-project-move ];
           runtimeInputs = with pkgs; [
             coreutils

@@ -4,7 +4,7 @@
 # The export bundle format shared by every store and the entry point.
 # ==================================================================================================
 
-export def sha1-hex [text: string]: nothing -> string {
+def sha1-hex [text: string]: nothing -> string {
   $text | ^sha1sum | split row ' ' | first
 }
 

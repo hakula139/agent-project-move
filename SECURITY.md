@@ -17,7 +17,7 @@ The maintainer acknowledges a report within 7 days and shares an assessment with
 
 ## Sensitive data
 
-`agent-project-move` reads and rewrites the local state of four coding assistants. That state contains full conversation transcripts, tool input and output, file history, and memory notes, and it can include secrets a session printed or a tool read.
+`agent-project-move` reads and rewrites the local state of three coding assistants. That state contains full conversation transcripts, tool input and output, file history, and memory notes, and it can include secrets a session printed or a tool read.
 
 - **Backups** copy every edited or deleted file and database into `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/`, which is created with mode 0700. The backups outlive the run and hold the same content as the stores.
 - **Bundles** written by `export` hold the files and database rows recorded for one project path, including transcripts. Selection follows the project path, so the assistants' credential files and tables, such as `auth.json` and `.credentials.json`, stay out of a bundle. An export is still a copy of that state, so transfer it over a channel you trust and delete it on both hosts when the import is done.
