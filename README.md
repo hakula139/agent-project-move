@@ -99,7 +99,7 @@ The module installs the command and links the skill into `~/.agents/skills` and 
 
 Before any `--apply`, exit every assistant session working in the affected projects. A session that writes during the apply loses those writes, and a running Claude Code can rewrite `~/.claude.json` at the same moment. Your own agent session counts.
 
-- **One backup per applied run.** Everything edited or deleted is copied, and each database is backed up with `sqlite3 .backup`, under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, with a `manifest.json` listing every action in order, including each rename's destination.
+- **One backup per applied run.** Everything edited or deleted is copied, and each database is backed up with `sqlite3 .backup`, under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, with a `manifest.json` listing every action in order, including each rename's destination. The directory is created with mode `0700` and outlives the run, and it holds the same transcripts as the stores, including any secret a session printed or a tool read.
 - **Each SQL action is one transaction**, so a failed action leaves no partial rows.
 
 If a run stops partway, rerun the same command. It plans from what is on disk and skips finished work. If it stopped while rewriting files, restore from the backup first. [Restore](skills/agent-project-move/SKILL.md#restore) walks through the manifest.
