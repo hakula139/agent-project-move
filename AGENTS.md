@@ -17,7 +17,7 @@
 - Run the pre-commit hooks on every commit. In each new checkout or worktree, run `nix develop -c true` once to install them. Never bypass the hooks with `--no-verify` or `PRE_COMMIT_ALLOW_NO_CONFIG`, and fix the cause whenever a hook, test, or CI job fails.
 - Wrap code and comments at 100 columns, counting the indent, end section banners at column 100, and keep a single-line string literal whole at any length.
 - Update whatever the change makes stale: the README's usage, tested versions, and safety model, the reference pages, the skill under `skills/`, and the Home Manager module in `nix/home-manager.nix` when the command or its skill changes what it installs.
-- Keep `skills/agent-project-move/` self-contained, because skill installers copy only that directory and its `SKILL.md` runs the bundled `scripts/` by a relative path. Leave `${CLAUDE_SKILL_DIR}` out of `SKILL.md`, since Codex and OMP read it literally.
+- Keep `skills/agent-project-move/` self-contained, because skill installers copy only that directory and its `SKILL.md` falls back to the bundled `scripts/` inside it. Leave `${CLAUDE_SKILL_DIR}` out of `SKILL.md`, since Codex and OMP read it literally.
 - The store formats in [Assistant stores](docs/reference/stores.md) are the ones the modules read, and a release of any assistant can change them, so check a store claim against a run.
 - Issues, pull requests, and their comments link only public material. Never reference local working notes, private paths, or private repositories.
 

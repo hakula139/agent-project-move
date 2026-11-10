@@ -14,19 +14,17 @@ description: >-
 
 ## Requirements
 
-Run `agent-project-move`. When it is not on `PATH`, run `nu --no-config-file scripts/agent-project-move.nu` from this skill's directory instead, wherever the procedures below name the command.
+Wherever the procedures below name `agent-project-move`, run the absolute path that `command -v agent-project-move` prints. When the command is not on `PATH`, run the bundled script by its absolute path instead, as `nu --no-config-file <skill directory>/scripts/agent-project-move.nu`, and stay in your working directory so relative path arguments keep their meaning. Hand the user the same absolute form when they run an `--apply` command in a terminal, since their terminal's `PATH` can differ from yours.
 
-A Nix install wraps the command with every tool it needs. The bundled script reads the user's own `PATH`, so before its first run check each tool with `command -v` and tell the user which package to install for their platform when one is missing:
+A Nix install wraps the command with every tool it needs. The bundled script reads the user's own `PATH`, so before its first run check each tool and tell the user which package to install for their platform when one is missing or too old:
 
-- `nu`, Nushell 0.116 or later
-- `sqlite3` 3.33 or later
-- `rg`, ripgrep built with PCRE2
-- `zstd`
-- GNU coreutils, found on macOS through Homebrew's `coreutils` package, whose `gnubin` directory goes first on `PATH`
+- `nu --version` reports Nushell 0.116 or later
+- `sqlite3 --version` reports 3.33 or later
+- `rg --pcre2-version` succeeds
+- `zstd --version` succeeds
+- On macOS, `brew --prefix coreutils` succeeds, since the command puts Homebrew's GNU coreutils first on its own `PATH`. Elsewhere, `stat --version` reports GNU coreutils
 
 Native Windows is unsupported.
-
-When you hand the user an `--apply` command to run in a terminal, name `agent-project-move` if it is on their `PATH`, and otherwise the bundled script by its absolute path, as in `nu --no-config-file <skill directory>/scripts/agent-project-move.nu`.
 
 ## Survey
 

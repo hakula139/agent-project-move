@@ -16,7 +16,6 @@ nixpkgs
 nuon
 nushell
 omp
-opencode
 pcre
 pkgs
 pname

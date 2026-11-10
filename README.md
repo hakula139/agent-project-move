@@ -29,7 +29,7 @@ The repository is a Claude Code and Codex plugin, and `skills/agent-project-move
 
 ### Requirements
 
-Native Windows is unsupported. Outside Nix, the command needs Nushell 0.116 or later, GNU coreutils, `sqlite3` 3.33 or later, `ripgrep` built with PCRE2, and `zstd`. The skill checks for them and names what is missing. Homebrew and Arch package Nushell, and other platforms install it from the [installation guide](https://www.nushell.sh/book/installation.html). On macOS, the launcher puts Homebrew's coreutils `gnubin` directory first on `PATH` when it is installed.
+Native Windows is unsupported. Outside Nix, the command needs Nushell 0.116 or later, GNU coreutils, `sqlite3` 3.33 or later, `ripgrep` built with PCRE2, and `zstd`. The skill checks for them and names what is missing. Homebrew and Arch package Nushell, and other platforms install it from the [installation guide](https://www.nushell.sh/book/installation.html). On macOS, install Homebrew's `coreutils`, whose `gnubin` directory the command puts first on its own `PATH`.
 
 ### Claude Code plugin
 
@@ -60,9 +60,9 @@ ln -s ~/.local/share/agent-project-move/skills/agent-project-move ~/.claude/skil
 ln -s ~/.local/share/agent-project-move/bin/agent-project-move ~/.local/bin/agent-project-move
 ```
 
-Codex and OMP read `~/.agents/skills`, while Claude Code and OMP read `~/.claude/skills`. Link the whole skill directory, never `SKILL.md` alone, because Codex skips a `SKILL.md` that is itself a symlink. The last link, which is optional, puts the command on your terminal's `PATH`. `git pull` updates the clone, and `git checkout vX.Y.Z` pins a release.
+Codex and OMP read `~/.agents/skills`, while Claude Code and OMP read `~/.claude/skills`. When `CLAUDE_CONFIG_DIR` names another directory, Claude Code reads `$CLAUDE_CONFIG_DIR/skills`, so link the skill there. Link the whole skill directory, never `SKILL.md` alone, because Codex skips a `SKILL.md` that is itself a symlink. The last link, which is optional, puts the command on your terminal's `PATH`. `git pull` updates the clone, and `git checkout vX.Y.Z` pins a release.
 
-Skill installers copy only the skill directory: `npx skills add hakula139/agent-project-move` installs it into `~/.agents/skills` and links it for Claude Code, and Codex's `$skill-installer` takes `--repo hakula139/agent-project-move --path skills/agent-project-move`.
+Skill installers copy only the skill directory: `npx skills add hakula139/agent-project-move -g` installs it into `~/.agents/skills` and links it for Claude Code, and Codex's `$skill-installer` takes `--repo hakula139/agent-project-move --path skills/agent-project-move`.
 
 ### Nix
 
@@ -186,7 +186,7 @@ The skill runs `agent-project-move` from `PATH`, and falls back to the script bu
 | Codex       | `$agent-project-move`, or pick it from `/skills` |
 | OMP         | `/skill:agent-project-move`                      |
 
-When your own session's working directory is under the old or new path, or the plan edits `~/.claude.json`, the skill hands you the `--apply` command to run after you exit the assistant. Without the command on your terminal's `PATH`, run `bin/agent-project-move` from the clone or the installed plugin's directory, or `nix run github:hakula139/agent-project-move --`.
+When your own session's working directory is under the old or new path, or the plan edits `~/.claude.json`, the skill hands you the `--apply` command to run after you exit the assistant, naming the command or the bundled script by its absolute path.
 
 Example prompts:
 
