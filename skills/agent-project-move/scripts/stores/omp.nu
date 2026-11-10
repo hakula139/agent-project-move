@@ -39,17 +39,17 @@ use ../lib/sqlite.nu [
 # --------------------------------------------------------------------------------------------------
 
 def agent-dir []: nothing -> string {
-  $env.PI_CODING_AGENT_DIR? | default --empty ($env.HOME | path join .omp agent)
+  $env.PI_CODING_AGENT_DIR? | default --empty ($env.HOME | path join ".omp/agent")
 }
 
 def state-root []: nothing -> string {
-  let base = ($env.XDG_STATE_HOME? | default --empty ($env.HOME | path join .local state))
+  let base = ($env.XDG_STATE_HOME? | default --empty ($env.HOME | path join ".local/state"))
   $base | path join omp
 }
 
 def session-root []: nothing -> string { agent-dir | path join sessions }
 
-def archive-root []: nothing -> string { agent-dir | path join archive sessions }
+def archive-root []: nothing -> string { agent-dir | path join "archive/sessions" }
 
 def memory-root []: nothing -> string { state-root | path join memories }
 

@@ -33,7 +33,7 @@ use ./suggestions.nu [scan-suggestions]
 # The stores call GNU stat, realpath, mv, and cp, which Homebrew keeps unprefixed only in gnubin.
 if $nu.os-info.name == "macos" and (which brew | is-not-empty) {
   let prefix = (^brew --prefix coreutils | complete)
-  let gnubin = ($prefix.stdout | str trim | path join "libexec" "gnubin")
+  let gnubin = ($prefix.stdout | str trim | path join "libexec/gnubin")
   if $prefix.exit_code == 0 and ($gnubin | path exists) {
     $env.PATH = ($env.PATH | prepend $gnubin)
   }

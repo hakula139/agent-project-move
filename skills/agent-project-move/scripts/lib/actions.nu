@@ -322,7 +322,7 @@ def backup-path [root: string, path: string]: nothing -> nothing {
 }
 
 def backup-root []: nothing -> string {
-  let base = ($env.XDG_STATE_HOME? | default --empty ($env.HOME | path join .local state))
+  let base = ($env.XDG_STATE_HOME? | default --empty ($env.HOME | path join ".local/state"))
   $base | path join agent-project-move
 }
 

@@ -18,11 +18,11 @@ Wherever the procedures below name `agent-project-move`, run the absolute path t
 
 A Nix install wraps the command with every tool it needs. The bundled script reads the user's own `PATH`, so before its first run check each tool and tell the user which package to install for their platform when one is missing or too old:
 
-- `nu --version` reports Nushell 0.116 or later
-- `sqlite3 --version` reports 3.33 or later
-- `rg --pcre2-version` succeeds
-- `zstd --version` succeeds
-- On macOS, `brew --prefix coreutils` succeeds, since the command puts Homebrew's GNU coreutils first on its own `PATH`. Elsewhere, `stat --version` reports GNU coreutils
+- `nu --version` reports Nushell 0.116 or later.
+- `sqlite3 --version` reports 3.33 or later.
+- `rg --pcre2-version` succeeds.
+- `zstd --version` succeeds.
+- On macOS, `brew --prefix coreutils` succeeds, since the command puts Homebrew's GNU coreutils first on its own `PATH`. Elsewhere, `stat --version` reports GNU coreutils.
 
 Native Windows is unsupported.
 
