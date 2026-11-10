@@ -9,9 +9,8 @@ use ./lib/paths.nu [match-any path-missing valid-path]
 use ./stores/claude.nu
 use ./stores/codex.nu
 use ./stores/omp.nu
-use ./stores/opencode.nu
 
-const ASSISTANTS = [claude codex opencode omp]
+const ASSISTANTS = [claude codex omp]
 export const ALL_ASSISTANTS = ($ASSISTANTS | str join ",")
 
 export def parse-assistants [value: string]: nothing -> list<string> {
@@ -43,7 +42,6 @@ def assistant-scan [assistant: string]: nothing -> list<record> {
   match $assistant {
     'claude' => { claude scan }
     'codex' => { codex scan }
-    'opencode' => { opencode scan }
     'omp' => { omp scan }
   }
 }
@@ -52,7 +50,6 @@ def assistant-recorded-paths [assistant: string]: nothing -> list<string> {
   match $assistant {
     'claude' => { claude recorded-paths }
     'codex' => { codex recorded-paths }
-    'opencode' => { opencode recorded-paths }
     'omp' => { omp recorded-paths }
   }
 }
@@ -61,7 +58,6 @@ def assistant-plan-move [assistant: string, old: string, new: string]: nothing -
   match $assistant {
     'claude' => { claude plan-move $old $new }
     'codex' => { codex plan-move $old $new }
-    'opencode' => { opencode plan-move $old $new }
     'omp' => { omp plan-move $old $new }
   }
 }
@@ -70,7 +66,6 @@ def assistant-plan-prune [assistant: string, paths: list<string>]: nothing -> li
   match $assistant {
     'claude' => { claude plan-prune $paths }
     'codex' => { codex plan-prune $paths }
-    'opencode' => { opencode plan-prune $paths }
     'omp' => { omp plan-prune $paths }
   }
 }
@@ -79,7 +74,6 @@ export def assistant-export-bundle [assistant: string, old: string]: nothing -> 
   match $assistant {
     'claude' => { claude export-bundle $old }
     'codex' => { codex export-bundle $old }
-    'opencode' => { opencode export-bundle $old }
     'omp' => { omp export-bundle $old }
   }
 }
@@ -88,7 +82,6 @@ export def assistant-plan-import [assistant: string, bundle: record]: nothing ->
   match $assistant {
     'claude' => { claude plan-import $bundle }
     'codex' => { codex plan-import $bundle }
-    'opencode' => { opencode plan-import $bundle }
     'omp' => { omp plan-import $bundle }
   }
 }

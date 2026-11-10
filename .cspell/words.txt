@@ -7,7 +7,6 @@ devkit
 dflt
 direnv
 editorconfig
-endeavouros
 findutils
 hakula
 jsonl
@@ -17,7 +16,6 @@ nixpkgs
 nuon
 nushell
 omp
-opencode
 pcre
 pkgs
 pname

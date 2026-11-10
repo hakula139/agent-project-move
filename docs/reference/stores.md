@@ -39,22 +39,6 @@ A history projection is exact or absent. When both spellings of the path keep th
 
 A prune deletes the rollouts and `threads` rows with foreign keys on, then the removed threads' history projection rows explicitly, because that database has no cascades.
 
-## OpenCode
-
-Database: `$XDG_DATA_HOME/opencode/opencode.db`, defaulting to `~/.local/share/opencode/opencode.db`.
-
-| State                         | A move rewrites                                                         |
-| ----------------------------- | ----------------------------------------------------------------------- |
-| `session.directory`           | A path column                                                           |
-| `workspace.directory`         | A path column                                                           |
-| `project.worktree`            | A path column, while `project.id` stays                                 |
-| `project.sandboxes`           | Path values inside the JSON                                             |
-| `project_directory.directory` | A path column, where a colliding key keeps the destination row          |
-| `event.data`                  | Path values inside the JSON, including each event's `info.directory`    |
-| `snapshot/<project>/<sha1>`   | Renamed with the path it hashes, so `/undo` keeps working across a move |
-
-A prune runs with foreign keys on. It deletes `event_sequence` rows for the removed sessions, which cascades their events, then the `session` rows, which cascade messages, parts, the `session_*` tables, and todos, then workspaces and `project_directory` rows, and finally a project whose worktree is under the pruned paths when no session remains. The `global` project is never matched, because its worktree is `/`.
-
 ## OMP
 
 Root: `$PI_CODING_AGENT_DIR`, defaulting to `~/.omp/agent`. Session and archive directories use a home-relative encoding, and memory directories use an absolute encoding. Memory lives under `$XDG_STATE_HOME/omp/memories`, defaulting to `~/.local/state/omp/memories`.

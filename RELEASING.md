@@ -20,6 +20,6 @@ Transcript and database rewrites follow each assistant's own store, so an assist
 
 ## Preparation and verification
 
-Set `version` in `flake.nix` to the release number, update the changelog, and run the [verification block](AGENTS.md#verification). Mark changes to the stability surface with `!` in the conventional commit title.
+Set `version` in `.claude-plugin/plugin.json` to the release number. The flake reads it too, and Claude Code keeps serving its cached plugin until that string changes. Update the changelog, and run the [verification block](AGENTS.md#verification). Mark changes to the stability surface with `!` in the conventional commit title.
 
 After publication, verify that `nix run github:hakula139/agent-project-move/vX.Y.Z -- scan` starts and prints its table.

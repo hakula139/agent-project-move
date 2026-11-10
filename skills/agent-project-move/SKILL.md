@@ -1,24 +1,36 @@
 ---
 name: agent-project-move
 description: >-
-  Repair the project paths recorded by Claude Code, Codex, OpenCode, and OMP after a directory
-  moves, transfer sessions between hosts, and prune state whose directory is gone. Use when a
-  project was moved or renamed and an assistant no longer lists its sessions under the new path,
-  when memory or history still points at an old path, when a removed worktree leaves sessions
-  stranded, when deleted directories leave stale state, or when moving work to another machine.
+  Repair the project paths recorded by Claude Code, Codex, and OMP after a directory moves,
+  transfer sessions between hosts, and prune state whose directory is gone. Use when a project was
+  moved or renamed and an assistant no longer lists its sessions under the new path, when memory
+  or history still points at an old path, when a removed worktree leaves sessions stranded, when
+  deleted directories leave stale state, or when moving work to another machine.
 ---
 
 # Agent project move
 
-`agent-project-move` rewrites the project paths stored by the four assistants. Planning is read-only and prints every action, while `--apply` backs state up under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, then rewrites state in place.
+`agent-project-move` rewrites the project paths stored by the three assistants. Planning is read-only and prints every action, while `--apply` backs state up under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, then rewrites state in place.
 
 ## Requirements
 
-Nushell 0.116 or later, `sqlite3`, `ripgrep`, `zstd`, and GNU coreutils must be on `PATH`. A Nix install supplies all of them through the package wrapper, while a plain install reads the user's own `PATH`. If `agent-project-move` is not on `PATH`, run `nix run github:hakula139/agent-project-move -- <args>` or tell the user to install it.
+Wherever the procedures below name `agent-project-move`, run the absolute path that `command -v agent-project-move` prints. When the command is not on `PATH`, run the bundled script by its absolute path instead, as `nu --no-config-file <skill directory>/scripts/agent-project-move.nu`, and stay in your working directory so relative path arguments keep their meaning. Hand the user the same absolute form when they run an `--apply` command in a terminal, since their terminal's `PATH` can differ from yours.
+
+A Nix install wraps the command with every tool it needs. The bundled script reads the user's own `PATH`, so before its first run check each tool and tell the user which package to install for their platform when a check fails:
+
+| Tool          | Requirement             | Check                                                          |
+| ------------- | ----------------------- | -------------------------------------------------------------- |
+| Nushell       | 0.116 or later          | `nu --version`                                                 |
+| SQLite        | `sqlite3` 3.33 or later | `sqlite3 --version`                                            |
+| ripgrep       | Built with PCRE2        | `rg --pcre2-version`                                           |
+| zstd          | Any version             | `zstd --version`                                               |
+| GNU coreutils | Homebrew's on macOS     | `brew --prefix coreutils` on macOS, `stat --version` elsewhere |
+
+On macOS the command puts Homebrew's GNU coreutils first on its own `PATH`, so the user's `PATH` can keep the BSD tools. Elsewhere, `stat --version` must report GNU coreutils. Native Windows is unsupported.
 
 ## Survey
 
-1. Run `agent-project-move scan` on the host. It lists each recorded path with its session count, last use, whether the directory exists, and a `suggested` target for a missing path. Run it again with `--assistant` to narrow the output. Assistant names are a comma-separated list: `claude`, `codex`, `opencode`, `omp`.
+1. Run `agent-project-move scan` on the host. It lists each recorded path with its session count, last use, whether the directory exists, and a `suggested` target for a missing path. Run it again with `--assistant` to narrow the output. Assistant names are a comma-separated list: `claude`, `codex`, `omp`.
 2. For each missing path without a suggestion, look for a checkout with the same basename under the old parent and the usual source roots (`~/src`, `~/work`, `~/projects`). Ask the user when you find none or several. When two candidates share a name, `git -C <candidate> rev-list --max-parents=0 HEAD` tells clones of one repository from unrelated projects. Use GitHub or GitLab when no local checkout remains.
 3. Present the old-to-new mapping, the suggested target of each missing path, and the paths that pruning would delete. Wait for the user to confirm all three before any write.
 
@@ -99,7 +111,7 @@ agent-project-move prune --apply
 
 Set `BACKUP` to the directory the apply printed after `Backed up to`. It mirrors absolute paths and holds a `manifest.json` listing every action, including the destination of each rename as `to`.
 
-1. Exit the four assistants so nothing writes during the restore.
+1. Exit the three assistants so nothing writes during the restore.
 
 2. Reverse every `rename` and `rmdir` in reverse manifest order, moving each renamed file or directory from `to` back to `path` and recreating each directory removed by `rmdir`.
 
@@ -118,5 +130,5 @@ Set `BACKUP` to the directory the apply printed after `Backed up to`. It mirrors
 ## Verify
 
 - Run `agent-project-move scan` again and confirm the moved paths appear under their new location.
-- Ask the user to open the new directory and check `/resume` in Claude Code, `codex resume` in Codex, the session list in OpenCode, and `/resume` in OMP.
+- Ask the user to open the new directory and check `/resume` in Claude Code, `codex resume` in Codex, and `/resume` in OMP.
 - Keep the backup until the next session opens the moved project successfully.

@@ -33,7 +33,7 @@ export def sqlite-rows [db: string, query: string]: nothing -> list {
   if $output == "" { [] } else { $output | from json }
 }
 
-export def sqlite-columns [db: string, table: string]: nothing -> list<string> {
+def sqlite-columns [db: string, table: string]: nothing -> list<string> {
   sqlite-rows $db $"PRAGMA table_info\(($table)\)" | get name
 }
 

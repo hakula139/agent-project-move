@@ -1,0 +1,6 @@
+{
+  "name": "agent-project-move",
+  "description": "The agent-project-move plugin",
+  "owner": { "name": "Hakula", "url": "https://hakula.xyz" },
+  "plugins": [{ "name": "agent-project-move", "source": "./" }]
+}

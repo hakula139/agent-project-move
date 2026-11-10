@@ -3,9 +3,9 @@
 # ==================================================================================================
 # Agent Project Move
 # ==================================================================================================
-# Moves, exports, imports, and prunes Claude Code, Codex, OpenCode, and OMP state after a project
-# directory moves. Paths match by exact string prefix, case-sensitively. A move rewrites state in
-# place, while export and import transfer state between hosts. Run with --help for usage.
+# Moves, exports, imports, and prunes Claude Code, Codex, and OMP state after a project directory
+# moves. Paths match by exact string prefix, case-sensitively. A move rewrites state in place,
+# while export and import transfer state between hosts. Run with --help for usage.
 # ==================================================================================================
 
 use ./lib/actions.nu [apply-all]
@@ -28,8 +28,16 @@ use ./assistants.nu [
   prune-missing-paths
   scan-all
 ]
-use ./install.nu [setup]
 use ./suggestions.nu [scan-suggestions]
+
+# The stores call GNU stat, realpath, mv, and cp, which Homebrew keeps unprefixed only in gnubin.
+if $nu.os-info.name == "macos" and (which brew | is-not-empty) {
+  let prefix = (^brew --prefix coreutils | complete)
+  let gnubin = ($prefix.stdout | str trim | path join "libexec/gnubin")
+  if $prefix.exit_code == 0 and ($gnubin | path exists) {
+    $env.PATH = ($env.PATH | prepend $gnubin)
+  }
+}
 
 # Move, export, import, and prune assistant state recorded for project paths.
 #
@@ -44,12 +52,6 @@ def main [...rest: string] {
     msg: $"Unknown subcommand ($rest | first)"
     help: "Run 'agent-project-move --help' to list the commands."
   }
-}
-
-# One-time plain-install setup: check the tools, then link the command and the skill.
-@example "Set up a plain install" { agent-project-move setup }
-def "main setup" []: nothing -> nothing {
-  setup
 }
 
 # List each recorded project path with its sessions, last use, existence, and suggested target.
