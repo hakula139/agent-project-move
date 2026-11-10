@@ -29,7 +29,7 @@ The repository is a Claude Code and Codex plugin, and `skills/agent-project-move
 
 ### Requirements
 
-Native Windows is unsupported. Outside Nix, the command needs Nushell 0.116 or later, GNU coreutils, `sqlite3` 3.33 or later, `ripgrep` built with PCRE2, and `zstd`. The skill checks for them and names what is missing. Homebrew and Arch package Nushell, and other platforms install it from the [installation guide](https://www.nushell.sh/book/installation.html). On macOS, install Homebrew's `coreutils`, whose `gnubin` directory the command puts first on its own `PATH`.
+Native Windows is unsupported. Outside Nix, the command needs the tools listed in the skill's [Requirements](skills/agent-project-move/SKILL.md#requirements), and the skill checks for them and names what is missing. Homebrew and Arch package Nushell, and other platforms install it from the [installation guide](https://www.nushell.sh/book/installation.html).
 
 ### Claude Code plugin
 
@@ -60,9 +60,17 @@ ln -s "$skill_dir" ~/.agents/skills/agent-project-move
 ln -s "$skill_dir" ~/.claude/skills/agent-project-move
 ```
 
-Codex and OMP read `~/.agents/skills`, while Claude Code and OMP read `~/.claude/skills`. When `CLAUDE_CONFIG_DIR` names another directory, Claude Code reads `$CLAUDE_CONFIG_DIR/skills`, so link the skill there. Link the whole skill directory, never `SKILL.md` alone, because Codex skips a `SKILL.md` that is itself a symlink. `git pull` updates the clone, and `git checkout vX.Y.Z` pins a release.
+| Directory                                                   | Read by          |
+| ----------------------------------------------------------- | ---------------- |
+| `~/.agents/skills`                                          | Codex, OMP       |
+| `~/.claude/skills`, or `$CLAUDE_CONFIG_DIR/skills` when set | Claude Code, OMP |
 
-Skill installers copy only the skill directory: `npx skills add hakula139/agent-project-move -g` installs it into `~/.agents/skills` and links it for Claude Code, and Codex's `$skill-installer` takes `--repo hakula139/agent-project-move --path skills/agent-project-move`.
+Link the whole skill directory, never `SKILL.md` alone, because Codex skips a `SKILL.md` that is itself a symlink. `git pull` updates the clone, and `git checkout vX.Y.Z` pins a release.
+
+Skill installers copy only the skill directory:
+
+- `npx skills add hakula139/agent-project-move -g` installs it into `~/.agents/skills` and links it for Claude Code.
+- Codex's `$skill-installer` takes `--repo hakula139/agent-project-move --path skills/agent-project-move`.
 
 ### Nix
 
