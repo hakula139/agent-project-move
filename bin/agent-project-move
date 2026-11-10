@@ -1,2 +1,0 @@
-#!/bin/sh
-exec nu --no-config-file "$(dirname "$(realpath "$0")")/../skills/agent-project-move/scripts/agent-project-move.nu" "$@"
