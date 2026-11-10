@@ -26,6 +26,7 @@
 Run after implementation and before review:
 
 ```bash
+nix develop -c run-hooks
 nix flake check --all-systems
 nix build
 nix develop -c nu-test <file>...
