@@ -19,7 +19,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
     devkit = {
-      url = "github:hakula139/devkit/v2";
+      url = "github:hakula139/devkit/v3";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -105,7 +105,6 @@
             shfmt.enable = true;
             sort-file-contents.enable = true;
             statix.enable = true;
-            taplo.enable = true;
           };
         };
       in
@@ -119,15 +118,12 @@
           packages = [
             dk.nushell
             dk.nu-test
-            pkgs.git-cliff
             pkgs.ripgrep
             pkgs.sqlite
             pkgs.zstd
           ];
 
-          inputsFrom = [
-            preCommit.shell
-          ];
+          inputsFrom = [ preCommit ];
         };
 
         # ------------------------------------------------------------------------------------------
@@ -142,8 +138,6 @@
         # Checks
         # ------------------------------------------------------------------------------------------
         checks = {
-          pre-commit = preCommit.check;
-
           home-module =
             let
               eval = lib.evalModules {
