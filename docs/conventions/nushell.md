@@ -1,15 +1,11 @@
 # Nushell
 
-The command and its tests are Nushell. General Nushell conventions and traps live in the [`nushell` skill](https://github.com/hakula139/nixos-config/blob/main/home/modules/llm-assistants/shared/skills/nushell/SKILL.md) that nixos-config installs, and this page covers the module layout and the rules specific to agent-project-move.
+The command and its tests are Nushell. General Nushell conventions and traps live in the [`nushell` skill](https://github.com/hakula139/plugins/blob/main/plugins/hakula-languages/skills/nushell/SKILL.md) in hakula139/plugins, and this page covers the module layout and the rules specific to agent-project-move.
 
 ## Modules
 
 - **Exports**: export only what another module or the module's test calls. Layer modules so dependencies point one way: generic helpers, then stores, then orchestration, then the entry.
 - **Imports**: import a module by name when its commands share verbs with siblings, so calls read `claude plan-move`. Otherwise list the imported commands (`use ./paths.nu [path-map path-match]`), so a reader sees where each name comes from. Tests may `use ./<module>.nu *`.
-
-## Linting
-
-`nu-check` fails only on diagnostics with severity `Error`. Read the deprecation warnings when the pinned Nushell changes.
 
 ## Traps
 
@@ -21,4 +17,4 @@ The command and its tests are Nushell. General Nushell conventions and traps liv
 
 Path encodings, rewrites, and SQL conditions are easy to get subtly wrong, so cover them with tests.
 
-- **Test data**: use invented names such as `/home/u/src/app`, never a path from a real machine.
+- **Test data**: use invented paths, never one from a real machine.

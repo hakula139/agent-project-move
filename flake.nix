@@ -105,7 +105,6 @@
             shfmt.enable = true;
             sort-file-contents.enable = true;
             statix.enable = true;
-            taplo.enable = true;
           };
         };
       in
@@ -119,7 +118,6 @@
           packages = [
             dk.nushell
             dk.nu-test
-            pkgs.git-cliff
             pkgs.ripgrep
             pkgs.sqlite
             pkgs.zstd

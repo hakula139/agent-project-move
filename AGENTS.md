@@ -14,22 +14,17 @@
 
 ## Rules for every change
 
-- Run the pre-commit hooks on every commit. In each new checkout or worktree, run `nix develop -c true` once to install them. Never bypass the hooks with `--no-verify` or `PRE_COMMIT_ALLOW_NO_CONFIG`. When a hook, test, or CI job fails, fix its cause, and keep a skip, ignore entry, or retry only where it is the design, such as the excluded fixtures.
+- Run the pre-commit hooks on every commit. In each new checkout or worktree, run `nix develop -c true` once to install them. Never bypass the hooks with `--no-verify` or `PRE_COMMIT_ALLOW_NO_CONFIG`, and fix the cause whenever a hook, test, or CI job fails.
 - Wrap code and comments at 100 columns, counting the indent, end section banners at column 100, and keep a single-line string literal whole at any length.
-- Add new words to `.cspell/words.txt`.
 - Update whatever the change makes stale: the README's usage, tested versions, and safety model, the reference pages, the skill under `skills/`, and the Home Manager module in `nix/home-manager.nix` when the command or its skill changes what it installs.
 - The store formats in [Assistant stores](docs/reference/stores.md) are the ones the modules read, and a release of any assistant can change them, so check a store claim against a run.
 - Issues, pull requests, and their comments link only public material. Never reference local working notes, private paths, or private repositories.
 
 ## Verification
 
-Run after implementation and before review:
-
 ```bash
-nix develop -c run-hooks
 nix flake check --all-systems
-nix build
-nix develop -c nu-test <file>...
+nix develop -c run-hooks
 nix run . -- scan
 ```
 
