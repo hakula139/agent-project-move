@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       actions: read
+
     steps:
       - name: Check results
         uses: hakula139/devkit/.github/actions/ci-result@v3
