@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Install as a Claude Code or Codex plugin from the repository's marketplace, pinned to a release tag, or copy `skills/agent-project-move/` with any skill installer. Without the command on `PATH`, the skill runs its bundled scripts, and on macOS the command puts Homebrew's GNU coreutils first on its own `PATH` ([#14](https://github.com/hakula139/agent-project-move/pull/14))
 
+### Changed
+
+- Clarify that the command needs no credentials, opens no network connections, and runs no commands from the assistant stores. Exports select state by project path, so credential files and tables stay out of a bundle. Delete each backup directory once you no longer need it ([#19](https://github.com/hakula139/agent-project-move/pull/19))
+
 [0.2.0]: https://github.com/hakula139/agent-project-move/compare/v0.1.0...v0.2.0
 
 ## [0.1.0] - 2026-11-02
