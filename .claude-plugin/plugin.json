@@ -1,6 +1,6 @@
 {
   "name": "agent-project-move",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Move, prune, and transfer the project state stored by coding agents",
   "author": { "name": "Hakula", "url": "https://hakula.xyz" },
   "repository": "https://github.com/hakula139/agent-project-move",
