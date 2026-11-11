@@ -6,7 +6,6 @@
 
 | When the change touches                        | Read                                                                        |
 | ---------------------------------------------- | --------------------------------------------------------------------------- |
-| A `.nu` file or a `.test.nu` file              | The [`nushell` skill][nushell skill]                                        |
 | CI or a workflow                               | [devkit's CI guide](https://github.com/hakula139/devkit/blob/v3/docs/ci.md) |
 | A store module or an assistant's on-disk state | [Assistant stores](docs/reference/stores.md)                                |
 | Move, transfer, prune, or backup behavior      | [Design](docs/reference/design.md)                                          |
@@ -40,6 +39,4 @@ Each rule has one home, which other pages link to. Add to this file or `docs/` o
 
 ## Code review
 
-Review the change and its affected callers against the [`nushell` skill][nushell skill] and the rules above, and check in particular that functions answering the same question across the three stores share shape, naming, and return type, and that logic two stores need lives in `lib/`.
-
-[nushell skill]: https://github.com/hakula139/plugins/blob/main/plugins/hakula-languages/skills/nushell/SKILL.md
+Review the change and its affected callers against the rules and pages above, and check in particular that functions answering the same question across the three stores share shape, naming, and return type, and that logic two stores need lives in `lib/`.
