@@ -107,8 +107,9 @@ The module installs the command and links the skill into `~/.agents/skills` and 
 
 Before any `--apply`, exit every assistant session working in the affected projects. A session that writes during the apply loses those writes, and a running Claude Code can rewrite `~/.claude.json` at the same moment. Your own agent session counts.
 
-- **One backup per applied run.** Everything edited or deleted is copied, and each database is backed up with `sqlite3 .backup`, under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, with a `manifest.json` listing every action in order, including each rename's destination. The directory is created with mode `0700` and outlives the run, and it holds the same transcripts as the stores, including any secret a session printed or a tool read.
+- **One backup per applied run.** Everything edited or deleted is copied, and each database is backed up with `sqlite3 .backup`, under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, with a `manifest.json` listing every action in order, including each rename's destination. The directory is created with mode `0700` and outlives the run, and it holds the same transcripts as the stores, including any secret a session printed or a tool read. Delete the directory once you no longer need it.
 - **Each SQL action is one transaction**, so a failed action leaves no partial rows.
+- **Local state only.** The tool needs no credentials, opens no network connections, and runs no commands from the assistant stores, so a bug in its selection or rewrite logic can delete local state or leave a session pointing at a dead path.
 
 If a run stops partway, rerun the same command. It plans from what is on disk and skips finished work. If it stopped while rewriting files, restore from the backup first. [Restore](skills/agent-project-move/SKILL.md#restore) walks through the manifest.
 
@@ -162,7 +163,7 @@ agent-project-move move ~/src/app ~/work/app           # When the path differs
 agent-project-move move ~/src/app ~/work/app --apply
 ```
 
-`export` copies the files and rows recorded for the path, unchanged, and needs no `--apply`. `import` writes them where the target's assistant keeps the same path, never overwrites state the target already holds, and aborts before writing when a target table lacks a column the bundle contains. The bundle holds transcripts, so keep it in a private directory, transfer it over a trusted channel, and delete it on both hosts once the import is done. If you are retiring the source copy, delete its directory there once the target lists the sessions, then prune the source host.
+`export` copies the files and rows recorded for the path, unchanged, and needs no `--apply`. `import` writes them where the target's assistant keeps the same path, never overwrites state the target already holds, and aborts before writing when a target table lacks a column the bundle contains. The bundle holds transcripts, so keep it in a private directory, transfer it over a trusted channel, and delete it on both hosts once the import is done. Selection follows the project path, so the assistants' credential files and tables, such as `auth.json` and `.credentials.json`, stay out of a bundle. If you are retiring the source copy, delete its directory there once the target lists the sessions, then prune the source host.
 
 ## Tested with
 
