@@ -2,6 +2,8 @@
 
 Each store module reads one assistant's local state, plans its changes, and returns actions without writing. This page records where that state lives and which fields a move rewrites. The invariants behind the rewrites are in [Design](design.md).
 
+These formats are the ones the modules read, and a release of any assistant can change them, so check a claim against a run, and record the version you ran in the README's [Tested with](../../README.md#tested-with) table.
+
 ## Claude Code
 
 Root: `$CLAUDE_CONFIG_DIR`, defaulting to `~/.claude`. The global document is `$CLAUDE_CONFIG_DIR/.claude.json`, or `~/.claude.json` when the variable is unset.
