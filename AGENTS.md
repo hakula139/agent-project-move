@@ -6,7 +6,7 @@
 
 | When the change touches                        | Read                                                                        |
 | ---------------------------------------------- | --------------------------------------------------------------------------- |
-| A `.nu` file or a `.test.nu` file              | [Nushell](docs/conventions/nushell.md)                                      |
+| A `.nu` file or a `.test.nu` file              | The [`nushell` skill][nushell skill]                                        |
 | CI or a workflow                               | [devkit's CI guide](https://github.com/hakula139/devkit/blob/v3/docs/ci.md) |
 | A store module or an assistant's on-disk state | [Assistant stores](docs/reference/stores.md)                                |
 | Move, transfer, prune, or backup behavior      | [Design](docs/reference/design.md)                                          |
@@ -16,6 +16,7 @@
 
 - Run the pre-commit hooks on every commit. In each new checkout or worktree, run `nix develop -c true` once to install them. Never bypass the hooks with `--no-verify` or `PRE_COMMIT_ALLOW_NO_CONFIG`, and fix the cause whenever a hook, test, or CI job fails.
 - Wrap code and comments at 100 columns, counting the indent, end section banners at column 100, and keep a single-line string literal whole at any length.
+- Build home paths from `$env.HOME`, read when the command runs, so a test can swap `HOME` with `with-env`. This overrides the `nushell` skill's advice to build them from `$nu.home-dir`.
 - Update whatever the change makes stale: the README's usage, tested versions, and safety model, the reference pages, the skill under `skills/`, and the Home Manager module in `nix/home-manager.nix` when the command or its skill changes what it installs.
 - Keep `skills/agent-project-move/` self-contained, because skill installers copy only that directory and its `SKILL.md` falls back to the bundled `scripts/` inside it. Leave `${CLAUDE_SKILL_DIR}` out of `SKILL.md`, since Codex and OMP read it literally.
 - The store formats in [Assistant stores](docs/reference/stores.md) are the ones the modules read, and a release of any assistant can change them, so check a store claim against a run.
@@ -39,4 +40,6 @@ Each rule has one home, which other pages link to. Add to this file or `docs/` o
 
 ## Code review
 
-Review the change and its affected callers against the convention docs, and check in particular that functions answering the same question across the three stores share shape, naming, and return type, and that logic two stores need lives in `lib/`.
+Review the change and its affected callers against the [`nushell` skill][nushell skill] and the rules above, and check in particular that functions answering the same question across the three stores share shape, naming, and return type, and that logic two stores need lives in `lib/`.
+
+[nushell skill]: https://github.com/hakula139/plugins/blob/main/plugins/hakula-languages/skills/nushell/SKILL.md
