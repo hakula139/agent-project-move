@@ -13,8 +13,7 @@
 
 ## Code
 
-- Wrap code and comments at 100 columns, counting the indent.
-- Build home paths from `$env.HOME`, read when the command runs, so a test can swap `HOME` with `with-env`. This overrides the `nushell` skill's advice to use `$nu.home-dir`, which Nushell fixes at startup.
+Wrap code and comments at 100 columns, counting the indent.
 
 ## Skill directory
 
