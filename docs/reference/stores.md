@@ -2,6 +2,13 @@
 
 Each store module reads one assistant's local state, plans its changes, and returns actions without writing. This page records where that state lives and which fields a move rewrites. The invariants behind the rewrites are in [Design](design.md).
 
+These formats are the ones the modules read, and a release of any assistant can change them, so check a claim against a run before relying on it.
+
+## Module contracts
+
+- Functions answering the same question across the three stores share shape, naming, and return type, and logic two stores need lives in `lib/`.
+- The stores and the backup base build home paths from `$env.HOME`, read when the command runs, so a test can swap `HOME` with `with-env`. `$nu.home-dir` is fixed at startup, so leave it out despite the `nushell` skill's advice.
+
 ## Claude Code
 
 Root: `$CLAUDE_CONFIG_DIR`, defaulting to `~/.claude`. The global document is `$CLAUDE_CONFIG_DIR/.claude.json`, or `~/.claude.json` when the variable is unset.
