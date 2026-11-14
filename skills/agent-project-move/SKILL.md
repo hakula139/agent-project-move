@@ -24,6 +24,8 @@ A Nix install wraps the command with every tool it needs. The bundled script rea
 | SQLite        | `sqlite3` 3.33 or later | `sqlite3 --version`                                            |
 | ripgrep       | Built with PCRE2        | `rg --pcre2-version`                                           |
 | zstd          | Any version             | `zstd --version`                                               |
+| find          | POSIX implementation    | `command -v find`                                              |
+| cmp           | POSIX implementation    | `command -v cmp`                                               |
 | GNU coreutils | Homebrew's on macOS     | `brew --prefix coreutils` on macOS, `stat --version` elsewhere |
 
 On macOS the command puts Homebrew's GNU coreutils first on its own `PATH`, so the user's `PATH` can keep the BSD tools. Elsewhere, `stat --version` must report GNU coreutils. Native Windows is unsupported.
