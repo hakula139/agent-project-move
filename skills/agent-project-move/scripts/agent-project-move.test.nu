@@ -22,6 +22,21 @@ def fixture-env [root: string]: nothing -> record {
   }
 }
 
+def traced-fixture-env [root: string]: nothing -> record {
+  let sqlite = (
+    which sqlite3
+    | first
+    | get path
+  )
+
+  fixture-env $root
+  | merge {
+    APM_SQLITE: $sqlite
+    APM_SQLITE_BACKUP_LOG: ($root | path join "sqlite-backups.jsonl")
+    PATH: ($env.PATH | prepend $env.NU_TEST_STUBS)
+  }
+}
+
 def write-jsonl [file: string, rows: list<record>] {
   mkdir ($file | path dirname)
   $rows
@@ -258,15 +273,20 @@ def "test live Codex retirement preserves peers and removes dependent rows with 
 
     let before = (open --raw $fixture.db | hash sha256)
     let backup_root = ($root | path join "state/agent-project-move")
+    let backup_log = ($root | path join "sqlite-backups.jsonl")
     let flags = if $backup { [] } else { ["--no-backup"] }
 
-    with-env (fixture-env $root) {
+    with-env (traced-fixture-env $root) {
       let dry = (run-cli retire $project --assistant "codex" --session-ids "parent" ...$flags)
       assert equal $dry.exit_code 0 $dry.stderr
 
       assert equal (open --raw $fixture.db | hash sha256) $before
       assert ($fixture.compressed | path exists)
       assert not ($backup_root | path exists)
+      assert not ($backup_log | path exists)
+      assert str contains $dry.stdout (
+        if $backup { "A backup goes to" } else { "No backup will be created." }
+      )
 
       let apply = (
         run-cli retire $project --assistant "codex" --session-ids "parent" --apply ...$flags
@@ -295,6 +315,7 @@ def "test live Codex retirement preserves peers and removes dependent rows with 
       }
 
       assert equal ($backup_root | path exists) $backup
+      assert equal ($backup_log | path exists) $backup
       if $backup {
         let run_backup = (
           ls $backup_root
@@ -329,6 +350,143 @@ def "test live Codex retirement preserves peers and removes dependent rows with 
 
       assert equal (sqlite-rows $fixture.db "SELECT id FROM threads") []
       assert equal (sqlite-rows $fixture.db "SELECT id FROM projects") []
+    }
+  }
+}
+
+def "test Codex mutations honor backup choice and preserve unrelated imports" [] {
+  for operation in ["move" "import" "prune"] {
+    for backup in [true false] {
+      let root = (mktemp -d)
+      let target = ($root | path join "target")
+      let project = "/home/u/src/app"
+      let live = ($root | path join "live")
+      let destination = ($root | path join "moved")
+      mkdir $live $destination
+      let moved = ($destination | path expand)
+      let fixture_project = if $operation == "import" { $live } else { $project }
+      let fixture = (make-codex $target $fixture_project)
+      let directory = ($root | path join "bundle")
+
+      if $operation == "import" {
+        [
+          "DELETE FROM dependent WHERE thread_id != 'retained';"
+          "DELETE FROM thread_spawn_edges;"
+          "DELETE FROM threads WHERE id != 'retained';"
+          "UPDATE projects SET id = 'live-project';"
+          "UPDATE threads SET project_id = 'live-project';"
+        ]
+        | str join " "
+        | ^sqlite3 $fixture.db
+
+        for file in (glob ($target | path join "codex/sessions/*")) {
+          if ($file | path basename) != "retained.jsonl" {
+            rm $file
+          }
+        }
+
+        let source = ($root | path join "source")
+        let source_fixture = (make-codex $source $project)
+        "UPDATE threads SET attached_thread_parent_id = NULL WHERE id = 'other-child';"
+        | ^sqlite3 $source_fixture.db
+
+        with-env (fixture-env $source) {
+          let export = (
+            run-cli export $project $directory --assistant "codex" --session-ids "parent"
+          )
+          assert equal $export.exit_code 0 $export.stderr
+        }
+      } else if $operation == "move" {
+        "ALTER TABLE threads ADD COLUMN sandbox_policy TEXT;" | ^sqlite3 $fixture.db
+      }
+
+      let before = (open --raw $fixture.db | hash sha256)
+      let before_ids = (sqlite-rows $fixture.db "SELECT id FROM threads ORDER BY id")
+      let retained = ($target | path join "codex/sessions/retained.jsonl")
+      let retained_body = (open --raw $retained)
+      let backup_root = ($target | path join "state/agent-project-move")
+      let backup_log = ($target | path join "sqlite-backups.jsonl")
+      let flags = if $backup { [] } else { ["--no-backup"] }
+      let label = $"($operation), backup=($backup)"
+      let args = if $operation == "move" {
+        ["move" $project $moved]
+      } else if $operation == "import" {
+        ["import" $directory]
+      } else {
+        ["prune"]
+      }
+
+      with-env (traced-fixture-env $target) {
+        let dry = (run-cli ...$args --assistant "codex" ...$flags)
+        assert equal $dry.exit_code 0 $"($label): ($dry.stderr)"
+
+        assert equal (open --raw $fixture.db | hash sha256) $before $label
+        assert not ($backup_root | path exists) $label
+        assert not ($backup_log | path exists) $label
+        assert str contains $dry.stdout (
+          if $backup { "A backup goes to" } else { "No backup will be created." }
+        ) $label
+
+        let apply = (run-cli ...$args --assistant "codex" --apply ...$flags)
+        assert equal $apply.exit_code 0 $"($label): ($apply.stderr)"
+
+        assert equal ($backup_root | path exists) $backup $label
+        assert equal ($backup_log | path exists) $backup $label
+        if $backup {
+          let saved = (
+            ls $backup_root
+            | get name
+            | first
+            | path join ($fixture.db | str trim --left --char "/")
+          )
+
+          assert equal (sqlite-rows $saved "SELECT id FROM threads ORDER BY id") $before_ids $label
+        }
+
+        if $operation == "import" {
+          assert equal (
+            sqlite-rows $fixture.db "SELECT id, cwd, project_id FROM threads ORDER BY id"
+          ) [
+            {
+              id: "child"
+              cwd: "/other/worker"
+              project_id: "shared"
+            }
+            {
+              id: "parent"
+              cwd: $project
+              project_id: "shared"
+            }
+            {
+              id: "retained"
+              cwd: $live
+              project_id: "live-project"
+            }
+          ] $label
+          assert equal (sqlite-rows $fixture.db "SELECT * FROM thread_spawn_edges") [
+            {
+              parent_thread_id: "parent"
+              child_thread_id: "child"
+              status: "completed"
+            }
+          ] $label
+          assert equal (
+            sqlite-rows $fixture.db "SELECT * FROM dependent"
+          ) [{thread_id: "retained"}] $label
+          assert equal (open --raw $retained) $retained_body $label
+          assert ($fixture.compressed | path exists) $label
+          assert (($target | path join "codex/sessions/child.jsonl") | path exists) $label
+        } else if $operation == "move" {
+          assert equal (sqlite-rows $fixture.db "SELECT cwd FROM threads WHERE id = 'parent'") [
+            {cwd: $moved}
+          ] $label
+        } else {
+          assert equal (
+            sqlite-rows $fixture.db "SELECT id FROM threads WHERE id = 'parent'"
+          ) [] $label
+          assert not ($fixture.compressed | path exists) $label
+        }
+      }
     }
   }
 }
@@ -1521,7 +1679,7 @@ def "test OMP selected titles transfer and retire without requiring history rows
   }
 }
 
-def "test selective CLI rejects ambiguous retirement and backup bypass elsewhere" [] {
+def "test selective CLI rejects ambiguous retirement and backup flags on reads" [] {
   let root = (mktemp -d)
   make-codex $root "/home/u/src/app" | ignore
   let cases = [
@@ -1531,9 +1689,8 @@ def "test selective CLI rejects ambiguous retirement and backup bypass elsewhere
     ["export" "/home/u/src/app" ($root | path join "bundle") "--session-ids" ""]
     ["export" "/home/u/src/app" ($root | path join "bundle") "--exact" "--session-ids" ""]
     ["retire" "/home/u/src/app" "--session-ids" ""]
-    ["prune" "--no-backup"]
-    ["move" "/home/u/src/app" "/home/u/src/new" "--no-backup"]
-    ["import" ($root | path join "bundle") "--no-backup"]
+    ["export" "/home/u/src/app" ($root | path join "bundle") "--no-backup"]
+    ["scan" "--no-backup"]
   ]
 
   with-env (fixture-env $root) {
