@@ -556,11 +556,13 @@ def session-records []: nothing -> list<record> {
     let linked = (
       $inventory | where {|candidate|
         let candidate_file = ($candidate | get -o file)
-        ($parent != null and ($candidate.id == $parent or $candidate_file == $parent))
-        or ($file != null and $candidate_file != null and (
-          path-match ($candidate_file | str replace --regex '\.jsonl$' '') $file
-        ))
-      } | sort-by {|candidate| $candidate.file | str length } | last
+        (
+          ($parent != null and ($candidate.id == $parent or $candidate_file == $parent))
+          or ($file != null and $candidate_file != null and (
+            path-match ($candidate_file | str replace --regex '\.jsonl$' '') $file
+          ))
+        )
+      } | sort-by {|candidate| $candidate | get -o file | default "" | str length } | last
     )
     let owner = if $file == null { $row.cwd } else {
       let main = (

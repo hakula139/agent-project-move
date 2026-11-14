@@ -157,7 +157,7 @@ def "main export" [
   dir: string # Directory receiving one subdirectory per assistant
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to export
   --exact # Select sessions whose recorded cwd equals the path
-  --session-ids: string = "" # Comma-separated session IDs under the path
+  --session-ids: string # Comma-separated session IDs under the path
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
   let old = (normalize-path $path)
@@ -196,12 +196,13 @@ def "main export" [
   print $"Exported to ($dir)"
 }
 
-def selection-ids [exact: bool, value: string]: nothing -> list<string> {
-  if $exact and $value != "" {
+def selection-ids [exact: bool, value: any]: nothing -> list<string> {
+  if $exact and $value != null {
     error make --unspanned {msg: "--exact and --session-ids are mutually exclusive"}
   }
+  if $value == null { return [] }
   let ids = ($value | split row "," | each {|id| $id | str trim } | where {|id| $id != "" } | uniq)
-  if $value != "" and ($ids | is-empty) {
+  if ($ids | is-empty) {
     error make --unspanned {msg: "--session-ids requires at least one session ID"}
   }
   $ids
@@ -212,7 +213,7 @@ def "main retire" [
   path: string # Recorded project path, or a parent of selected sessions
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to retire
   --exact # Select sessions whose recorded cwd equals the path
-  --session-ids: string = "" # Comma-separated session IDs under the path
+  --session-ids: string # Comma-separated session IDs under the path
   --apply # Write the planned changes
   --no-backup # Permanently remove selected copies without creating a backup
 ]: nothing -> nothing {

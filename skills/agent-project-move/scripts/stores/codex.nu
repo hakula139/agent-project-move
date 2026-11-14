@@ -380,7 +380,18 @@ export def plan-retire [old: string, --exact, --session-ids: list<string> = []]:
     $threads | get -o cwd | uniq
     | where {|cwd| not ($remaining | any {|row| path-match $cwd $row.cwd }) }
   )
-  delete-threads $threads $unused
+  mut actions = (delete-threads $threads $unused)
+  let projects = ($threads | get -o project_id | compact | uniq)
+  if ($projects | is-not-empty) {
+    let statement = (
+      $"DELETE FROM projects WHERE id IN \((sql-list $projects)\)"
+      + " AND NOT EXISTS (SELECT 1 FROM threads WHERE threads.project_id = projects.id)"
+    )
+    $actions = ($actions | append (
+      sql-action codex projects $state [$statement] "remove unreferenced projects" --rows-first --foreign-keys
+    ))
+  }
+  $actions
 }
 
 # --------------------------------------------------------------------------------------------------

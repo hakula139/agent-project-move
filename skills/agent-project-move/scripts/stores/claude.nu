@@ -402,12 +402,12 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
 # Prune
 # --------------------------------------------------------------------------------------------------
 
-export def prune-config [config: record, paths: list<string>]: nothing -> record {
+export def prune-config [config: record, paths: list<string>, --exact]: nothing -> record {
   let projects = ($config | get -o projects | default {})
   let removed = (
     $projects
     | transpose key value
-    | where {|entry| match-any $paths $entry.key }
+    | where {|entry| if $exact { $entry.key in $paths } else { match-any $paths $entry.key } }
     | get key
   )
   let updated_projects = ($projects | reject ...$removed)
@@ -415,7 +415,9 @@ export def prune-config [config: record, paths: list<string>]: nothing -> record
   let repos = ($config | get -o githubRepoPaths | default {})
   let pruned_repos = (
     $repos
-    | update cells { $in | where {|path| not (match-any $paths $path) } }
+    | update cells { $in | where {|path|
+      if $exact { $path not-in $paths } else { not (match-any $paths $path) }
+    } }
   )
   let dropped = (
     $pruned_repos
@@ -583,27 +585,30 @@ export def plan-retire [old: string, --exact, --session-ids: list<string> = []]:
       if $trailing { $body + "\n" } else { $body }
     } "retire session history"))
   }
-  let remaining = (transcript-cwds | where {|row| $row.file not-in $files })
   let unused = (
     $selected | get -o owner | uniq
-    | where {|cwd| not ($remaining | any {|row| path-match $cwd $row.cwd }) }
+    | where {|cwd|
+      let dir = (projects-dir | path join (encode-path $cwd))
+      top-files $dir | all {|file| $file in $files }
+    }
   )
   let config = (global-config)
   if ($config | path exists) and ($unused | is-not-empty) {
     $actions = ($actions | append (edit-action claude global-config $config {|content|
-      $content | from json | prune-config $in $unused | to json
+      $content | from json | prune-config $in $unused --exact | to json
     } "remove unreferenced projects"))
   }
   $actions
 }
 
 export def export-bundle [old: string, --exact, --session-ids: list<string> = []]: nothing -> record {
+  let selected_sessions = (selected-transcripts $old --exact=$exact --session-ids $session_ids)
   let selected = if $exact or ($session_ids | is-not-empty) {
-    selected-transcripts $old --exact=$exact --session-ids $session_ids
+    $selected_sessions
     | each {|row| {dir: $row.directory, owner: $row.owner} } | uniq
   } else { selected-dirs $old }
   let selected_files = (
-    selected-transcripts $old --exact=$exact --session-ids $session_ids | get -o tree | uniq
+    $selected_sessions | get -o tree | uniq
   )
   mut files = []
 
@@ -627,16 +632,8 @@ export def export-bundle [old: string, --exact, --session-ids: list<string> = []
     }
   }
 
-  let sessions = (
-    $selected
-    | each {|item|
-      top-files $item.dir
-      | where {|file| (not $exact and ($session_ids | is-empty)) or ($file in $selected_files) }
-      | each {|file| $file | path basename | str replace --regex '\.jsonl$' '' }
-    }
-    | flatten
-    | uniq
-  )
+  let directories = ($selected | get -o dir)
+  let sessions = ($selected_sessions | where {|row| $row.directory in $directories } | get -o id | uniq)
   for session in $sessions {
     let history = (root | path join file-history $session)
     for file in (files-under $history) {
