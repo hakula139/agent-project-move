@@ -96,11 +96,10 @@ export def latest-db [pattern: string, table: string]: nothing -> any {
 export def path-condition [
   column: string
   paths: list<string>
-  --prefix: string = ""
 ]: nothing -> string {
   $paths
   | each {|path|
-    let value = (sql-quote ($prefix + $path))
+    let value = (sql-quote $path)
     if $path == "/" {
       $"substr\(($column), 1, length\(($value)\)\) = ($value)"
     } else {
@@ -156,17 +155,6 @@ export def check-columns [
   }
 }
 
-def insert-parts [columns: list<string>, row: record]: nothing -> record {
-  {
-    names: ($columns | str join ", ")
-    values: (
-      $columns
-      | each {|column| sql-quote ($row | get -o $column) }
-      | str join ", "
-    )
-  }
-}
-
 # Insert a row unless a unique or primary key already holds it. Every other constraint failure
 # aborts, so a row that violates NOT NULL or CHECK is never dropped silently.
 export def sqlite-insert-if-new [
@@ -174,24 +162,13 @@ export def sqlite-insert-if-new [
   columns: list<string>
   row: record
 ]: nothing -> string {
-  let parts = (insert-parts $columns $row)
-  $"INSERT INTO ($table) \(($parts.names)\) VALUES \(($parts.values)\) ON CONFLICT DO NOTHING"
-}
-
-export def sqlite-insert-absent [
-  table: string
-  columns: list<string>
-  natural: list<string>
-  row: record
-]: nothing -> string {
-  let parts = (insert-parts $columns $row)
-  let condition = (
-    $natural
-    | each {|column| $"($column) = (sql-quote ($row | get -o $column))" }
-    | str join " AND "
+  let names = ($columns | str join ", ")
+  let values = (
+    $columns
+    | each {|column| sql-quote ($row | get -o $column) }
+    | str join ", "
   )
-  let absent = $"NOT EXISTS \(SELECT 1 FROM ($table) WHERE ($condition)\)"
-  $"INSERT INTO ($table) \(($parts.names)\) SELECT ($parts.values) WHERE ($absent)"
+  $"INSERT INTO ($table) \(($names)\) VALUES \(($values)\) ON CONFLICT DO NOTHING"
 }
 
 export def run-sql [

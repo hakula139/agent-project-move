@@ -9,16 +9,16 @@ Repair the project paths recorded by [Claude Code](https://claude.com/claude-cod
 
 Coding assistants key their sessions, memory, and history by absolute directory path. The path is part of the storage key, so moving a project silently detaches everything recorded under it:
 
-- After you move or rename a project, `/resume` and `codex resume` no longer list its sessions under the new path, Claude and OMP memory is orphaned, and Codex's thread previews point at dead paths.
+- After you move or rename a project, `/resume` and `codex resume` no longer list its sessions under the new path, Claude memory is orphaned, and Codex's thread previews point at dead paths.
 - Removing a worktree leaves its sessions stranded under the worktree's path, where the project no longer lists them.
 - State for directories you deleted keeps piling up in every assistant's store.
-- Moving work to another machine loses the sessions, memory, and history, because none of it travels with the repository.
+- Moving work to another machine loses the sessions, because they do not travel with the repository.
 
 `agent-project-move` reads the state each assistant stores, plans the changes a move needs, and applies them in place:
 
 - **`scan`** lists every recorded path with its session count, last use, and whether the directory exists.
 - **`move`** rewrites and relocates the state under an old path so the sessions belong to the new one, and a merge into an existing project keeps the unique transcripts from both sides.
-- **`export`** and **`import`** carry a project's sessions, memory, and history in a bundle between hosts. Import can map incoming state to the target project's path.
+- **`export`** and **`import`** carry selected sessions in a bundle between hosts. Import can map incoming state to the target project's path.
 
 `move`, `retire`, and `import` print a plan and change assistant state only with `--apply`. `scan` and `export` never change assistant state, and `export` writes only the bundle directory you name.
 

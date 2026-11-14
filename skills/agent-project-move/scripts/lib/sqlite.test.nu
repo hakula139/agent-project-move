@@ -16,10 +16,8 @@ const VALUES = [
   "/work/a%b"
   "/work/App"
   "/work/café"
-  "global:/work/app"
   "/"
   "work/app"
-  "global:/"
 ]
 
 def rows [table: string, values: list<string>]: nothing -> string {
@@ -34,61 +32,42 @@ def "test SQL path conditions select the path and its children" [] {
     {
       name: "exact and children"
       path: "/work/app"
-      prefix: ""
       expected: [1 2]
     }
     {
       name: "a sibling with an underscore"
       path: "/work/a_b"
-      prefix: ""
       expected: []
     }
     {
       name: "a sibling with a percent"
       path: "/work/a"
-      prefix: ""
       expected: []
     }
     {
       name: "a literal percent"
       path: "/work/a%b"
-      prefix: ""
       expected: [5]
     }
     {
       name: "a case difference"
       path: "/work/App"
-      prefix: ""
       expected: [6]
     }
     {
       name: "non-ASCII"
       path: "/work/café"
-      prefix: ""
       expected: [7]
-    }
-    {
-      name: "a prefixed job key"
-      path: "/work/app"
-      prefix: "global:"
-      expected: [8]
     }
     {
       name: "the root and absolute children"
       path: "/"
-      prefix: ""
-      expected: [1 2 3 4 5 6 7 9]
-    }
-    {
-      name: "a prefixed root"
-      path: "/"
-      prefix: "global:"
-      expected: [8 11]
+      expected: [1 2 3 4 5 6 7 8]
     }
   ]
 
   for case in $cases {
-    let condition = (path-condition "c" [$case.path] --prefix $case.prefix)
+    let condition = (path-condition "c" [$case.path])
     let output = (
       ^sqlite3 -json ":memory:" $"($setup) SELECT id FROM t WHERE ($condition) ORDER BY id;"
       | complete

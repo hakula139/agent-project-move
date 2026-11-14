@@ -47,18 +47,14 @@ Export carries `project_roots` when the state database has that table. An import
 
 ## OMP
 
-Root: `$PI_CODING_AGENT_DIR`, defaulting to `~/.omp/agent`. Session and archive directories use a home-relative encoding, and memory directories use an absolute encoding. Memory lives under `$XDG_STATE_HOME/omp/memories`, defaulting to `~/.local/state/omp/memories`.
+Root: `$PI_CODING_AGENT_DIR`, defaulting to `~/.omp/agent`. Session and archive directories use a home-relative encoding.
 
-| State                                                | A move rewrites                                                                  |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `sessions/<encoded>/`, `archive/sessions/<encoded>/` | Every path value in a session or archive file                                    |
-| `agent.db` `threads.cwd`                             | A path column                                                                    |
-| `agent.db` `threads.rollout_path`                    | Mapped from the old session directory to the new one                             |
-| `agent.db` `jobs.job_key`                            | `global:<path>`, where a colliding key keeps the destination row                 |
-| `history.db` `history.cwd`                           | A path column                                                                    |
-| `history.db` `session_recaps.cwd`                    | A path column                                                                    |
-| Memory directories                                   | The directory is merged entry by entry, and the destination wins every collision |
+| State                                                | A move rewrites                               |
+| ---------------------------------------------------- | --------------------------------------------- |
+| `sessions/<encoded>/`, `archive/sessions/<encoded>/` | Every path value in a session or archive file |
 
-Selection reads the `type: session` header, skipping an optional title slot. `parentSession` can identify a parent by ID or file path, and a session file owns its same-stem artifact directory. A selected child carries its own subtree and linked descendants, while adjacent files belonging to its parent remain in place. Memory uses physical project ownership and remains while another session references it.
+Selection reads the `type: session` header, skipping an optional title slot. `parentSession` can identify a parent by ID or file path, and a session file owns its same-stem artifact directory. A selected child carries its own subtree and linked descendants, while adjacent files belonging to its parent remain in place. Retirement deletes only the selected transcripts and their owned artifacts.
 
-An import matches an OMP session by its header ID and its database rows, so a session file with no database row still imports. Distinct nested files with the same basename retain their own rollout targets. A known carried parent file path in `parentSession` maps to its actual destination, and an existing session's renamed file also determines where its owned artifacts land. History without a session ID and global jobs remain path metadata in default exports.
+An import matches an OMP session by its header ID. A known carried parent file path in `parentSession` maps to its actual destination, and an existing session's renamed file also determines where its owned artifacts land. OMP bundles carry no database rows. Re-export older bundles that carry memory or database state before importing.
+
+OMP memory, `history.db`, and `agent.db` stay untouched during every operation. The skill can handle any needed auxiliary state separately.

@@ -4,7 +4,7 @@
 
 ## Invariants
 
-The final state after a `move <old> <new>` is that structured path fields in moved session records and rollouts no longer refer to `<old>` or below, every moved session resumes from `<new>`, nothing is duplicated, and memory waiting for consolidation sits in `memory/incoming/`. These rules follow:
+A `move <old> <new>` rewrites the managed session paths under `<old>` to `<new>`, makes moved sessions resumable at `<new>`, and keeps unique transcripts when projects merge. Claude memory waiting for consolidation sits in `memory/incoming/`. These rules follow:
 
 - **Plan from current state.** Selection and every decision read what is on disk now, never what a previous run was expected to do. A transcript is selected because a record's `cwd` is under `<old>`, whatever its first line says. A rerun after a partial failure therefore converges on the same final state, and no step may make a rerun fail forever, as a key collision would.
 - **Rewrite sources of truth and drop derived data.** Transcripts, rollouts, and session rows are rewritten. Anything an assistant derives from them is deleted instead: Claude's `sessions-index.json` when a project directory merges, and Codex's `thread_history` projections when a rollout is rewritten. Nothing derived is maintained by hand.
@@ -43,7 +43,7 @@ UPDATE t SET c = '<new>' || substr(c, length('<old>') + 1)
 WHERE c = '<old>' OR substr(c, 1, length('<old>') + 1) = '<old>/'
 ```
 
-A row written between plan and apply is therefore covered too. A key collision uses `UPDATE OR IGNORE` then `DELETE`, so the destination row wins.
+A row written between plan and apply is therefore covered too.
 
 ## Apply order
 
@@ -78,7 +78,6 @@ Each file descriptor records its exported source in `origin_path`. This field is
 - A row is inserted unless its unique key already exists. Every other constraint stays fatal, and a failing row aborts that database's whole load.
 - Existing session IDs are checked against their transcripts before skipping copies, including decoded compressed Codex rollouts and OMP IDs from session headers. A differing transcript aborts before writing. Dependent file history and Codex parent edges are reconciled even when the session already exists.
 - A repeated import requires identical transcript content after the import's explicit file mapping. Rewritten paths count as a content difference, so reconcile or re-export moved sessions before importing them again.
-- OMP rollout rows map to imported files by header ID, so identical nested filenames stay distinct. Shared memory for an already imported session set stays in place, while a memory-only bundle still imports.
 - A carried OMP header's path-valued `parentSession` is mapped to the known imported parent file after any explicit incoming-path mapping. Other header and message bytes stay unchanged, and external parent identities remain opaque.
 - An existing target file with identical content counts as done.
 - Each carried table is checked at plan time: the import aborts before writing when the target lacks a carried column, or requires a not-null column without a default that the bundle does not fill.
@@ -88,7 +87,7 @@ A bundle carries no Codex history projection, because rewriting the rollout inva
 
 ## Merges and memory staging
 
-When two Claude project directories merge, the unique transcripts from both sides are kept and `sessions-index.json` is deleted. If the destination already has a `memory/` directory, the source's memory lands in `<destination>/memory/incoming/<source-encoded-name>/` untouched, for consolidation by hand. Otherwise it moves in directly, dropping identical duplicates. OMP memory collisions keep the destination file and delete the source copy. The script never merges memory content itself.
+When two Claude project directories merge, the unique transcripts from both sides are kept and `sessions-index.json` is deleted. If the destination already has a `memory/` directory, the source's memory lands in `<destination>/memory/incoming/<source-encoded-name>/` untouched, for consolidation by hand. Otherwise it moves in directly, dropping identical duplicates. The script never merges memory content itself.
 
 ## Safety
 
