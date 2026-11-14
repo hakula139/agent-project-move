@@ -247,6 +247,9 @@ def "test selective CLI rejects ambiguous retirement and backup bypass elsewhere
     ["retire" "/home/u/src/app"]
     ["retire" "/home/u/src/app" "--exact" "--session-ids" "one"]
     ["export" "/home/u/src/app" ($root | path join "bundle") "--exact" "--session-ids" "one"]
+    ["export" "/home/u/src/app" ($root | path join "bundle") "--session-ids" ""]
+    ["export" "/home/u/src/app" ($root | path join "bundle") "--exact" "--session-ids" ""]
+    ["retire" "/home/u/src/app" "--session-ids" ""]
     ["prune" "--no-backup"]
     ["move" "/home/u/src/app" "/home/u/src/new" "--no-backup"]
     ["import" ($root | path join "bundle") "--no-backup"]
@@ -267,12 +270,16 @@ def make-claude [root: string, project: string]: nothing -> record {
   let nested = ($config | path join "projects" (encode-path ($project | path join "sub")))
   for row in [
     {id: "parent", dir: $dir, cwd: $project}
-    {id: "retained", dir: $dir, cwd: $project}
+    {id: "retained", dir: $dir, cwd: "/other/retained"}
     {id: "nested", dir: $nested, cwd: ($project | path join "sub")}
   ] {
-    write-jsonl ($row.dir | path join $"($row.id).jsonl") [
+    let body = [
       {type: "user", sessionId: $row.id, cwd: $row.cwd, message: {content: $row.id}}
     ]
+    let visits = if $row.id == "parent" {
+      [{type: "system", sessionId: $row.id, cwd: "/other/visited"}]
+    } else { [] }
+    write-jsonl ($row.dir | path join $"($row.id).jsonl") ($body ++ $visits)
   }
   let child = ($dir | path join "parent/subagents/agent-child.jsonl")
   write-jsonl $child [
@@ -282,14 +289,19 @@ def make-claude [root: string, project: string]: nothing -> record {
   "shared memory" | save ($dir | path join "memory/MEMORY.md")
   mkdir ($config | path join "file-history/parent")
   "original artifact" | save ($config | path join "file-history/parent/file@v1")
+  mkdir ($config | path join "file-history/child")
+  "child artifact" | save ($config | path join "file-history/child/child@v1")
   write-jsonl ($config | path join "history.jsonl") [
     {sessionId: "parent", project: $project, display: "parent"}
     {sessionId: "retained", project: $project, display: "retained"}
     {sessionId: "nested", project: ($project | path join "sub"), display: "nested"}
   ]
   {
-    projects: {($project): {hasTrustDialogAccepted: true}}
-    githubRepoPaths: {"example/app": [$project]}
+    projects: {
+      ($project): {hasTrustDialogAccepted: true}
+      ($project | path join "sub"): {hasTrustDialogAccepted: true}
+    }
+    githubRepoPaths: {"example/app": [$project ($project | path join "sub")]}
   } | to json | save ($config | path join ".claude.json")
   {dir: $dir, nested: $nested, child: $child, config: $config}
 }
@@ -310,7 +322,10 @@ def "test Claude selected parents carry subagents and preserve shared project st
       "parent.jsonl"
       "parent/subagents/agent-child.jsonl"
     ]
-    assert equal ($entries.files | where kind == "file-history" | get name) ["file@v1"]
+    assert equal ($entries.files | where kind == "projects" | get project | uniq) [$project]
+    assert equal ($entries.files | where kind == "file-history" | get name | sort) [
+      "child@v1" "file@v1"
+    ]
 
     let apply = (
       run-cli retire "/other" --assistant claude --session-ids child --apply --no-backup
@@ -320,6 +335,7 @@ def "test Claude selected parents carry subagents and preserve shared project st
     assert not (($fixture.dir | path join "parent.jsonl") | path exists)
     assert not ($fixture.child | path exists)
     assert not (($fixture.config | path join "file-history/parent") | path exists)
+    assert not (($fixture.config | path join "file-history/child") | path exists)
     assert (($fixture.dir | path join "retained.jsonl") | path exists)
     assert (($fixture.nested | path join "nested.jsonl") | path exists)
     assert equal (open --raw ($fixture.dir | path join "memory/MEMORY.md")) "shared memory"
@@ -330,16 +346,19 @@ def "test Claude selected parents carry subagents and preserve shared project st
     ) ["retained" "nested"]
     assert equal (
       open ($fixture.config | path join ".claude.json") | get projects | columns
-    ) [$project]
+    ) [$project ($project | path join "sub")]
 
-    let final = (run-cli retire $project --assistant claude --exact --apply --no-backup)
+    let final = (run-cli retire "/other/retained" --assistant claude --exact --apply --no-backup)
     assert equal $final.exit_code 0 $final.stderr
 
     assert not ($fixture.dir | path exists)
     assert (($fixture.nested | path join "nested.jsonl") | path exists)
     assert equal (
       open ($fixture.config | path join ".claude.json") | get projects | columns
-    ) []
+    ) [($project | path join "sub")]
+    assert equal (
+      open ($fixture.config | path join ".claude.json") | get githubRepoPaths
+    ) {"example/app": [($project | path join "sub")]}
   }
 }
 
