@@ -942,6 +942,73 @@ def "test default OMP export preserves path metadata without session ids" [] {
   ]
 }
 
+def "test bundle file origins describe source files without directing imports" [] {
+  let root = (mktemp -d)
+  let source = ($root | path join "source")
+  let project = "/home/u/src/app"
+  let session_dir = ($source | path join "omp/sessions" (session-encode-here $project))
+  let session = ($session_dir | path join "recording.jsonl")
+  let artifact = ($session_dir | path join "recording/notes.md")
+  let protected = ($root | path join "protected.txt")
+  let directory = ($root | path join "bundle")
+  let manifest = ($directory | path join "omp/entries.json")
+  write-jsonl $session [
+    {type: "session", version: 3, id: "selected", cwd: $project}
+    {type: "message", message: {role: "user", content: "session body"}}
+  ]
+  mkdir ($artifact | path dirname)
+  "owned notes" | save $artifact
+  "protected content" | save $protected
+  let transcript = (open --raw $session)
+
+  with-env (fixture-env $source) {
+    let export = (run-cli export $project $directory --assistant "omp" --session-ids "selected")
+    assert equal $export.exit_code 0 $export.stderr
+  }
+
+  let entries = (open $manifest)
+
+  assert equal (
+    $entries.files
+    | select name origin_path
+    | sort-by name
+  ) [
+    {name: "recording.jsonl", origin_path: $session}
+    {name: "recording/notes.md", origin_path: $artifact}
+  ]
+
+  for mode in ["normal" "hostile" "legacy"] {
+    let target = ($root | path join $mode)
+    let destination = ($target | path join "omp/sessions" (session-encode-here $project))
+    let files = (
+      $entries.files
+      | each {|file|
+        if $mode == "hostile" {
+          $file | upsert origin_path $protected
+        } else if $mode == "legacy" {
+          $file | reject origin_path
+        } else {
+          $file
+        }
+      }
+    )
+
+    $entries
+    | upsert files $files
+    | to json
+    | save --force $manifest
+
+    with-env (fixture-env $target) {
+      let import = (run-cli import $directory --assistant "omp" --apply)
+      assert equal $import.exit_code 0 $import.stderr
+    }
+
+    assert equal (open --raw ($destination | path join "recording.jsonl")) $transcript $mode
+    assert equal (open --raw ($destination | path join "recording/notes.md")) "owned notes" $mode
+    assert equal (open --raw $protected) "protected content" $mode
+  }
+}
+
 def "test OMP imports compare session header ids when filenames change" [] {
   let root = (mktemp -d)
   let project = "/home/u/src/app"
