@@ -53,6 +53,8 @@ Root: `$PI_CODING_AGENT_DIR`, defaulting to `~/.omp/agent`. Session and archive 
 
 Selection reads the `type: session` header, skipping an optional title slot. `parentSession` can identify a parent by ID or file path, and a session file owns its same-stem artifact directory. A selected child carries its own subtree and linked descendants, while adjacent files belonging to its parent remain in place. Retirement deletes only the selected transcripts and their owned artifacts.
 
+A move maps absolute `parentSession` references to relocated session files, including references from sessions whose cwd stays elsewhere.
+
 An import matches an OMP session by its header ID. A known carried parent file path in `parentSession` maps to its actual destination, and an existing session's renamed file also determines where its owned artifacts land. OMP bundles carry no database rows. Re-export older bundles that carry memory or database state before importing.
 
 OMP memory, `history.db`, and `agent.db` stay untouched during every operation. The skill can handle any needed auxiliary state separately.

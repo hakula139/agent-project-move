@@ -1569,14 +1569,57 @@ def "test OMP scans and transfers session files without touching auxiliary state
   let archive = (
     $source | path join "omp/archive/sessions" (session-encode-here $project) "archived.jsonl"
   )
+  let retained = ($fixture.dir | path join "retained.jsonl")
+  let external_parent = ($fixture.dir | path join "external.jsonl")
+  rm $retained
+  write-jsonl $retained [
+    {type: "session", id: "retained", cwd: $project, parentSession: $external_parent}
+    {type: "message", message: {role: "user", content: $fixture.parent}}
+  ]
   for file in (glob ($fixture.dir | path join "**/*.jsonl")) {
     ^touch -d "2026-01-01T00:00:00Z" $file
   }
   write-jsonl $archive [
-    {type: "session", id: "archived", cwd: "/other/deeper", parentSession: "parent"}
+    {type: "session", id: "archived", cwd: "/other/deeper", parentSession: $fixture.parent}
   ]
   ^touch -d "2026-01-02T00:00:00Z" $archive
   mkdir $moved
+
+  let moved_dir = ($source | path join "omp/sessions" (session-encode-here $moved))
+  let moved_archive = (
+    $source | path join "omp/archive/sessions" (session-encode-here $moved) "archived.jsonl"
+  )
+  let child = ($fixture.children | path join "implementer/worker.jsonl")
+  let artifact = ($fixture.children | path join "notes.md")
+  $fixture.parent | save --force $artifact
+  let move_checks = (
+    (glob ($fixture.dir | path join "**/*.jsonl"))
+    | append [$archive $artifact]
+    | each {|file|
+      let target = if $file == $archive {
+        $moved_archive
+      } else {
+        $moved_dir | path join ($file | path relative-to $fixture.dir)
+      }
+      mut expected = (open --raw $file)
+      if $file != $artifact {
+        $expected = (
+          $expected
+          | str replace --all ($project | to json --raw) ($moved | to json --raw)
+        )
+        for parent in [$fixture.parent $child] {
+          let mapped = ($moved_dir | path join ($parent | path relative-to $fixture.dir))
+          $expected = (
+            $expected
+            | str replace ('"parentSession":' + ($parent | to json --raw)) (
+              '"parentSession":' + ($mapped | to json --raw)
+            )
+          )
+        }
+      }
+      {target: $target, expected: $expected}
+    }
+  )
 
   let databases = ["agent.db" "history.db"]
   for name in $databases {
@@ -1613,6 +1656,12 @@ def "test OMP scans and transfers session files without touching auxiliary state
 
       for original in $untouched {
         assert equal (open --raw $original.file | hash sha256) $original.hash $original.file
+      }
+
+      if $args.0 == "move" {
+        for check in $move_checks {
+          assert equal (open --raw $check.target) $check.expected $check.target
+        }
       }
     }
   }
