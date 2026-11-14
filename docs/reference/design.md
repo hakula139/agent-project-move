@@ -70,6 +70,8 @@ An applied run creates `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/` a
 
 `export <old> <dir>` writes one subdirectory per assistant that records selected state for `<old>`, with the files and rows it holds unchanged, plus `entries.json` listing rows with their column names. It only reads state, so it needs no `--apply`.
 
+Each file descriptor records its exported source in `origin_path`. This field is provenance metadata and does not control import destinations. Older bundles may omit it.
+
 `import <dir>` plans the merge:
 
 - Directories are encoded with the target's own rules and `HOME`, and carried `rollout_path` values point at the copied files.

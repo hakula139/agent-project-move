@@ -39,6 +39,7 @@ export def write-bundle [directory: string, bundle: record]: nothing -> nothing 
 
       $file
       | reject source
+      | upsert origin_path $file.source
       | upsert bundle $relative
     }
   )
