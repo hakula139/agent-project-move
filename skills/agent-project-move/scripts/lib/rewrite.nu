@@ -27,21 +27,14 @@ export def json-escape [text: string]: nothing -> string {
   ($text | to json) | str substring 1..<(-1)
 }
 
-def regex-escape [text: string]: nothing -> string {
-  $text
-  | split chars
-  | each {|ch| if ($ch =~ '^[\\^$.*+?()\[\]{}|/-]$') { "\\" + $ch } else { $ch } }
-  | str join
-}
-
 def escape-replacement [text: string]: nothing -> string {
   $text | str replace --all '$' '$$'
 }
 
 # A JSON string token equal to a path or under it, plain or as a file URI.
 def path-pattern [old: string]: nothing -> string {
-  let plain = (regex-escape (json-escape $old))
-  let uri = (regex-escape (json-escape (file-uri $old)))
+  let plain = (json-escape $old | str escape-regex)
+  let uri = (json-escape (file-uri $old) | str escape-regex)
   '(?<!\\)"(' + $plain + '|' + $uri + ')(?=["/])'
 }
 
@@ -79,8 +72,8 @@ export def files-with-path [
 export def rewrite-text [content: string, old: string, new: string]: nothing -> string {
   # Lookbehinds over a multi-megabyte transcript line exceed the regex engine's backtrack limit,
   # so the preceding character and the delimiter are captured.
-  let plain = (regex-escape (json-escape $old))
-  let uri = (regex-escape (json-escape (file-uri $old)))
+  let plain = (json-escape $old | str escape-regex)
+  let uri = (json-escape (file-uri $old) | str escape-regex)
   let plain_new = ('$1"' + (escape-replacement (json-escape $new)) + '$3')
   let uri_new = ('$1"' + (escape-replacement (json-escape (file-uri $new))) + '$3')
   let plain_pattern = '(^|[^\\])"(' + $plain + ')(["/])'

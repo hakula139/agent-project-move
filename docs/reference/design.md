@@ -81,5 +81,6 @@ When two Claude project directories merge, the unique transcripts from both side
 
 ## Safety
 
-- **No process check.** Running assistants already share these stores. SQLite serializes writers, session files are appended only by their own session and keep receiving appends across a rename, and `~/.claude.json` is a last-writer-wins document that concurrent sessions already rewrite.
+See [Safety model](../../README.md#safety-model) for the concurrency requirements.
+
 - **A file-phase failure needs the backup.** Rewritten transcripts no longer name the subpaths that selected their directories, so restore from the run's backup and rerun. An SQL-phase failure recovers from a plain rerun.

@@ -56,6 +56,7 @@ For OMP, or for any of the three assistants without a plugin, clone the reposito
 ```bash
 git clone https://github.com/hakula139/agent-project-move ~/.local/share/agent-project-move
 skill_dir=~/.local/share/agent-project-move/skills/agent-project-move
+mkdir -p ~/.agents/skills ~/.claude/skills
 ln -s "$skill_dir" ~/.agents/skills/agent-project-move
 ln -s "$skill_dir" ~/.claude/skills/agent-project-move
 ```
