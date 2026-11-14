@@ -7,20 +7,9 @@ Repair the project paths recorded by [Claude Code](https://claude.com/claude-cod
 
 ## The problem
 
-Coding assistants key their sessions, memory, and history by absolute directory path. The path is part of the storage key, so moving a project silently detaches everything recorded under it:
+Coding assistants record project paths in their session stores. Moving a project or removing a worktree can leave its sessions listed under the old path, and copying a repository to another host leaves its transcripts behind.
 
-- After you move or rename a project, `/resume` and `codex resume` no longer list its sessions under the new path, Claude memory is orphaned, and Codex's thread previews point at dead paths.
-- Removing a worktree leaves its sessions stranded under the worktree's path, where the project no longer lists them.
-- State for directories you deleted keeps piling up in every assistant's store.
-- Moving work to another machine loses the sessions because they do not travel with the repository.
-
-`agent-project-move` reads the state each assistant stores, plans the changes a move needs, and applies them in place:
-
-- **`scan`** lists every recorded path with its session count, last use, and whether the directory exists.
-- **`move`** rewrites and relocates the state under an old path so the sessions belong to the new one, and a merge into an existing project keeps the unique transcripts from both sides.
-- **`export`** and **`import`** carry selected sessions and their artifacts in a bundle between hosts. Import can map incoming state to the target project's path.
-
-`move`, `retire`, and `import` print a plan and change assistant state only with `--apply`. `scan` and `export` never change assistant state, and `export` writes only the bundle directory you name.
+`agent-project-move` scans these stores, moves recorded paths, transfers selected sessions between hosts, and retires selected source copies. It prints a plan before changing assistant state, and writes only with `--apply`. Export writes a bundle without changing the source store. See [Assistant stores](docs/reference/stores.md) for the state each adapter handles.
 
 ## Install
 
@@ -105,65 +94,23 @@ The module installs the command and links the skill into `~/.agents/skills` and 
 
 ## Safety model
 
-Before any `--apply`, exit every assistant session working in the affected projects. A session that writes during the apply loses those writes, and a running Claude Code can rewrite `~/.claude.json` at the same moment. Your own agent session counts.
+Before any `--apply`, exit every assistant session working in the affected projects, including your own. Concurrent writes can be lost. See [Concurrent sessions](skills/agent-project-move/SKILL.md#concurrent-sessions) for shared configuration and interrupted runs.
 
-- **One backup per applied run by default.** Everything edited or deleted is copied, and each database is backed up with `sqlite3 .backup`, under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, with a `manifest.json` listing every action in order, including each rename's destination. The directory is created with mode `0700` and outlives the run, and it holds the same transcripts as the stores, including any secret a session printed or a tool read. Delete the directory once you no longer need it. `move`, `import`, and `retire` accept `--no-backup` to skip this recovery material explicitly. The dry run reports whether a backup will be created.
-- **Each SQL action is one transaction**, so a failed action leaves no partial rows.
-- **Local state only.** The tool needs no credentials, opens no network connections, and runs no commands from the assistant stores, so a bug in its selection or rewrite logic can delete local state or leave a session pointing at a dead path.
+Applied changes create a backup under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/` by default. It contains edited or deleted files, SQLite `.backup` copies, and an ordered `manifest.json`, with mode `0700` on the backup directory. Backups hold the same sensitive content as the stores. Keep them until the migrated sessions open successfully, then delete them. `--no-backup` explicitly skips recovery copies.
 
-If a run stops partway, rerun the same command. It plans from what is on disk and skips finished work. If it stopped while rewriting files and created a backup, restore from that backup first. [Restore](skills/agent-project-move/SKILL.md#restore) walks through the manifest. A run with `--no-backup` creates no recovery copy, so use it only when you can recover the affected state independently.
+Each SQL action is one transaction. The tool operates locally, needs no credentials, opens no network connections, and runs no commands from assistant stores. Incorrect selection or rewriting can still delete state or leave sessions pointing at dead paths. Follow [Restore](skills/agent-project-move/SKILL.md#restore) after a file-phase failure.
 
 ## Usage
 
-`-a` takes a comma-separated list of `claude`, `codex`, and `omp`, and leaving it out selects all three.
-
-### Scan
+Move the project directory first, then preview and apply the recorded-path move:
 
 ```bash
 agent-project-move scan
-agent-project-move scan -a claude,codex
-```
-
-The table lists each recorded path, its session count, the last use, and whether the directory exists.
-
-### Move
-
-```bash
 agent-project-move move ~/src/app ~/work/app
 agent-project-move move ~/src/app ~/work/app --apply
 ```
 
-Move the directory in your file manager or with `mv` first, so the recorded path is the only stale reference, then run the state move. Paths match as exact, case-sensitive prefixes, so `~/src/app-v2` is untouched by a move of `~/src/app`, and a move whose paths differ only in case is refused. A destination that does not exist draws a warning because sessions need it to resume.
-
-When only part of a tree changes, move the diverging child first. If `~/src/app` moves to `~/work/app` but its `assets` subdirectory moves to `~/media/assets`, run `move ~/src/app/assets ~/media/assets` and then `move ~/src/app ~/work/app`. Reversed, the parent move carries `assets` to `~/work/app/assets`.
-
-### Transfer between hosts
-
-```bash
-# Source host
-agent-project-move export ~/src/app ~/agent-project-move-bundle
-rsync -a ~/agent-project-move-bundle target:~/
-
-# Target host
-agent-project-move import ~/agent-project-move-bundle --target ~/work/app
-agent-project-move import ~/agent-project-move-bundle --target ~/work/app --apply
-```
-
-`export` copies the selected sessions and their associated files and rows, unchanged, and needs no `--apply`. Add `--exact` to select only sessions recorded at that cwd, or `--session-ids <id,id>` to select specific sessions under the path. These options are mutually exclusive. Each selection also carries linked descendants and each selected session's own artifact subtree. Selecting a child leaves its parent and siblings alone.
-
-`import` keeps the original project path by default. `--target` maps the exported root and its descendants to a new project path, preserving each suffix. Carried sessions and owners outside that root keep their paths. The mapping affects incoming files and rows, so existing local sessions stay unchanged. A reused session ID requires an identical transcript after mapping, and a different body aborts before writing. Import also aborts when a target table lacks a column the bundle contains. The bundle holds transcripts, so keep it in a private directory, transfer it over a trusted channel, and delete it on both hosts once the import is done. Selection follows the project path, so the assistants' credential files and tables, such as `auth.json` and `.credentials.json`, stay out of a bundle.
-
-### Retire selected sessions
-
-After verifying the destination sessions and their artifacts, retire the source copies even when their directory still exists:
-
-```bash
-agent-project-move retire ~/src/app --exact
-agent-project-move retire ~/src/app --session-ids session-a,session-b
-agent-project-move retire ~/src/app --session-ids session-a,session-b --apply
-```
-
-`retire` requires either `--exact` or `--session-ids`, using the same session selection as `export`. It removes selected transcripts and dependent rows, and removes shared project metadata only when no remaining session references it. Review the dry run before applying. Use `--no-backup` only when you have verified the transferred copies and intend to discard the selected source state permanently.
+Use `-a claude,codex` to select assistants, or omit it for all three. The [skill procedures](skills/agent-project-move/SKILL.md) cover path ordering, [cross-host transfers](skills/agent-project-move/SKILL.md#transfer-between-hosts), [selected source retirement](skills/agent-project-move/SKILL.md#retire), and verification. `agent-project-move --help` lists the commands and options.
 
 ## Tested with
 
@@ -183,11 +130,7 @@ Releases follow the [versioning policy](RELEASING.md#versioning), and stable rel
 
 ## Agent skill
 
-The repository ships an [Agent Skill](skills/agent-project-move/SKILL.md) that surveys recorded paths, confirms the plan with you, applies it, and verifies the result.
-
-The skill runs `agent-project-move` from `PATH`, and falls back to the script bundled in its own directory when the command is not installed. Start a new assistant session after installing it, or run `/reload-plugins` in OMP.
-
-### Triggering it
+The [skill](skills/agent-project-move/SKILL.md) surveys recorded paths, confirms the plan, applies it, and verifies the result. It uses the command on `PATH` or its bundled script. Start a new assistant session after installation, or run `/reload-plugins` in OMP.
 
 | Assistant   | Explicit invocation                              |
 | ----------- | ------------------------------------------------ |
@@ -195,22 +138,12 @@ The skill runs `agent-project-move` from `PATH`, and falls back to the script bu
 | Codex       | `$agent-project-move`, or pick it from `/skills` |
 | OMP         | `/skill:agent-project-move`                      |
 
-When your own session's working directory is under the old or new path, or the plan edits `~/.claude.json`, the skill hands you the `--apply` command to run after you exit the assistant, naming the command or the bundled script by its absolute path.
-
-Example prompts:
-
-- **Move**: "I moved ~/src/app to ~/work/app. Move my Claude Code and Codex sessions over."
-- **Worktree merge**: "I deleted the worktree ~/src/app/.claude/worktrees/feature-x. Bring its sessions into ~/src/app."
-- **Host transfer**: "Export my agent sessions for ~/src/app and import them on `laptop` over ssh, where the tool is installed and the project lives at ~/work/app."
-- **Discovery**: "Some Codex sessions disappeared after I reorganized ~/src. Find where they belong and move them."
-- **Retire**: "Remove these transferred session IDs from the source project after verifying their destination copies."
-
 ## Documentation
 
 | Document                                          | Description                                                  |
 | ------------------------------------------------- | ------------------------------------------------------------ |
 | [Agent skill](skills/agent-project-move/SKILL.md) | Procedures for moving, transferring, retiring, and restoring |
-| [Design](docs/reference/design.md)                | Invariants, actions, apply order, and the backup layout      |
+| [Design](docs/reference/design.md)                | Selection, rewriting, and apply-order constraints            |
 | [Assistant stores](docs/reference/stores.md)      | What each assistant stores and how a move rewrites it        |
 
 ## Development
