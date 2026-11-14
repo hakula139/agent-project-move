@@ -39,11 +39,31 @@ def make-codex [root: string, project: string]: nothing -> record {
   let db = ($dir | path join "state_5.sqlite")
   mkdir ($dir | path join "sessions")
   let rows = [
-    {id: "parent", cwd: $project, parent: null}
-    {id: "child", cwd: "/other/worker", parent: "parent"}
-    {id: "other-child", cwd: "/another/worker", parent: "parent"}
-    {id: "retained", cwd: $project, parent: null}
-    {id: "nested", cwd: ($project | path join "sub"), parent: null}
+    {
+      id: "parent"
+      cwd: $project
+      parent: null
+    }
+    {
+      id: "child"
+      cwd: "/other/worker"
+      parent: "parent"
+    }
+    {
+      id: "other-child"
+      cwd: "/another/worker"
+      parent: "parent"
+    }
+    {
+      id: "retained"
+      cwd: $project
+      parent: null
+    }
+    {
+      id: "nested"
+      cwd: ($project | path join "sub")
+      parent: null
+    }
   ]
   let schema = (
     "CREATE TABLE projects (id TEXT PRIMARY KEY, path TEXT); "
@@ -62,8 +82,20 @@ def make-codex [root: string, project: string]: nothing -> record {
   for row in $rows {
     let file = ($dir | path join "sessions" $"($row.id).jsonl")
     let body = [
-      {type: "session_meta", payload: {id: $row.id, cwd: $row.cwd}}
-      {type: "response_item", payload: {role: "user", content: $"body ($row.id)"}}
+      {
+        type: "session_meta"
+        payload: {
+          id: $row.id
+          cwd: $row.cwd
+        }
+      }
+      {
+        type: "response_item"
+        payload: {
+          role: "user"
+          content: $"body ($row.id)"
+        }
+      }
     ]
     write-jsonl $file $body
 
@@ -102,7 +134,11 @@ def make-codex [root: string, project: string]: nothing -> record {
     | ^sqlite3 $history
   }
 
-  {db: $db, history: $history, compressed: $compressed}
+  {
+    db: $db
+    history: $history
+    compressed: $compressed
+  }
 }
 
 def clear-codex-sessions [fixture: record] {
@@ -132,11 +168,31 @@ def "test Codex export scopes roots and carries compressed descendants" [] {
   let fixture = (make-codex $root $project)
   let bytes = (open --raw $fixture.compressed | hash sha256)
   let cases = [
-    {name: "prefix", flags: [], expected: ["child" "nested" "other-child" "parent" "retained"]}
-    {name: "exact", flags: ["--exact"], expected: ["child" "other-child" "parent" "retained"]}
-    {name: "parent", flags: ["--session-ids" "parent"], expected: ["child" "other-child" "parent"]}
-    {name: "retained", flags: ["--session-ids" "retained"], expected: ["retained"]}
-    {name: "child", flags: ["--session-ids" "child"], expected: ["child"]}
+    {
+      name: "prefix"
+      flags: []
+      expected: ["child" "nested" "other-child" "parent" "retained"]
+    }
+    {
+      name: "exact"
+      flags: ["--exact"]
+      expected: ["child" "other-child" "parent" "retained"]
+    }
+    {
+      name: "parent"
+      flags: ["--session-ids" "parent"]
+      expected: ["child" "other-child" "parent"]
+    }
+    {
+      name: "retained"
+      flags: ["--session-ids" "retained"]
+      expected: ["retained"]
+    }
+    {
+      name: "child"
+      flags: ["--session-ids" "child"]
+      expected: ["child"]
+    }
   ]
 
   with-env (fixture-env $root) {
@@ -176,7 +232,11 @@ def "test Codex export scopes roots and carries compressed descendants" [] {
       {id: "parent"}
     ]
     assert equal (sqlite-rows $target_fixture.db "SELECT * FROM thread_spawn_edges") [
-      {parent_thread_id: "parent", child_thread_id: "child", status: "completed"}
+      {
+        parent_thread_id: "parent"
+        child_thread_id: "child"
+        status: "completed"
+      }
     ]
     assert equal (open --raw $target_fixture.compressed | hash sha256) $bytes
 
@@ -293,7 +353,11 @@ def "test selecting a Codex child preserves its parent and sibling sessions" [] 
 
     assert equal (bundle-ids $directory "codex" "threads") ["child"]
     assert equal $edge [
-      {parent_thread_id: "parent", child_thread_id: "child", status: "completed"}
+      {
+        parent_thread_id: "parent"
+        child_thread_id: "child"
+        status: "completed"
+      }
     ]
 
     let apply = (
@@ -320,7 +384,11 @@ def "test selecting a Codex child preserves its parent and sibling sessions" [] 
 
     assert equal (sqlite-rows $target_fixture.db "SELECT id FROM threads") [{id: "child"}]
     assert equal (sqlite-rows $target_fixture.db "SELECT * FROM thread_spawn_edges") [
-      {parent_thread_id: "parent", child_thread_id: "child", status: "completed"}
+      {
+        parent_thread_id: "parent"
+        child_thread_id: "child"
+        status: "completed"
+      }
     ]
   }
 }
@@ -341,7 +409,11 @@ def "test an imported Codex id with different rollout content is rejected" [] {
     assert equal $restore.exit_code 0 $restore.stderr
 
     assert equal (sqlite-rows $fixture.db "SELECT * FROM thread_spawn_edges") [
-      {parent_thread_id: "parent", child_thread_id: "child", status: "completed"}
+      {
+        parent_thread_id: "parent"
+        child_thread_id: "child"
+        status: "completed"
+      }
     ]
 
     let same = (run-cli import $directory --assistant "codex")
@@ -354,7 +426,11 @@ def "test an imported Codex id with different rollout content is rejected" [] {
 
     assert ($relation_conflict.exit_code != 0) $relation_conflict.stdout
     assert equal (sqlite-rows $fixture.db "SELECT * FROM thread_spawn_edges") [
-      {parent_thread_id: "retained", child_thread_id: "child", status: "completed"}
+      {
+        parent_thread_id: "retained"
+        child_thread_id: "child"
+        status: "completed"
+      }
     ]
 
     "UPDATE thread_spawn_edges SET parent_thread_id = 'parent';" | ^sqlite3 $fixture.db
@@ -367,7 +443,13 @@ def "test an imported Codex id with different rollout content is rejected" [] {
     )
     let carried = ($directory | path join "codex" $entry.bundle)
     let changed = (
-      {type: "response_item", payload: {role: "user", content: "different body"}}
+      {
+        type: "response_item"
+        payload: {
+          role: "user"
+          content: "different body"
+        }
+      }
       | to json --raw
     )
     let compression = (
@@ -395,15 +477,38 @@ def make-claude [root: string, project: string]: nothing -> record {
   let nested = ($config | path join "projects" (encode-path ($project | path join "sub")))
 
   for row in [
-    {id: "parent", dir: $dir, cwd: $project}
-    {id: "retained", dir: $dir, cwd: "/other/retained"}
-    {id: "nested", dir: $nested, cwd: ($project | path join "sub")}
+    {
+      id: "parent"
+      dir: $dir
+      cwd: $project
+    }
+    {
+      id: "retained"
+      dir: $dir
+      cwd: "/other/retained"
+    }
+    {
+      id: "nested"
+      dir: $nested
+      cwd: ($project | path join "sub")
+    }
   ] {
     let body = [
-      {type: "user", sessionId: $row.id, cwd: $row.cwd, message: {content: $row.id}}
+      {
+        type: "user"
+        sessionId: $row.id
+        cwd: $row.cwd
+        message: {content: $row.id}
+      }
     ]
     let visits = if $row.id == "parent" {
-      [{type: "system", sessionId: $row.id, cwd: "/other/visited"}]
+      [
+        {
+          type: "system"
+          sessionId: $row.id
+          cwd: "/other/visited"
+        }
+      ]
     } else {
       []
     }
@@ -413,7 +518,12 @@ def make-claude [root: string, project: string]: nothing -> record {
 
   let child = ($dir | path join "parent/subagents/agent-child.jsonl")
   write-jsonl $child [
-    {type: "assistant", sessionId: "child", cwd: "/other/worker", message: {content: "child"}}
+    {
+      type: "assistant"
+      sessionId: "child"
+      cwd: "/other/worker"
+      message: {content: "child"}
+    }
   ]
 
   mkdir ($dir | path join "memory")
@@ -427,9 +537,21 @@ def make-claude [root: string, project: string]: nothing -> record {
   "retained artifact" | save ($config | path join "file-history/retained/file@v1")
 
   write-jsonl ($config | path join "history.jsonl") [
-    {sessionId: "parent", project: $project, display: "parent"}
-    {sessionId: "retained", project: $project, display: "retained"}
-    {sessionId: "nested", project: ($project | path join "sub"), display: "nested"}
+    {
+      sessionId: "parent"
+      project: $project
+      display: "parent"
+    }
+    {
+      sessionId: "retained"
+      project: $project
+      display: "retained"
+    }
+    {
+      sessionId: "nested"
+      project: ($project | path join "sub")
+      display: "nested"
+    }
   ]
 
   {
@@ -442,7 +564,12 @@ def make-claude [root: string, project: string]: nothing -> record {
   | to json
   | save ($config | path join ".claude.json")
 
-  {dir: $dir, nested: $nested, child: $child, config: $config}
+  {
+    dir: $dir
+    nested: $nested
+    child: $child
+    config: $config
+  }
 }
 
 def "test Claude selected parents carry subagents and preserve shared project state" [] {
@@ -617,16 +744,59 @@ def make-omp [root: string, project: string]: nothing -> record {
   let child_root = ($dir | path join "2026-01-01T00-00-00_parent")
 
   for row in [
-    {id: "parent", cwd: $project, parentSession: null, file: $parent_file}
-    {id: "child", cwd: $project, parentSession: "parent", file: ($child_root | path join "implementer/worker.jsonl")}
-    {id: "grandchild", cwd: "/other/deeper", parentSession: ($child_root | path join "implementer/worker.jsonl"), file: ($child_root | path join "reviewer/worker.jsonl")}
-    {id: "sibling", cwd: $project, parentSession: "parent", file: ($child_root | path join "auditor/agent.jsonl")}
-    {id: "retained", cwd: $project, parentSession: null, file: ($dir | path join "retained.jsonl")}
+    {
+      id: "parent"
+      cwd: $project
+      parentSession: null
+      file: $parent_file
+    }
+    {
+      id: "child"
+      cwd: $project
+      parentSession: "parent"
+      file: ($child_root | path join "implementer/worker.jsonl")
+    }
+    {
+      id: "grandchild"
+      cwd: "/other/deeper"
+      parentSession: ($child_root | path join "implementer/worker.jsonl")
+      file: ($child_root | path join "reviewer/worker.jsonl")
+    }
+    {
+      id: "sibling"
+      cwd: $project
+      parentSession: "parent"
+      file: ($child_root | path join "auditor/agent.jsonl")
+    }
+    {
+      id: "retained"
+      cwd: $project
+      parentSession: null
+      file: ($dir | path join "retained.jsonl")
+    }
   ] {
     write-jsonl $row.file [
-      {type: "title", title: "A session title"}
-      ($row | reject file | merge {type: "session", version: 3, timestamp: "2026-01-01T00:00:00Z"})
-      {type: "message", id: "message", message: {role: "user", content: $row.id}}
+      {
+        type: "title"
+        title: "A session title"
+      }
+      (
+        $row
+        | reject file
+        | merge {
+          type: "session"
+          version: 3
+          timestamp: "2026-01-01T00:00:00Z"
+        }
+      )
+      {
+        type: "message"
+        id: "message"
+        message: {
+          role: "user"
+          content: $row.id
+        }
+      }
     ]
   }
 
@@ -647,7 +817,12 @@ def make-omp [root: string, project: string]: nothing -> record {
   mkdir $memory
   "shared memory" | save ($memory | path join "MEMORY.md")
 
-  {dir: $dir, memory: $memory, parent: $parent_file, children: $child_root}
+  {
+    dir: $dir
+    memory: $memory
+    parent: $parent_file
+    children: $child_root
+  }
 }
 
 def make-omp-dbs [root: string, project: string, --empty]: nothing -> record {
@@ -669,10 +844,26 @@ def make-omp-dbs [root: string, project: string, --empty]: nothing -> record {
 
   if not $empty {
     for row in [
-      {id: "parent", cwd: $project, name: "2026-01-01T00-00-00_parent.jsonl"}
-      {id: "child", cwd: $project, name: "2026-01-01T00-00-00_parent/implementer/worker.jsonl"}
-      {id: "grandchild", cwd: "/other/deeper", name: "2026-01-01T00-00-00_parent/reviewer/worker.jsonl"}
-      {id: "retained", cwd: $project, name: "retained.jsonl"}
+      {
+        id: "parent"
+        cwd: $project
+        name: "2026-01-01T00-00-00_parent.jsonl"
+      }
+      {
+        id: "child"
+        cwd: $project
+        name: "2026-01-01T00-00-00_parent/implementer/worker.jsonl"
+      }
+      {
+        id: "grandchild"
+        cwd: "/other/deeper"
+        name: "2026-01-01T00-00-00_parent/reviewer/worker.jsonl"
+      }
+      {
+        id: "retained"
+        cwd: $project
+        name: "retained.jsonl"
+      }
     ] {
       let id = (sql-quote $row.id)
       let cwd = (sql-quote $row.cwd)
@@ -695,7 +886,10 @@ def make-omp-dbs [root: string, project: string, --empty]: nothing -> record {
     }
   }
 
-  {agent: $agent, history: $history}
+  {
+    agent: $agent
+    history: $history
+  }
 }
 
 def "test OMP file-only sessions preserve peers and shared memories until last retirement" [] {
@@ -748,9 +942,18 @@ def "test nested OMP retirement backs up artifacts at their original relative pa
   let project = "/home/u/src/app"
   let fixture = (make-omp $root $project)
   let artifacts = [
-    {name: "implementer/worker.log", body: "worker log"}
-    {name: "notes.md", body: "task notes"}
-    {name: "reviewer/result.json", body: ({result: "review"} | to json)}
+    {
+      name: "implementer/worker.log"
+      body: "worker log"
+    }
+    {
+      name: "notes.md"
+      body: "task notes"
+    }
+    {
+      name: "reviewer/result.json"
+      body: ({result: "review"} | to json)
+    }
   ]
 
   with-env (fixture-env $root) {
@@ -822,7 +1025,13 @@ def "test OMP rows without session ids cannot widen exact selection to protected
   let protected = (
     $root | path join "omp/sessions" (session-encode-here "/safe/project") "protected.jsonl"
   )
-  write-jsonl $protected [{type: "session", id: "protected", cwd: "/safe/project"}]
+  write-jsonl $protected [
+    {
+      type: "session"
+      id: "protected"
+      cwd: "/safe/project"
+    }
+  ]
   let original = (open --raw $protected)
   (
     "INSERT INTO history(session_id, cwd, prompt) VALUES (NULL, " + (sql-quote $project)
@@ -868,12 +1077,36 @@ def "test OMP selection transfers disjoint cwd rows and their associated records
   }
 
   for spec in [
-    {db: $target_dbs.agent, table: "threads", key: "id"}
-    {db: $target_dbs.agent, table: "stage1_outputs", key: "thread_id"}
-    {db: $target_dbs.agent, table: "jobs", key: "job_key"}
-    {db: $target_dbs.history, table: "history", key: "session_id"}
-    {db: $target_dbs.history, table: "session_titles", key: "session_id"}
-    {db: $target_dbs.history, table: "session_recaps", key: "session_id"}
+    {
+      db: $target_dbs.agent
+      table: "threads"
+      key: "id"
+    }
+    {
+      db: $target_dbs.agent
+      table: "stage1_outputs"
+      key: "thread_id"
+    }
+    {
+      db: $target_dbs.agent
+      table: "jobs"
+      key: "job_key"
+    }
+    {
+      db: $target_dbs.history
+      table: "history"
+      key: "session_id"
+    }
+    {
+      db: $target_dbs.history
+      table: "session_titles"
+      key: "session_id"
+    }
+    {
+      db: $target_dbs.history
+      table: "session_recaps"
+      key: "session_id"
+    }
   ] {
     let rows = (sqlite-rows $spec.db $"SELECT ($spec.key) AS id FROM ($spec.table) ORDER BY id")
 
@@ -935,10 +1168,18 @@ def "test default OMP export preserves path metadata without session ids" [] {
   }
 
   assert equal (sqlite-rows $target_dbs.agent "SELECT * FROM jobs") [
-    {kind: "summary", job_key: ("global:" + $project), result: "global memory"}
+    {
+      kind: "summary"
+      job_key: ("global:" + $project)
+      result: "global memory"
+    }
   ]
   assert equal (sqlite-rows $target_dbs.history "SELECT session_id, cwd, prompt FROM history") [
-    {session_id: null, cwd: $project, prompt: "path prompt"}
+    {
+      session_id: null
+      cwd: $project
+      prompt: "path prompt"
+    }
   ]
 }
 
@@ -953,8 +1194,19 @@ def "test bundle file origins describe source files without directing imports" [
   let directory = ($root | path join "bundle")
   let manifest = ($directory | path join "omp/entries.json")
   write-jsonl $session [
-    {type: "session", version: 3, id: "selected", cwd: $project}
-    {type: "message", message: {role: "user", content: "session body"}}
+    {
+      type: "session"
+      version: 3
+      id: "selected"
+      cwd: $project
+    }
+    {
+      type: "message"
+      message: {
+        role: "user"
+        content: "session body"
+      }
+    }
   ]
   mkdir ($artifact | path dirname)
   "owned notes" | save $artifact
@@ -973,8 +1225,14 @@ def "test bundle file origins describe source files without directing imports" [
     | select name origin_path
     | sort-by name
   ) [
-    {name: "recording.jsonl", origin_path: $session}
-    {name: "recording/notes.md", origin_path: $artifact}
+    {
+      name: "recording.jsonl"
+      origin_path: $session
+    }
+    {
+      name: "recording/notes.md"
+      origin_path: $artifact
+    }
   ]
 
   for mode in ["normal" "hostile" "legacy"] {
@@ -1076,14 +1334,35 @@ def "test flat OMP forks keep parent links after importing to a different state 
   let project = "/home/u/src/app"
   let fixture = (make-omp $source $project)
   for row in [
-    {id: "path-fork", parentSession: $fixture.parent}
-    {id: "escaped-fork", parentSession: $fixture.parent}
-    {id: "id-fork", parentSession: "parent"}
+    {
+      id: "path-fork"
+      parentSession: $fixture.parent
+    }
+    {
+      id: "escaped-fork"
+      parentSession: $fixture.parent
+    }
+    {
+      id: "id-fork"
+      parentSession: "parent"
+    }
   ] {
     let file = ($fixture.dir | path join $"($row.id).jsonl")
     write-jsonl $file [
-      ($row | merge {type: "session", cwd: $project})
-      {type: "message", message: {role: "user", content: $fixture.parent}}
+      (
+        $row
+        | merge {
+          type: "session"
+          cwd: $project
+        }
+      )
+      {
+        type: "message"
+        message: {
+          role: "user"
+          content: $fixture.parent
+        }
+      }
     ]
 
     let original = (open --raw $file)
@@ -1113,9 +1392,18 @@ def "test flat OMP forks keep parent links after importing to a different state 
 
     let destination = ($target | path join "omp/sessions" (session-encode-here $project))
     for row in [
-      {id: "path-fork", parent: ($destination | path join "2026-01-01T00-00-00_parent.jsonl")}
-      {id: "escaped-fork", parent: ($destination | path join "2026-01-01T00-00-00_parent.jsonl")}
-      {id: "id-fork", parent: "parent"}
+      {
+        id: "path-fork"
+        parent: ($destination | path join "2026-01-01T00-00-00_parent.jsonl")
+      }
+      {
+        id: "escaped-fork"
+        parent: ($destination | path join "2026-01-01T00-00-00_parent.jsonl")
+      }
+      {
+        id: "id-fork"
+        parent: "parent"
+      }
     ] {
       let parent = (
         open --raw ($destination | path join $"($row.id).jsonl")
@@ -1179,7 +1467,13 @@ def "test OMP selected titles transfer and retire without requiring history rows
         ) | ^sqlite3 $dbs.history
       } else {
         let file = ($root | path join "omp/sessions" (session-encode-here $project) $"($id).jsonl")
-        write-jsonl $file [{type: "session", id: $id, cwd: $project}]
+        write-jsonl $file [
+          {
+            type: "session"
+            id: $id
+            cwd: $project
+          }
+        ]
       }
     }
 
@@ -1198,7 +1492,10 @@ def "test OMP selected titles transfer and retire without requiring history rows
     }
 
     assert equal (sqlite-rows $target_dbs.history "SELECT session_id, title FROM session_titles") [
-      {session_id: "selected", title: "selected"}
+      {
+        session_id: "selected"
+        title: "selected"
+      }
     ] $"recap metadata: ($with_recap)"
 
     with-env (fixture-env $root) {
@@ -1207,10 +1504,22 @@ def "test OMP selected titles transfer and retire without requiring history rows
       )
       assert equal $apply.exit_code 0 $apply.stderr
 
-      let expected = if $with_recap { [{session_id: "retained", recap: "retained"}] } else { [] }
+      let expected = if $with_recap {
+        [
+          {
+            session_id: "retained"
+            recap: "retained"
+          }
+        ]
+      } else {
+        []
+      }
 
       assert equal (sqlite-rows $dbs.history "SELECT session_id, title FROM session_titles") [
-        {session_id: "retained", title: "retained"}
+        {
+          session_id: "retained"
+          title: "retained"
+        }
       ]
       assert equal (
         sqlite-rows $dbs.history "SELECT session_id, recap FROM session_recaps"

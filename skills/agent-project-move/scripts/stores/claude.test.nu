@@ -30,8 +30,14 @@ def "test Claude encodes project directory names" [] {
 
 def "test a config move rewrites github repository paths" [] {
   let config = {
-    projects: {"/work/app": {hasTrustDialogAccepted: true}, "/work/other": {}}
-    githubRepoPaths: {"me/app": ["/work/app" "/work/app/sub"], "me/other": ["/work/other"]}
+    projects: {
+      "/work/app": {hasTrustDialogAccepted: true}
+      "/work/other": {}
+    }
+    githubRepoPaths: {
+      "me/app": ["/work/app" "/work/app/sub"]
+      "me/other": ["/work/other"]
+    }
   }
 
   let moved = (move-config $config "/work/app" "/work/new")
@@ -48,8 +54,14 @@ def "test a config move rewrites github repository paths" [] {
 
 def "test a config prune drops missing projects and emptied repos" [] {
   let config = {
-    projects: {"/work/gone": {}, "/work/live": {}}
-    githubRepoPaths: {"me/gone": ["/work/gone"], "me/live": ["/work/live"]}
+    projects: {
+      "/work/gone": {}
+      "/work/live": {}
+    }
+    githubRepoPaths: {
+      "me/gone": ["/work/gone"]
+      "me/live": ["/work/live"]
+    }
   }
 
   let pruned = (prune-config $config ["/work/gone"])
