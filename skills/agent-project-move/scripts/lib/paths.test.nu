@@ -135,7 +135,7 @@ def "test a path matches the exact base and its children but not a sibling" [] {
   }
 }
 
-def "test the root prefix matches absolute paths only" [] {
+def "test root paths match and map absolute descendants" [] {
   let cases = [
     {
       path: "/"
@@ -157,5 +157,40 @@ def "test the root prefix matches absolute paths only" [] {
 
   for case in $cases {
     assert equal (path-match "/" $case.path) $case.expected
+  }
+
+  let mappings = [
+    {
+      name: "the old root itself"
+      old: "/"
+      new: "/target"
+      path: "/"
+      expected: "/target"
+    }
+    {
+      name: "a child of the old root"
+      old: "/"
+      new: "/target"
+      path: "/home/u/src/app"
+      expected: "/target/home/u/src/app"
+    }
+    {
+      name: "the new root itself"
+      old: "/home/u/src/app"
+      new: "/"
+      path: "/home/u/src/app"
+      expected: "/"
+    }
+    {
+      name: "a child under the new root"
+      old: "/home/u/src/app"
+      new: "/"
+      path: "/home/u/src/app/sub"
+      expected: "/sub"
+    }
+  ]
+
+  for case in $mappings {
+    assert equal (path-map $case.old $case.new $case.path) $case.expected $case.name
   }
 }

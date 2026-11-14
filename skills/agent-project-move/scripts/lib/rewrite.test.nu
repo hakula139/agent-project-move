@@ -62,7 +62,7 @@ def "test path rewrites cover JSON string tokens" [] {
   }
 }
 
-def "test file URIs follow the url crate spelling" [] {
+def "test path and file URI rewrites preserve suffixes" [] {
   let cases = [
     {
       name: "a hyphenated old path"
@@ -105,6 +105,62 @@ def "test file URIs follow the url crate spelling" [] {
       new: "/work/c@d"
       value: "file:///work/a+b/x"
       expected: "file:///work/c@d/x"
+    }
+    {
+      name: "the old root itself"
+      old: "/"
+      new: "/target"
+      value: "/"
+      expected: "/target"
+    }
+    {
+      name: "a child of the old root"
+      old: "/"
+      new: "/target"
+      value: "/home/u/src/app"
+      expected: "/target/home/u/src/app"
+    }
+    {
+      name: "the new root itself"
+      old: "/home/u/src/app"
+      new: "/"
+      value: "/home/u/src/app"
+      expected: "/"
+    }
+    {
+      name: "a child under the new root"
+      old: "/home/u/src/app"
+      new: "/"
+      value: "/home/u/src/app/sub"
+      expected: "/sub"
+    }
+    {
+      name: "the old file URI root itself"
+      old: "/"
+      new: "/target"
+      value: "file:///"
+      expected: "file:///target"
+    }
+    {
+      name: "a child of the old file URI root"
+      old: "/"
+      new: "/target"
+      value: "file:///home/u/src/app"
+      expected: "file:///target/home/u/src/app"
+    }
+    {
+      name: "the new file URI root itself"
+      old: "/home/u/src/app"
+      new: "/"
+      value: "file:///home/u/src/app"
+      expected: "file:///"
+    }
+    {
+      name: "a child under the new file URI root"
+      old: "/home/u/src/app"
+      new: "/"
+      value: "file:///home/u/src/app/sub"
+      expected: "file:///sub"
     }
   ]
 
