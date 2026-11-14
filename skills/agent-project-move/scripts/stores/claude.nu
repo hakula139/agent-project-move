@@ -13,8 +13,9 @@ use ../lib/actions.nu [
   same-content
   same-directory
 ]
-use ../lib/paths.nu [files-under match-any path-map path-match valid-path]
+use ../lib/paths.nu [files-under match-any outermost-paths path-map path-match valid-path]
 use ../lib/rewrite.nu [files-with-path json-value rewrite-text rg-lines]
+use ../lib/selection.nu [select-sessions]
 
 const ENCODED_MAX = 200
 
@@ -23,27 +24,35 @@ const ENCODED_MAX = 200
 # --------------------------------------------------------------------------------------------------
 
 def root []: nothing -> string {
-  $env.CLAUDE_CONFIG_DIR? | default --empty ($env.HOME | path join .claude)
+  $env.CLAUDE_CONFIG_DIR? | default --empty ($env.HOME | path join ".claude")
 }
 
 def global-config []: nothing -> string {
-  ($env.CLAUDE_CONFIG_DIR? | default --empty $env.HOME) | path join .claude.json
+  ($env.CLAUDE_CONFIG_DIR? | default --empty $env.HOME) | path join ".claude.json"
 }
 
-def projects-dir []: nothing -> string { root | path join projects }
+def projects-dir []: nothing -> string { root | path join "projects" }
 
 def project-dirs []: nothing -> list<string> {
   let dir = (projects-dir)
   if not ($dir | path exists) { return [] }
-  ls $dir | where type == "dir" | get name | sort
+  ls $dir
+  | where type == "dir"
+  | get name
+  | sort
 }
 
 def top-files [dir: string]: nothing -> list<string> {
-  glob ($dir | path join '*.jsonl') | sort
+  glob ($dir | path join "*.jsonl") | sort
 }
 
 def file-mtime [file: string]: nothing -> datetime {
-  ^stat -L -c %Y -- $file | str trim | into datetime --format '%s'
+  (^stat
+    -L
+    -c "%Y"
+    -- $file)
+  | str trim
+  | into datetime --format "%s"
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -75,7 +84,13 @@ def utf16-units [text: string]: nothing -> list<int> {
   $text
   | split chars
   | each {|char|
-    let bytes = ($char | encode utf-8 | to json --raw | from json)
+    let bytes = (
+      $char
+      | encode utf-8
+      | to json --raw
+      | from json
+    )
+
     let codepoint = (utf8-codepoint $bytes)
     if $codepoint <= 0xFFFF {
       [$codepoint]
@@ -92,7 +107,11 @@ def utf16-units [text: string]: nothing -> list<int> {
 
 def wrap32 [value: int]: nothing -> int {
   let masked = ($value mod 0x100000000)
-  if $masked >= 0x80000000 { $masked - 0x100000000 } else { $masked }
+  if $masked >= 0x80000000 {
+    $masked - 0x100000000
+  } else {
+    $masked
+  }
 }
 
 def hash [text: string]: nothing -> int {
@@ -104,7 +123,7 @@ def hash [text: string]: nothing -> int {
 }
 
 def base36 [value: int]: nothing -> string {
-  let digits = ('0123456789abcdefghijklmnopqrstuvwxyz' | split chars)
+  let digits = ("0123456789abcdefghijklmnopqrstuvwxyz" | split chars)
   mut number: int = ($value | math abs)
   if $number == 0 { return "0" }
 
@@ -113,17 +132,19 @@ def base36 [value: int]: nothing -> string {
     $encoded = ($encoded | append ($digits | get ($number mod 36)))
     $number = ($number // 36)
   }
-  $encoded | reverse | str join
+  $encoded
+  | reverse
+  | str join
 }
 
 def sanitize [text: string]: nothing -> string {
   $text
   | split chars
   | each {|ch|
-    if ($ch =~ '^[a-zA-Z0-9]$') {
+    if ($ch =~ "^[a-zA-Z0-9]$") {
       $ch
     } else {
-      "-" | fill --character '-' --width (utf16-units $ch | length)
+      "-" | fill --character "-" --width (utf16-units $ch | length)
     }
   }
   | str join
@@ -148,7 +169,7 @@ def transcript-cwds []: nothing -> list<record> {
   let dir = (projects-dir)
   if not ($dir | path exists) { return [] }
 
-  rg-lines [-o --with-filename --no-messages --max-depth 2 -g '*.jsonl' '"cwd":"[^"]*"' $dir]
+  rg-lines ["-o" "--with-filename" "--no-messages" "--max-depth" "2" "-g" "*.jsonl" '"cwd":"[^"]*"' $dir]
   | parse --regex '^(?<file>.+?):"cwd":"(?<cwd>[^"]*)"$'
   | each {|entry| $entry | upsert cwd (json-value $entry.cwd) }
 }
@@ -163,18 +184,25 @@ def identity-records [transcripts: list<record>]: nothing -> list<record> {
     | each {|cwd| {($cwd): (encode-path $cwd)}}
     | reduce --fold {} {|entry, names| $names | merge $entry}
   )
+
   $transcripts
   | uniq
   | where {|entry| ($names | get -o $entry.cwd) == ($entry.file | path dirname | path basename) }
 }
 
 def history-records []: nothing -> list<record> {
-  let file = (root | path join history.jsonl)
+  let file = (root | path join "history.jsonl")
   if not ($file | path exists) { return [] }
 
   open --raw $file
   | lines
-  | each {|line| try { $line | from json } catch { null } }
+  | each {|line|
+    try {
+      $line | from json
+    } catch {
+      null
+    }
+  }
   | where {|record| ($record | get -o project | describe) == "string" }
 }
 
@@ -193,7 +221,12 @@ def repo-paths []: nothing -> record {
 }
 
 def config-paths []: nothing -> list<string> {
-  (global-projects | columns) ++ (repo-paths | values | flatten)
+  let repos = (
+    repo-paths
+    | values
+    | flatten
+  )
+  (global-projects | columns) ++ $repos
 }
 
 def recorded-from [transcripts: list<record>]: nothing -> list<string> {
@@ -213,13 +246,27 @@ export def recorded-paths []: nothing -> list<string> {
 def selected-dirs [old: string]: nothing -> list<record> {
   let recorded = (recorded-paths)
   let owned = ($recorded | where {|path| path-match $old $path })
-  let names = ($owned | each {|path| {name: (encode-path $path), owner: $path} })
+  let names = (
+    $owned
+    | each {|path|
+      {
+        name: (encode-path $path)
+        owner: $path
+      }
+    }
+  )
+
   let old_name = (encode-path $old)
 
   project-dirs
   | each {|dir|
     let name = ($dir | path basename)
-    let match = ($names | where name == $name | get -o 0)
+    let match = (
+      $names
+      | where name == $name
+      | get -o 0
+    )
+
     let owner = if $match != null {
       $match.owner
     } else if $name == $old_name {
@@ -227,6 +274,7 @@ def selected-dirs [old: string]: nothing -> list<record> {
     } else {
       null
     }
+
     if $owner == null { return null }
 
     let outside = (
@@ -237,7 +285,10 @@ def selected-dirs [old: string]: nothing -> list<record> {
       print $"Skipping ($dir): another recorded path encodes to the same name"
       return null
     }
-    {dir: $dir, owner: $owner}
+    {
+      dir: $dir
+      owner: $owner
+    }
   }
   | compact
 }
@@ -252,7 +303,12 @@ export def scan []: nothing -> list<record> {
     $identity
     | get file
     | uniq
-    | each {|file| {file: $file, timestamp: (file-mtime $file)} }
+    | each {|file|
+      {
+        file: $file
+        timestamp: (file-mtime $file)
+      }
+    }
   )
 
   let transcript = (
@@ -260,10 +316,21 @@ export def scan []: nothing -> list<record> {
     | group-by cwd
     | transpose cwd items
     | each {|group|
-      let files = ($group.items | get file | uniq)
-      let timestamps = ($stamps | where {|stamp| $stamp.file in $files } | get timestamp | sort)
+      let files = (
+        $group.items
+        | get file
+        | uniq
+      )
+
+      let timestamps = (
+        $stamps
+        | where {|stamp| $stamp.file in $files }
+        | get timestamp
+        | sort
+      )
+
       {
-        assistant: claude
+        assistant: "claude"
         path: $group.cwd
         sessions: ($files | length)
         last_used: ($timestamps | last)
@@ -277,7 +344,14 @@ export def scan []: nothing -> list<record> {
     | where {|path| valid-path $path }
     | uniq
     | where {|path| $path not-in ($transcript | get path) }
-    | each {|path| {assistant: claude, path: $path, sessions: 0, last_used: null} }
+    | each {|path|
+      {
+        assistant: "claude"
+        path: $path
+        sessions: 0
+        last_used: null
+      }
+    }
   )
   let seen = (($transcript | get path) ++ ($history | get path))
 
@@ -285,7 +359,14 @@ export def scan []: nothing -> list<record> {
     config-paths
     | where {|path| (valid-path $path) and ($path not-in $seen) }
     | uniq
-    | each {|path| {assistant: claude, path: $path, sessions: 0, last_used: null} }
+    | each {|path|
+      {
+        assistant: "claude"
+        path: $path
+        sessions: 0
+        last_used: null
+      }
+    }
   )
   ($transcript ++ $history ++ $config) | sort-by path
 }
@@ -319,42 +400,49 @@ export def move-config [config: record, old: string, new: string]: nothing -> re
     | update cells {
       $in
       | each --keep-empty {|path|
-        if (path-match $old $path) { path-map $old $new $path } else { $path }
+        if (path-match $old $path) {
+          path-map $old $new $path
+        } else {
+          $path
+        }
       }
       | uniq
     }
   )
 
-  $config | upsert projects $updated_projects | upsert githubRepoPaths $updated_repos
+  $config
+  | upsert projects $updated_projects
+  | upsert githubRepoPaths $updated_repos
 }
 
 def project-merge [source: string, target: string]: nothing -> list<record> {
   if (same-directory $source $target) { return [] }
-  let index = ($source | path join sessions-index.json)
-  let memory = ($source | path join memory)
-  let target_memory = ($target | path join memory)
+  let index = ($source | path join "sessions-index.json")
+  let memory = ($source | path join "memory")
+  let target_memory = ($target | path join "memory")
   mut skip = []
   mut actions = []
 
   if ($index | path exists) {
-    let delete_index = (action claude projects delete $index "remove stale sessions index")
+    let delete_index = (action "claude" "projects" "delete" $index "remove stale sessions index")
     $actions = ($actions | append $delete_index)
     $skip = ($skip | append $index)
   }
 
   if ($memory | path exists) and ($target_memory | path exists) {
-    let staging = ($target_memory | path join incoming ($source | path basename))
+    let staging = ($target_memory | path join "incoming" ($source | path basename))
     let stage = if ($staging | path exists) {
-      merge-actions claude memory $memory $staging "stage memory for review"
+      merge-actions "claude" "memory" $memory $staging "stage memory for review"
     } else {
-      [(rename-action claude memory $memory $staging "stage memory for review")]
+      [(rename-action "claude" "memory" $memory $staging "stage memory for review")]
     }
+
     $actions = ($actions ++ $stage)
     $skip = ($skip | append $memory)
   }
 
   let merged = (
-    merge-actions claude projects $source $target "merge project directory" --skip $skip
+    merge-actions "claude" "projects" $source $target "merge project directory" --skip $skip
   )
   $actions ++ $merged
 }
@@ -366,14 +454,15 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
 
   let project_files = (
     files-with-path $old [(projects-dir)] --glob ["*.jsonl" "*.json"]
-    | where {|file| ($file | path basename) != sessions-index.json }
+    | where {|file| ($file | path basename) != "sessions-index.json" }
   )
+
   for file in $project_files {
-    $actions = ($actions | append (edit-action claude projects $file $rewrite "rewrite paths"))
+    $actions = ($actions | append (edit-action "claude" "projects" $file $rewrite "rewrite paths"))
   }
 
-  for file in (files-with-path $old [(root | path join teams)] --glob ["*.json"]) {
-    $actions = ($actions | append (edit-action claude teams $file $rewrite "rewrite team cwd"))
+  for file in (files-with-path $old [(root | path join "teams")] --glob ["*.json"]) {
+    $actions = ($actions | append (edit-action "claude" "teams" $file $rewrite "rewrite team cwd"))
   }
 
   for item in $selected {
@@ -384,52 +473,137 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
   let config = (global-config)
   let config_match = (config-paths | any {|path| path-match $old $path })
   if ($config | path exists) and $config_match {
-    $actions = ($actions | append (edit-action claude global-config $config {|content|
-      $content | from json | move-config $in $old $new | to json
+    $actions = ($actions | append (edit-action "claude" "global-config" $config {|content|
+      $content
+      | from json
+      | move-config $in $old $new
+      | to json
     } "rewrite projects and githubRepoPaths"))
   }
 
-  let history = (root | path join history.jsonl)
+  let history = (root | path join "history.jsonl")
   for file in (files-with-path $old [$history]) {
-    $actions = ($actions | append (edit-action claude history $file $rewrite "rewrite project"))
+    $actions = ($actions | append (edit-action "claude" "history" $file $rewrite "rewrite project"))
   }
 
   $actions
 }
 
 # --------------------------------------------------------------------------------------------------
+# Session selection
+# --------------------------------------------------------------------------------------------------
+
+def session-records []: nothing -> list<record> {
+  mut rows = []
+  let known = (recorded-paths)
+  for dir in (project-dirs) {
+    let owners = ($known | where {|cwd| (encode-path $cwd) == ($dir | path basename) })
+    if ($owners | length) != 1 { continue }
+    let owner = ($owners | first)
+    for file in (files-under $dir | where {|file| $file | str ends-with ".jsonl" }) {
+      let cwds = (
+        rg-lines ["-o" "--no-messages" '"cwd":"[^"]*"' $file]
+        | parse --regex '^"cwd":"(?<cwd>[^"]*)"$'
+        | each {|entry| json-value $entry.cwd }
+        | uniq
+      )
+
+      let relative = (
+        $file
+        | path relative-to $dir
+        | split row "/"
+      )
+
+      let parent = if ($relative | length) > 1 {
+        $relative | first
+      } else {
+        null
+      }
+
+      let id = (
+        $file
+        | path basename
+        | str replace --regex '\.jsonl$' ""
+        | str replace --regex "^agent-" ""
+      )
+
+      for cwd in (if ($cwds | is-empty) { [$owner] } else { $cwds }) {
+        $rows = ($rows | append {
+          id: $id
+          cwd: $cwd
+          parent: $parent
+          file: $file
+          directory: $dir
+          owner: $owner
+        })
+      }
+    }
+  }
+  $rows
+}
+
+# --------------------------------------------------------------------------------------------------
 # Prune
 # --------------------------------------------------------------------------------------------------
 
-export def prune-config [config: record, paths: list<string>]: nothing -> record {
+export def prune-config [config: record, paths: list<string>, --exact]: nothing -> record {
   let projects = ($config | get -o projects | default {})
   let removed = (
     $projects
     | transpose key value
-    | where {|entry| match-any $paths $entry.key }
+    | where {|entry|
+      if $exact {
+        $entry.key in $paths
+      } else {
+        match-any $paths $entry.key
+      }
+    }
     | get key
   )
+
   let updated_projects = ($projects | reject ...$removed)
 
   let repos = ($config | get -o githubRepoPaths | default {})
   let pruned_repos = (
     $repos
-    | update cells { $in | where {|path| not (match-any $paths $path) } }
+    | update cells {
+      $in
+      | where {|path|
+        if $exact {
+          $path not-in $paths
+        } else {
+          not (match-any $paths $path)
+        }
+      }
+    }
   )
+
   let dropped = (
     $pruned_repos
     | transpose slug entries
     | where {|entry| ($entry.entries | is-empty) }
     | get slug
   )
+
   let updated_repos = ($pruned_repos | reject ...$dropped)
 
-  $config | upsert projects $updated_projects | upsert githubRepoPaths $updated_repos
+  $config
+  | upsert projects $updated_projects
+  | upsert githubRepoPaths $updated_repos
 }
 
 def project-path [line: string]: nothing -> any {
-  let found = ($line | parse --regex '"project":"(?<project>[^"]*)"' | get -o 0)
-  if $found == null { null } else { json-value $found.project }
+  let found = (
+    $line
+    | parse --regex '"project":"(?<project>[^"]*)"'
+    | get -o 0
+  )
+
+  if $found == null {
+    null
+  } else {
+    json-value $found.project
+  }
 }
 
 def prune-history [content: string, paths: list<string>]: nothing -> string {
@@ -442,12 +616,51 @@ def prune-history [content: string, paths: list<string>]: nothing -> string {
       ($project == null) or (not (match-any $paths $project))
     }
   )
+
   let body = ($lines | str join "\n")
-  if $trailing { $body + "\n" } else { $body }
+  if $trailing {
+    $body + "\n"
+  } else {
+    $body
+  }
+}
+
+def session-deletions [records: list<record>, directories: list<string>]: nothing -> list<record> {
+  let files = (
+    $records
+    | get -o file
+    | uniq
+  )
+
+  let subtrees = (
+    $files
+    | each {|file| $file | str replace --regex '\.jsonl$' "" }
+    | where {|path| $path | path exists }
+  )
+
+  let indexes = (
+    $records
+    | get -o directory
+    | uniq
+    | each {|dir| $dir | path join "sessions-index.json" }
+    | where {|path| $path | path exists }
+  )
+
+  let history = (
+    $records
+    | get -o id
+    | uniq
+    | each {|id| root | path join "file-history" $id }
+    | where {|path| $path | path exists }
+  )
+
+  $directories ++ $files ++ $subtrees ++ $indexes ++ $history
+  | outermost-paths $in
+  | each {|path| action "claude" "sessions" "delete" $path "session state" }
 }
 
 export def plan-prune [paths: list<string>]: nothing -> list<record> {
-  mut actions = []
+  mut directories = []
   let transcripts = (identity-records (transcript-cwds))
   let known = (recorded-from $transcripts)
   let live_paths = ($known | where {|path| $path | path exists })
@@ -480,26 +693,112 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
       print $"Skipping ($dir): a live path encodes to the same name"
       continue
     }
-    $actions = ($actions | append (action claude projects delete $dir "project directory"))
+    $directories = ($directories | append $dir)
   }
+
+  let records = (session-records | where {|row| $row.directory in $directories })
+  mut actions = (session-deletions $records $directories)
 
   let config = (global-config)
   let config_match = (config-paths | any {|path| match-any $paths $path })
   if ($config | path exists) and $config_match {
-    $actions = ($actions | append (edit-action claude global-config $config {|content|
-      $content | from json | prune-config $in $paths | to json
+    $actions = ($actions | append (edit-action "claude" "global-config" $config {|content|
+      $content
+      | from json
+      | prune-config $in $paths
+      | to json
     } "remove projects and githubRepoPaths"))
   }
 
-  let history = (root | path join history.jsonl)
+  let history = (root | path join "history.jsonl")
   let history_match = (
     history-records
     | any {|record| match-any $paths ($record | get -o project) }
   )
   if ($history | path exists) and $history_match {
-    $actions = ($actions | append (edit-action claude history $history {|content|
+    $actions = ($actions | append (edit-action "claude" "history" $history {|content|
       prune-history $content $paths
     } "remove project entries"))
+  }
+  $actions
+}
+
+export def plan-retire [
+  old: string
+  --exact
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
+  let inventory = (session-records)
+  let selected = (select-sessions $inventory $old --exact=$exact --session-ids $session_ids)
+  let files = (
+    $selected
+    | get -o file
+    | uniq
+  )
+
+  let ids = (
+    $selected
+    | get -o id
+    | uniq
+  )
+
+  let directories = (
+    $selected
+    | get -o directory
+    | uniq
+    | where {|dir|
+      $inventory
+      | where directory == $dir
+      | all {|row| $row.file in $files }
+    }
+  )
+
+  mut actions = (session-deletions $selected $directories)
+  let history = (root | path join "history.jsonl")
+  if ($history | path exists) and ($ids | is-not-empty) {
+    $actions = ($actions | append (edit-action "claude" "history" $history {|content|
+      let trailing = ($content | str ends-with "\n")
+      let body = (
+        $content
+        | lines
+        | where {|line|
+          let row = try {
+            $line | from json
+          } catch {
+            {}
+          }
+
+          ($row | get -o sessionId) not-in $ids
+        }
+        | str join "\n"
+      )
+
+      if $trailing {
+        $body + "\n"
+      } else {
+        $body
+      }
+    } "retire session history"))
+  }
+
+  let unused = (
+    $selected
+    | get -o owner
+    | uniq
+    | where {|cwd|
+      let dir = (projects-dir | path join (encode-path $cwd))
+      top-files $dir | all {|file| $file in $files }
+    }
+  )
+
+  let config = (global-config)
+  if ($config | path exists) and ($unused | is-not-empty) {
+    $actions = ($actions | append (edit-action "claude" "global-config" $config {|content|
+      $content
+      | from json
+      | prune-config $in $unused --exact
+      | to json
+    } "remove unreferenced projects"))
   }
   $actions
 }
@@ -508,16 +807,58 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
 # Transfer
 # --------------------------------------------------------------------------------------------------
 
-export def export-bundle [old: string]: nothing -> record {
-  let selected = (selected-dirs $old)
+export def export-bundle [
+  old: string
+  --exact
+  --session-ids: list<string> = []
+]: nothing -> record {
+  let inventory = (session-records)
+  let selected_sessions = (
+    select-sessions $inventory $old --exact=$exact --session-ids $session_ids
+  )
+
+  let selected = if $exact or ($session_ids | is-not-empty) {
+    $selected_sessions
+    | each {|row|
+      {
+        dir: $row.directory
+        owner: $row.owner
+      }
+    }
+    | uniq
+  } else {
+    selected-dirs $old
+  }
+
+  let selected_files = (
+    $selected_sessions
+    | get -o file
+    | uniq
+  )
+
   mut files = []
 
   for item in $selected {
     for file in (files-under $item.dir) {
-      if ($file | path basename) == sessions-index.json { continue }
+      if ($file | path basename) == "sessions-index.json" { continue }
       let name = ($file | path relative-to $item.dir)
+      if $exact or ($session_ids | is-not-empty) {
+        let dependency = (
+          $selected_files
+          | any {|session|
+            path-match ($session | str replace --regex '\.jsonl$' "") $file
+          }
+        )
+
+        if (
+          ($file not-in $selected_files) and not $dependency
+          and not ($name | str starts-with "memory/")
+        ) {
+          continue
+        }
+      }
       $files = ($files | append {
-        kind: projects
+        kind: "projects"
         project: $item.owner
         name: $name
         source: $file
@@ -525,20 +866,26 @@ export def export-bundle [old: string]: nothing -> record {
     }
   }
 
+  let directories = ($selected | get -o dir)
+  let carried = if $exact or ($session_ids | is-not-empty) {
+    $selected_sessions
+  } else {
+    $inventory
+    | where {|row| $row.directory in $directories }
+  }
+
   let sessions = (
-    $selected
-    | each {|item|
-      top-files $item.dir
-      | each {|file| $file | path basename | str replace --regex '\.jsonl$' '' }
-    }
-    | flatten
+    $carried
+    | where {|row| $row.directory in $directories }
+    | get -o id
     | uniq
   )
+
   for session in $sessions {
-    let history = (root | path join file-history $session)
+    let history = (root | path join "file-history" $session)
     for file in (files-under $history) {
       $files = ($files | append {
-        kind: file-history
+        kind: "file-history"
         project: $session
         session: $session
         name: ($file | path relative-to $history)
@@ -547,7 +894,20 @@ export def export-bundle [old: string]: nothing -> record {
     }
   }
 
-  {assistant: claude, old: $old, files: $files, tables: []}
+  {
+    assistant: "claude"
+    old: $old
+    files: $files
+    tables: []
+  }
+}
+
+def matches-import [file: record, target: string]: nothing -> bool {
+  if $file.expected == null {
+    same-content $file.bundle $target
+  } else {
+    (open --raw $target) == $file.expected
+  }
 }
 
 def imported-elsewhere [projects: list<string>, file: record]: nothing -> bool {
@@ -557,55 +917,114 @@ def imported-elsewhere [projects: list<string>, file: record]: nothing -> bool {
     if not ($candidate | path exists) {
       false
     } else if ($file.name | str starts-with "memory/") {
-      same-content $file.bundle $candidate
+      matches-import $file $candidate
     } else {
+      if not (matches-import $file $candidate) {
+        error make --unspanned {msg: $"Existing session ($file.name) differs from the bundle"}
+      }
       true
     }
   }
 }
 
-export def plan-import [bundle: record]: nothing -> list<record> {
+export def plan-import [bundle: record, --target: string]: nothing -> list<record> {
   let root = (root)
   let project_root = (projects-dir)
   let projects = if ($project_root | path exists) {
-    ls $project_root | where type == "dir" | get name
+    ls $project_root
+    | where type == "dir"
+    | get name
   } else {
     []
   }
-  let sessions = (
+
+  let rewritten = if $target == null {
+    []
+
+  } else {
+    let sources = (
+      $bundle.files
+      | where kind == "projects"
+      | get -o bundle
+    )
+
+    files-with-path $bundle.old $sources --glob ["*.jsonl" "*.json"]
+  }
+
+  let files = (
     $bundle.files
+    | each {|file|
+      let content = if $file.bundle in $rewritten {
+        open --raw $file.bundle
+      } else {
+        null
+      }
+
+      let transform = if ($content | describe) == "string" {
+        {|content| rewrite-text $content $bundle.old $target }
+      } else {
+        null
+      }
+
+      let expected = if $transform == null {
+        null
+      } else {
+        do $transform $content
+      }
+
+      let project = if $target != null and $file.kind == "projects" {
+        path-map $bundle.old $target $file.project
+      } else {
+        $file.project
+      }
+
+      $file | merge {
+        project: $project
+        expected: $expected
+        transform: $transform
+      }
+    }
+  )
+
+  let sessions = (
+    $files
     | where {|file| ($file | get -o kind) == "projects" }
     | where {|file| not ($file.name | str starts-with "memory/") }
   )
-  if ($sessions | is-not-empty) and ($sessions | all {|file| imported-elsewhere $projects $file }) {
-    return []
-  }
+
+  let imported = (
+    ($sessions | is-not-empty)
+    and ($sessions | all {|file| imported-elsewhere $projects $file })
+  )
+
   mut actions = []
 
-  for file in $bundle.files {
+  for file in $files {
     if ($file | get -o kind) == "file-history" {
-      let target = ($root | path join file-history $file.session $file.name)
+      let target = ($root | path join "file-history" $file.session $file.name)
       if ($target | path exists) {
-        if (same-content $file.bundle $target) { continue }
+        if (matches-import $file $target) { continue }
         error make --unspanned {
           msg: $"($target) already exists with content that differs from the bundle's copy"
           help: "Compare the two files. Delete or rename the local file if the bundle's copy should win, then rerun the import."
         }
       }
       let write = (
-        copy-action claude file-history $file.bundle $target "import file history"
+        copy-action "claude" "file-history" $file.bundle $target "import file history"
       )
       $actions = ($actions | append $write)
       continue
     }
 
-    let project_dir = ($root | path join projects (encode-path $file.project))
-    let memory_dir = ($project_dir | path join memory)
+    if $imported and ($file.name | str starts-with "memory/") { continue }
+
+    let project_dir = ($root | path join "projects" (encode-path $file.project))
+    let memory_dir = ($project_dir | path join "memory")
     let staged = (($file.name | str starts-with "memory/") and ($memory_dir | path exists))
     let direct = ($project_dir | path join $file.name)
     let target = if $staged {
-      let relative = ($file.name | str replace --regex '^memory/' '')
-      $memory_dir | path join incoming (encode-path $file.project) $relative
+      let relative = ($file.name | str replace --regex "^memory/" "")
+      $memory_dir | path join "incoming" (encode-path $file.project) $relative
     } else {
       $direct
     }
@@ -613,7 +1032,7 @@ export def plan-import [bundle: record]: nothing -> list<record> {
 
     if not $staged and (imported-elsewhere $projects $file) { continue }
     if ($target | path exists) {
-      if (same-content $file.bundle $target) { continue }
+      if (matches-import $file $target) { continue }
       if $staged {
         error make --unspanned {
           msg: $"($target) already exists with content that differs from the bundle's copy"
@@ -626,7 +1045,9 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       }
     }
     if $staged and (imported-elsewhere $projects $file) { continue }
-    let write = (copy-action claude projects $file.bundle $target $description)
+    let write = (
+      copy-action "claude" "projects" $file.bundle $target $description --transform $file.transform
+    )
     $actions = ($actions | append $write)
   }
   $actions

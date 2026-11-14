@@ -13,24 +13,42 @@ export def sql-quote [value: any]: nothing -> string {
   } else if $kind == "bool" {
     if $value { "1" } else { "0" }
   } else {
-    "'" + ($value | into string | str replace --all "'" "''") + "'"
+    let escaped = (
+      $value
+      | into string
+      | str replace --all "'" "''"
+    )
+    $"'($escaped)'"
   }
 }
 
 export def sql-list [values: list]: nothing -> string {
-  $values | each {|value| sql-quote $value } | str join ", "
+  $values
+  | each {|value| sql-quote $value }
+  | str join ", "
 }
 
 export def sqlite-rows [db: string, query: string]: nothing -> list {
-  let run = ($query | ^sqlite3 -readonly -json $db | complete)
+  let run = (
+    $query
+    | ^sqlite3 $db
+        -readonly
+        -json
+    | complete
+  )
   if $run.exit_code != 0 {
     error make --unspanned {
       msg: $"sqlite3 failed on ($db): ($run.stderr | str trim)"
       help: $"Close the assistant that uses ($db) and rerun the same command."
     }
   }
+
   let output = ($run.stdout | str trim)
-  if $output == "" { [] } else { $output | from json }
+  if $output == "" {
+    []
+  } else {
+    $output | from json
+  }
 }
 
 def sqlite-columns [db: string, table: string]: nothing -> list<string> {
@@ -48,17 +66,29 @@ export def latest-db [pattern: string, table: string]: nothing -> any {
     glob $pattern
     | each {|db|
       let version = (
-        ($db | path basename | parse --regex '_(?<n>\d+)\.sqlite$')
+        $db
+        | path basename
+        | parse --regex '_(?<n>\d+)\.sqlite$'
         | get -o 0.n
         | default "0"
         | into int
       )
-      {db: $db, version: $version}
+      {
+        db: $db
+        version: $version
+      }
     }
     | where {|entry| sqlite-has-table $entry.db $table }
     | sort-by version
   )
-  if ($candidates | is-empty) { null } else { $candidates | last | get db }
+
+  if ($candidates | is-empty) {
+    null
+  } else {
+    $candidates
+    | last
+    | get db
+  }
 }
 
 # SQL for a column equal to a path or under it. `substr` counts characters, so non-ASCII paths,
@@ -71,12 +101,13 @@ export def path-condition [
   $paths
   | each {|path|
     let value = (sql-quote ($prefix + $path))
-    (
-      $column + " = " + $value
-      + " OR substr(" + $column + ", 1, length(" + $value + ") + 1) = " + $value + " || '/'"
-    )
+    if $path == "/" {
+      $"substr\(($column), 1, length\(($value)\)\) = ($value)"
+    } else {
+      $"($column) = ($value) OR substr\(($column), 1, length\(($value)\) + 1\) = ($value) || '/'"
+    }
   }
-  | each {|clause| "(" + $clause + ")" }
+  | each {|clause| $"\(($clause)\)" }
   | str join " OR "
 }
 
@@ -101,6 +132,7 @@ export def check-columns [
       help: $"Start ($store) once on this host, then rerun the import."
     }
   }
+
   let missing = ($columns | where {|column| $column not-in $local })
   if ($missing | is-not-empty) {
     error make --unspanned {
@@ -108,6 +140,7 @@ export def check-columns [
       help: $"Update ($store) on this host to the source host's version, start it once, then rerun the import."
     }
   }
+
   let required = (
     sqlite-rows $db $"PRAGMA table_info\(($table)\)"
     | where {|row| $row.notnull == 1 and $row.dflt_value == null and $row.pk == 0 }
@@ -115,7 +148,7 @@ export def check-columns [
     | where {|column| $column not-in $columns }
   )
   if ($required | is-not-empty) {
-    let names = ($required | str join ', ')
+    let names = ($required | str join ", ")
     error make --unspanned {
       msg: $"($store) ($table) requires columns the bundle lacks ($names)"
       help: $"Update ($store) on the source host, export again, then rerun the import."
@@ -175,7 +208,11 @@ export def run-sql [
     | append "COMMIT;"
     | str join "\n"
   )
-  let run = ($sql | ^sqlite3 -bail $db | complete)
+  let run = (
+    $sql
+    | ^sqlite3 -bail $db
+    | complete
+  )
   if $run.exit_code != 0 {
     error make --unspanned {
       msg: $"sqlite3 failed on ($db): ($run.stderr | str trim)"

@@ -24,18 +24,17 @@ export def file-uri [path: string]: nothing -> string {
 }
 
 export def json-escape [text: string]: nothing -> string {
-  ($text | to json) | str substring 1..<(-1)
-}
-
-def escape-replacement [text: string]: nothing -> string {
-  $text | str replace --all '$' '$$'
+  $text
+  | to json
+  | str substring 1..<(-1)
 }
 
 # A JSON string token equal to a path or under it, plain or as a file URI.
 def path-pattern [old: string]: nothing -> string {
   let plain = (json-escape $old | str escape-regex)
   let uri = (json-escape (file-uri $old) | str escape-regex)
-  '(?<!\\)"(' + $plain + '|' + $uri + ')(?=["/])'
+  let boundary = if $old == "/" { "" } else { '(?=["/])' }
+  '(?<!\\)"(' + $plain + '|' + $uri + ')' + $boundary
 }
 
 # The lines ripgrep matched. Exit status 1 means no match.
@@ -47,7 +46,9 @@ export def rg-lines [args: list<string>]: nothing -> list<string> {
       help: "Check that ripgrep can read the searched directories."
     }
   }
-  $run.stdout | lines | where {|line| $line != "" }
+  $run.stdout
+  | lines
+  | where {|line| $line != "" }
 }
 
 # The path a matched `"key":"<value>"` token holds, decoded from its JSON escapes.
@@ -64,22 +65,36 @@ export def files-with-path [
   let existing = ($roots | where {|root| $root | path exists })
   if ($existing | is-empty) { return [] }
 
-  let globs = ($glob | each {|pattern| ["-g" $pattern] } | flatten)
-  rg-lines [-z -P -l --hidden --no-ignore ...$globs -e (path-pattern $old) -- ...$existing]
+  let globs = (
+    $glob
+    | each {|pattern| ["-g" $pattern] }
+    | flatten
+  )
+  rg-lines ["-z" "-P" "-l" "--hidden" "--no-ignore" ...$globs "-e" (path-pattern $old) "--" ...$existing]
   | sort
 }
 
-export def rewrite-text [content: string, old: string, new: string]: nothing -> string {
+def rewrite-token [content: string, old: string, new: string, root: bool]: nothing -> string {
   # Lookbehinds over a multi-megabyte transcript line exceed the regex engine's backtrack limit,
   # so the preceding character and the delimiter are captured.
-  let plain = (json-escape $old | str escape-regex)
-  let uri = (json-escape (file-uri $old) | str escape-regex)
-  let plain_new = ('$1"' + (escape-replacement (json-escape $new)) + '$3')
-  let uri_new = ('$1"' + (escape-replacement (json-escape (file-uri $new))) + '$3')
-  let plain_pattern = '(^|[^\\])"(' + $plain + ')(["/])'
-  let uri_pattern = '(^|[^\\])"(' + $uri + ')(["/])'
-  $content | str replace --all --regex $plain_pattern $plain_new
-  | str replace --all --regex $uri_pattern $uri_new
+  let boundary = if $root { '("?)' } else { '(["/])' }
+  let pattern = '(^|[^\\])"(' + ($old | str escape-regex) + ')' + $boundary
+  $content | str replace --all --regex $pattern {|before, matched, delimiter|
+    let suffix = if $delimiter == '"' {
+      '"'
+    } else if ($new | str ends-with "/") {
+      ""
+    } else {
+      "/"
+    }
+    $"($before)\"($new)($suffix)"
+  }
+}
+
+export def rewrite-text [content: string, old: string, new: string]: nothing -> string {
+  let root = $old == "/"
+  let plain = (rewrite-token $content (json-escape $old) (json-escape $new) $root)
+  rewrite-token $plain (json-escape (file-uri $old)) (json-escape (file-uri $new)) $root
 }
 
 # Whether both spellings keep the byte length of their JSON-escaped form, so JSON Lines offsets

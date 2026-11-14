@@ -6,7 +6,7 @@
 
 use std/assert
 
-use ./rewrite.nu [file-uri offsets-kept rewrite-text]
+use ./rewrite.nu [offsets-kept rewrite-text]
 
 def "test path rewrites cover JSON string tokens" [] {
   let cases = [
@@ -62,7 +62,7 @@ def "test path rewrites cover JSON string tokens" [] {
   }
 }
 
-def "test file URIs follow the url crate spelling" [] {
+def "test path and file URI rewrites preserve suffixes" [] {
   let cases = [
     {
       name: "a hyphenated old path"
@@ -106,24 +106,116 @@ def "test file URIs follow the url crate spelling" [] {
       value: "file:///work/a+b/x"
       expected: "file:///work/c@d/x"
     }
+    {
+      name: "the old root itself"
+      old: "/"
+      new: "/target"
+      value: "/"
+      expected: "/target"
+    }
+    {
+      name: "a child of the old root"
+      old: "/"
+      new: "/target"
+      value: "/home/u/src/app"
+      expected: "/target/home/u/src/app"
+    }
+    {
+      name: "the new root itself"
+      old: "/home/u/src/app"
+      new: "/"
+      value: "/home/u/src/app"
+      expected: "/"
+    }
+    {
+      name: "a child under the new root"
+      old: "/home/u/src/app"
+      new: "/"
+      value: "/home/u/src/app/sub"
+      expected: "/sub"
+    }
+    {
+      name: "the old file URI root itself"
+      old: "/"
+      new: "/target"
+      value: "file:///"
+      expected: "file:///target"
+    }
+    {
+      name: "a child of the old file URI root"
+      old: "/"
+      new: "/target"
+      value: "file:///home/u/src/app"
+      expected: "file:///target/home/u/src/app"
+    }
+    {
+      name: "the new file URI root itself"
+      old: "/home/u/src/app"
+      new: "/"
+      value: "file:///home/u/src/app"
+      expected: "file:///"
+    }
+    {
+      name: "a child under the new file URI root"
+      old: "/home/u/src/app"
+      new: "/"
+      value: "file:///home/u/src/app/sub"
+      expected: "file:///sub"
+    }
   ]
 
   for case in $cases {
     let content = '{"p":"' + $case.value + '"}'
     let expected = '{"p":"' + $case.expected + '"}'
+
     assert equal (rewrite-text $content $case.old $case.new) $expected $case.name
   }
 }
 
 def "test offsets survive only same-length moves" [] {
   let cases = [
-    {name: "a same-length move", old: "/work/src", new: "/work/new", kept: true}
-    {name: "a non-ASCII path", old: "/work/café", new: "/work/cafe", kept: false}
-    {name: "a space the URI spelling escapes", old: "/work/a b", new: "/work/a-b", kept: false}
-    {name: "a space on both sides", old: "/work/a b", new: "/work/c d", kept: true}
-    {name: "a quote the JSON escapes", old: '/work/a"b', new: "/work/a b", kept: false}
-    {name: "a backslash the JSON escapes", old: '/work/a\b', new: "/work/a b", kept: false}
-    {name: "a tab the JSON escapes", old: "/work/a\tb", new: "/work/a b", kept: false}
+    {
+      name: "a same-length move"
+      old: "/work/src"
+      new: "/work/new"
+      kept: true
+    }
+    {
+      name: "a non-ASCII path"
+      old: "/work/café"
+      new: "/work/cafe"
+      kept: false
+    }
+    {
+      name: "a space the URI spelling escapes"
+      old: "/work/a b"
+      new: "/work/a-b"
+      kept: false
+    }
+    {
+      name: "a space on both sides"
+      old: "/work/a b"
+      new: "/work/c d"
+      kept: true
+    }
+    {
+      name: "a quote the JSON escapes"
+      old: '/work/a"b'
+      new: "/work/a b"
+      kept: false
+    }
+    {
+      name: "a backslash the JSON escapes"
+      old: '/work/a\b'
+      new: "/work/a b"
+      kept: false
+    }
+    {
+      name: "a tab the JSON escapes"
+      old: "/work/a\tb"
+      new: "/work/a b"
+      kept: false
+    }
   ]
 
   for case in $cases {

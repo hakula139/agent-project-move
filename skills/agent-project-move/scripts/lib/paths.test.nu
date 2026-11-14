@@ -11,11 +11,31 @@ use ./paths.nu *
 def "test absent mount roots keep paths present" [] {
   let name = (random uuid)
   let cases = [
-    {name: "an absent volume", path: $"/Volumes/($name)/work/app", missing: false}
-    {name: "an absent mount", path: $"/mnt/($name)/app", missing: false}
-    {name: "an absent media mount", path: $"/media/($name)/drive/app", missing: false}
-    {name: "an absent run-media mount", path: $"/run/media/($name)/drive/app", missing: false}
-    {name: "an absent directory", path: $"/home/($name)/app", missing: true}
+    {
+      name: "an absent volume"
+      path: $"/Volumes/($name)/work/app"
+      missing: false
+    }
+    {
+      name: "an absent mount"
+      path: $"/mnt/($name)/app"
+      missing: false
+    }
+    {
+      name: "an absent media mount"
+      path: $"/media/($name)/drive/app"
+      missing: false
+    }
+    {
+      name: "an absent run-media mount"
+      path: $"/run/media/($name)/drive/app"
+      missing: false
+    }
+    {
+      name: "an absent directory"
+      path: $"/home/($name)/app"
+      missing: true
+    }
   ]
 
   for case in $cases {
@@ -52,7 +72,13 @@ def "test a destination must be distinct and outside the source" [] {
   ]
 
   for case in $cases {
-    let result = (try { check-destination $case.old $case.new; "" } catch {|error| $error.msg })
+    let result = (try {
+      check-destination $case.old $case.new
+      ""
+    } catch {|error|
+      $error.msg
+    })
+
     if $case.error == "" {
       assert equal $result "" $case.name
     } else {
@@ -106,5 +132,65 @@ def "test a path matches the exact base and its children but not a sibling" [] {
     if $case.matches {
       assert equal (path-map "/work/app" "/opt/app" $case.path) $case.mapped $case.name
     }
+  }
+}
+
+def "test root paths match and map absolute descendants" [] {
+  let cases = [
+    {
+      path: "/"
+      expected: true
+    }
+    {
+      path: "/work/app"
+      expected: true
+    }
+    {
+      path: "work/app"
+      expected: false
+    }
+    {
+      path: null
+      expected: false
+    }
+  ]
+
+  for case in $cases {
+    assert equal (path-match "/" $case.path) $case.expected
+  }
+
+  let mappings = [
+    {
+      name: "the old root itself"
+      old: "/"
+      new: "/target"
+      path: "/"
+      expected: "/target"
+    }
+    {
+      name: "a child of the old root"
+      old: "/"
+      new: "/target"
+      path: "/home/u/src/app"
+      expected: "/target/home/u/src/app"
+    }
+    {
+      name: "the new root itself"
+      old: "/home/u/src/app"
+      new: "/"
+      path: "/home/u/src/app"
+      expected: "/"
+    }
+    {
+      name: "a child under the new root"
+      old: "/home/u/src/app"
+      new: "/"
+      path: "/home/u/src/app/sub"
+      expected: "/sub"
+    }
+  ]
+
+  for case in $mappings {
+    assert equal (path-map $case.old $case.new $case.path) $case.expected $case.name
   }
 }

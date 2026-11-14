@@ -155,6 +155,7 @@ def "test a moved trust block follows its path" [] {
 
   for case in $cases {
     let expected = ($case.expected | str join "\n") + "\n"
+
     assert equal (move-trust $case.config $case.old $case.new) $expected $case.name
   }
 }
