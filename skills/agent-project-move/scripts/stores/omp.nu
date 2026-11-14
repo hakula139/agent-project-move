@@ -398,7 +398,9 @@ def history-deletions [
 
   mut statements = []
   if ($ids | is-not-empty) {
-    $statements = ($statements | append $"DELETE FROM session_titles WHERE session_id IN \((sql-list $ids)\)")
+    $statements = (
+      $statements | append $"DELETE FROM session_titles WHERE session_id IN \((sql-list $ids)\)"
+    )
   }
   if ($counts.history | into int) > 0 {
     let scope = $"SELECT session_id FROM ($history)"
@@ -842,11 +844,15 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       })
       for copy in $copies {
         if (open --raw $copy.file) != $expected {
-          error make --unspanned {msg: $"Existing session ($file.header.id) differs from the bundle"}
+          error make --unspanned {
+            msg: $"Existing session ($file.header.id) differs from the bundle"
+          }
         }
       }
       if ($copies | is-empty) and ($file.header.id in $local_sessions) {
-        error make --unspanned {msg: $"Existing session ($file.header.id) has no readable transcript"}
+        error make --unspanned {
+          msg: $"Existing session ($file.header.id) has no readable transcript"
+        }
       }
     }
     if $already_imported and $file.kind == "memories" { continue }
@@ -862,7 +868,10 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     }
     if $file.kind == memories {
       let identical = ($memories | any {|path|
-        (($path | path basename) == ($file.name | path basename)) and (same-content $file.bundle $path)
+        (
+          (($path | path basename) == ($file.name | path basename))
+          and (same-content $file.bundle $path)
+        )
       })
       if $identical { continue }
     }
