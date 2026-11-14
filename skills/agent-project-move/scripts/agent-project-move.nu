@@ -28,7 +28,6 @@ use ./assistants.nu [
   prune-missing-paths
   scan-all
 ]
-use ./suggestions.nu [scan-suggestions]
 
 # The stores call GNU stat, realpath, mv, and cp, which Homebrew keeps unprefixed only in gnubin.
 if $nu.os-info.name == "macos" and (which brew | is-not-empty) {
@@ -58,27 +57,16 @@ def main [...rest: string] {
   }
 }
 
-# List each recorded project path with its sessions, last use, existence, and suggested target.
+# List each recorded project path with its sessions, last use, and existence.
 @example "List every recorded project path" { agent-project-move scan }
 def "main scan" [
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to scan
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
-  let home = $env.HOME
-  let temp_roots = (
-    ["/tmp" "/private/tmp" ($env.TMPDIR? | default "")]
-    | where {|root| $root != "" }
-    | uniq
-  )
-
-  let rows = (scan-all $selected)
-  let suggestions = (scan-suggestions $rows $home $temp_roots)
   let rows = (
-    $rows
+    scan-all $selected
     | each {|row|
-      let hits = ($suggestions | where path == $row.path)
       $row
-      | upsert suggested ($hits | get -o 0.suggested | default "")
       | upsert exists (if ($row.path | path exists) { "yes" } else { "missing" })
     }
     | sort-by assistant path
@@ -88,7 +76,7 @@ def "main scan" [
     print "No recorded project paths."
   } else {
     $rows
-    | select assistant path exists sessions last_used suggested
+    | select assistant path exists sessions last_used
     | print-table
   }
 }

@@ -32,9 +32,9 @@ On macOS the command puts Homebrew's GNU coreutils first on its own `PATH`, so t
 
 ## Survey
 
-1. Run `agent-project-move scan` on the host. It lists each recorded path with its session count, last use, whether the directory exists, and a `suggested` target for a missing path. Run it again with `--assistant` to narrow the output. Assistant names are a comma-separated list: `claude`, `codex`, `omp`.
-2. For each missing path without a suggestion, look for a checkout with the same basename under the old parent and the usual source roots (`~/src`, `~/work`, `~/projects`). Ask the user when you find none or several. When two candidates share a name, `git -C <candidate> rev-list --max-parents=0 HEAD` tells clones of one repository from unrelated projects. Use GitHub or GitLab when no local checkout remains.
-3. Present the old-to-new mapping, the suggested target of each missing path, and the paths that pruning would delete. Wait for the user to confirm all three before any write.
+1. Run `agent-project-move scan` on the host. It lists each recorded path with its session count, last use, and whether the directory exists. Run it again with `--assistant` to narrow the output. Assistant names are a comma-separated list: `claude`, `codex`, `omp`.
+2. Determine where missing paths belong from the user's intent, local checkouts, and Git repository and worktree relationships. Investigate ambiguous candidates and ask the user when the evidence does not establish a target.
+3. Present the old-to-new mappings and the paths that pruning would delete. Wait for the user to confirm them before any write.
 
 When the user names both paths, check that `scan` lists `<old>`, show the move plan, and offer pruning as a separate confirmation.
 
@@ -63,16 +63,7 @@ When a Claude project directory lands on an existing one, the unique transcripts
 
    When only part of a tree changes, move the diverging child first. If `~/src/app` moves to `~/work/app` but its `assets` subdirectory moves to `~/media/assets`, run `move ~/src/app/assets ~/media/assets` and then `move ~/src/app ~/work/app`. Reversed, the parent move carries `assets` to `~/work/app/assets`.
 
-3. Move each path that `scan` suggests before pruning, since prune deletes every recorded path that does not exist on disk. A suggestion follows a repository that moved, and stays empty when no unique target exists. Confirm each suggestion, then dry-run and apply its move.
-
-   ```bash
-   agent-project-move move ~/.codex/worktrees/abc/app ~/src/app
-   agent-project-move move ~/.codex/worktrees/abc/app ~/src/app --apply
-   ```
-
-   Two worktrees of one repository merge into it in either order, and a rerun reports `No changes.`.
-
-4. Consolidate each destination project whose `memory/incoming/` directory exists, by hand, before the next prune.
+3. Complete the confirmed moves and consolidate each destination project's `memory/incoming/` directory before pruning, since prune deletes state for paths that do not exist on disk.
 
 ## Transfer between hosts
 
