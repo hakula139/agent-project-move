@@ -16,7 +16,7 @@ Coding assistants key their sessions, memory, and history by absolute directory 
 
 `agent-project-move` reads the state each assistant stores, plans the changes a move needs, and applies them in place:
 
-- **`scan`** lists every recorded path with its session count, last use, and whether the directory exists, and suggests where a missing worktree or subdirectory belongs.
+- **`scan`** lists every recorded path with its session count, last use, and whether the directory exists.
 - **`move`** rewrites and relocates the state under an old path so the sessions belong to the new one, and a merge into an existing project keeps the unique transcripts from both sides.
 - **`prune`** deletes state whose directory exists nowhere, after you move anything worth keeping.
 - **`export`** and **`import`** carry a project's sessions, memory, and history in a bundle between hosts. Import can map incoming state to the target project's path.
@@ -125,7 +125,7 @@ agent-project-move scan
 agent-project-move scan -a claude,codex
 ```
 
-The table lists each recorded path, its session count, the last use, whether the directory exists, and a `suggested` target for a missing path. A suggestion comes from a repository that still exists or from a known worktree layout: Claude Code's `--worktree` (`<repo>/.claude/worktrees/<name>`), the Codex app's `~/.codex/worktrees/<id>/<repo>`, or Workmux's sibling `<repo>__worktrees/<name>`. It stays empty when no unique target exists.
+The table lists each recorded path, its session count, the last use, and whether the directory exists.
 
 ### Move
 
