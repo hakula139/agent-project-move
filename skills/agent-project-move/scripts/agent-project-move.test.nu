@@ -294,6 +294,8 @@ def make-claude [root: string, project: string]: nothing -> record {
   "original artifact" | save ($config | path join "file-history/parent/file@v1")
   mkdir ($config | path join "file-history/child")
   "child artifact" | save ($config | path join "file-history/child/child@v1")
+  mkdir ($config | path join "file-history/retained")
+  "retained artifact" | save ($config | path join "file-history/retained/file@v1")
   write-jsonl ($config | path join "history.jsonl") [
     {sessionId: "parent", project: $project, display: "parent"}
     {sessionId: "retained", project: $project, display: "retained"}
@@ -316,6 +318,15 @@ def "test Claude selected parents carry subagents and preserve shared project st
   let directory = ($root | path join "bundle")
 
   with-env (fixture-env $root) {
+    let complete = ($root | path join "complete")
+    let default_export = (run-cli export $project $complete --assistant claude)
+    assert equal $default_export.exit_code 0 $default_export.stderr
+
+    assert equal (
+      open ($complete | path join "claude/entries.json")
+      | get files | where kind == "file-history" | get session | uniq | sort
+    ) ["child" "parent" "retained"]
+
     let export = (run-cli export $project $directory --assistant claude --session-ids parent)
     assert equal $export.exit_code 0 $export.stderr
 
@@ -533,17 +544,33 @@ def "test OMP imports compare session header ids when filenames change" [] {
   let fixture = (make-omp $root $project)
   let directory = ($root | path join "bundle")
   let renamed = ($fixture.dir | path join "renamed.jsonl")
+  let renamed_artifacts = ($fixture.dir | path join "renamed")
+  rm --recursive $fixture.children
+  mkdir $fixture.children
+  "owned notes" | save ($fixture.children | path join "notes.md")
 
   with-env (fixture-env $root) {
     let export = (run-cli export $project $directory --assistant omp --session-ids parent)
     assert equal $export.exit_code 0 $export.stderr
     mv $fixture.parent $renamed
+    mv $fixture.children $renamed_artifacts
+    rm ($renamed_artifacts | path join "notes.md")
 
     let same = (run-cli import $directory --assistant omp --apply)
     assert equal $same.exit_code 0 $same.stderr
 
     assert not ($fixture.parent | path exists)
     assert ($renamed | path exists)
+    assert not ($fixture.children | path exists)
+    assert equal (open --raw ($renamed_artifacts | path join "notes.md")) "owned notes"
+    let exported = ($root | path join "after-import")
+    let export = (run-cli export $project $exported --assistant omp --session-ids parent)
+    assert equal $export.exit_code 0 $export.stderr
+
+    assert equal (
+      open ($exported | path join "omp/entries.json")
+      | get files | where kind == "sessions" | get name | sort
+    ) ["renamed.jsonl" "renamed/notes.md"]
 
     let changed = (
       open --raw $renamed | lines | each {|line| $line | from json }
