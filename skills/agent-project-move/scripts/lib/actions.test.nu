@@ -14,10 +14,15 @@ def "test a colliding destination row wins" [] {
     + "INSERT INTO t (c) VALUES ('/work/app'); "
     + "INSERT INTO t (c) VALUES ('/work/new');"
   )
-  let statements = (column-statements t c "/work/app" "/work/new" --collide)
+
+  let statements = (column-statements "t" "c" "/work/app" "/work/new" --collide)
   let remaining = (
-    ^sqlite3 -json :memory: (
-      $setup + " " + ($statements | each {|statement| $statement + ";" } | str join " ")
+    ^sqlite3 -json ":memory:" (
+      $setup + " " + (
+        $statements
+        | each {|statement| $statement + ";" }
+        | str join " "
+      )
       + " SELECT c FROM t;"
     )
     | complete

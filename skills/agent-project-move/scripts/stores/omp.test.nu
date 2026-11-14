@@ -26,16 +26,8 @@ def "test OMP encodes session directories by location" [] {
 
 def "test OMP encodes memory directories from the absolute path" [] {
   let cases = [
-    {
-      name: "a project under home"
-      path: "/home/tester/src/app"
-      encoded: "--home-tester-src-app--"
-    }
-    {
-      name: "a path under the temp root"
-      path: "/tmp/omp-test"
-      encoded: "--tmp-omp-test--"
-    }
+    {name: "a project under home", path: "/home/tester/src/app", encoded: "--home-tester-src-app--"}
+    {name: "a path under the temp root", path: "/tmp/omp-test", encoded: "--tmp-omp-test--"}
   ]
 
   with-env {HOME: "/home/tester", TMPDIR: "/tmp"} {

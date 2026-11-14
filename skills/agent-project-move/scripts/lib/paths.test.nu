@@ -25,34 +25,20 @@ def "test absent mount roots keep paths present" [] {
 
 def "test a destination must be distinct and outside the source" [] {
   let cases = [
-    {
-      name: "the same path"
-      old: "/work/app"
-      new: "/work/app"
-      error: "same path"
-    }
-    {
-      name: "a case-only change"
-      old: "/work/app"
-      new: "/work/App"
-      error: "letter case"
-    }
-    {
-      name: "a child of the source"
-      old: "/work/app"
-      new: "/work/app/sub"
-      error: "under the source"
-    }
-    {
-      name: "a sibling"
-      old: "/work/app"
-      new: "/work/app-bar"
-      error: ""
-    }
+    {name: "the same path", old: "/work/app", new: "/work/app", error: "same path"}
+    {name: "a case-only change", old: "/work/app", new: "/work/App", error: "letter case"}
+    {name: "a child of the source", old: "/work/app", new: "/work/app/sub", error: "under the source"}
+    {name: "a sibling", old: "/work/app", new: "/work/app-bar", error: ""}
   ]
 
   for case in $cases {
-    let result = (try { check-destination $case.old $case.new; "" } catch {|error| $error.msg })
+    let result = (try {
+      check-destination $case.old $case.new
+      ""
+    } catch {|error|
+      $error.msg
+    })
+
     if $case.error == "" {
       assert equal $result "" $case.name
     } else {
@@ -63,42 +49,12 @@ def "test a destination must be distinct and outside the source" [] {
 
 def "test a path matches the exact base and its children but not a sibling" [] {
   let cases = [
-    {
-      name: "the exact base"
-      path: "/work/app"
-      matches: true
-      mapped: "/opt/app"
-    }
-    {
-      name: "a child"
-      path: "/work/app/sub"
-      matches: true
-      mapped: "/opt/app/sub"
-    }
-    {
-      name: "a deeper child"
-      path: "/work/app/sub/deeper"
-      matches: true
-      mapped: "/opt/app/sub/deeper"
-    }
-    {
-      name: "a hyphenated sibling"
-      path: "/work/app-bar"
-      matches: false
-      mapped: ""
-    }
-    {
-      name: "the parent"
-      path: "/work"
-      matches: false
-      mapped: ""
-    }
-    {
-      name: "a non-string"
-      path: null
-      matches: false
-      mapped: ""
-    }
+    {name: "the exact base", path: "/work/app", matches: true, mapped: "/opt/app"}
+    {name: "a child", path: "/work/app/sub", matches: true, mapped: "/opt/app/sub"}
+    {name: "a deeper child", path: "/work/app/sub/deeper", matches: true, mapped: "/opt/app/sub/deeper"}
+    {name: "a hyphenated sibling", path: "/work/app-bar", matches: false, mapped: ""}
+    {name: "the parent", path: "/work", matches: false, mapped: ""}
+    {name: "a non-string", path: null, matches: false, mapped: ""}
   ]
 
   for case in $cases {

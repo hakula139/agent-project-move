@@ -29,7 +29,7 @@ def rows [table: string, values: list<string>]: nothing -> string {
 }
 
 def "test SQL path conditions select the path and its children" [] {
-  let setup = "CREATE TABLE t (id INTEGER PRIMARY KEY, c TEXT); " + (rows t $VALUES)
+  let setup = "CREATE TABLE t (id INTEGER PRIMARY KEY, c TEXT); " + (rows "t" $VALUES)
   let cases = [
     {name: "exact and children", path: "/work/app", prefix: "", expected: [1 2]}
     {name: "a sibling with an underscore", path: "/work/a_b", prefix: "", expected: []}
@@ -43,14 +43,22 @@ def "test SQL path conditions select the path and its children" [] {
   ]
 
   for case in $cases {
-    let condition = (path-condition c [$case.path] --prefix $case.prefix)
+    let condition = (path-condition "c" [$case.path] --prefix $case.prefix)
     let output = (
-      ^sqlite3 -json :memory: ($setup + " SELECT id FROM t WHERE " + $condition + " ORDER BY id;")
+      ^sqlite3 -json ":memory:" ($setup + " SELECT id FROM t WHERE " + $condition + " ORDER BY id;")
       | complete
       | get stdout
       | str trim
     )
-    let ids = if $output == "" { [] } else { $output | from json | get id | sort }
+    let ids = if $output == "" {
+      []
+    } else {
+      $output
+      | from json
+      | get id
+      | sort
+    }
+
     assert equal $ids $case.expected $case.name
   }
 }
