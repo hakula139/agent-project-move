@@ -85,7 +85,7 @@ Each file descriptor records its exported source in `origin_path`. This field is
 - Each carried table is checked at plan time: the import aborts before writing when the target lacks a carried column, or requires a not-null column without a default that the bundle does not fill.
 - Codex carries available `project_roots` rows with selected projects. Targeted imports map those paths and reject an existing project ID whose ordered root paths differ. Project metadata and logical agent identities stay unchanged.
 
-Codex trust blocks are not carried, so the target asks for trust once on the first resume. A bundle carries no Codex history projection, because rewriting the rollout invalidates its byte offsets.
+A bundle carries no Codex history projection, because rewriting the rollout invalidates its byte offsets.
 
 ## Merges and memory staging
 

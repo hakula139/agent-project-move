@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Agent Project Move: Codex
 # ==================================================================================================
-# Codex state, including rollouts, trust settings, and SQLite databases.
+# Codex state, including rollouts and SQLite databases.
 # ==================================================================================================
 
 use ../lib/actions.nu [
@@ -13,7 +13,7 @@ use ../lib/actions.nu [
   sql-action
 ]
 use ../lib/bundle.nu [bundle-table]
-use ../lib/paths.nu [match-any path-map path-match valid-path]
+use ../lib/paths.nu [match-any path-map valid-path]
 use ../lib/rewrite.nu [files-with-path offsets-kept rewrite-text]
 use ../lib/selection.nu [select-sessions]
 use ../lib/sqlite.nu [
@@ -27,9 +27,6 @@ use ../lib/sqlite.nu [
 
 # The projection state goes first, since its AFTER DELETE trigger clears thread_realtime_items.
 const PROJECTION_TABLES = ["thread_history_projection_state" "thread_turns" "thread_items"]
-
-# A trust block opens with a `[projects."<path>"]` table header.
-const TRUST_HEADER = '^\[projects\."(?<path>[^"]+)"\]$'
 
 # --------------------------------------------------------------------------------------------------
 # Locations
@@ -47,10 +44,6 @@ def state-db []: nothing -> any {
 # The thread history database, or null before Codex has created one.
 def history-db []: nothing -> any {
   latest-db (root | path join "thread_history_*.sqlite") "thread_items"
-}
-
-def config-path []: nothing -> string {
-  root | path join "config.toml"
 }
 
 def plain-rollout-path [path: string]: nothing -> string {
@@ -118,163 +111,8 @@ export def scan []: nothing -> list<record> {
 }
 
 # --------------------------------------------------------------------------------------------------
-# Trust blocks
-# --------------------------------------------------------------------------------------------------
-
-# Trailing comment lines, from the first comment on, lead the next header.
-def split-leading [body: list<string>]: nothing -> record {
-  let trailing = (
-    $body
-    | reverse
-    | take while {|line| ($line | str trim) == "" or ($line | str starts-with "#") }
-    | reverse
-  )
-  let leading = ($trailing | skip while {|line| ($line | str trim) == "" })
-  {
-    body: ($body | take (($body | length) - ($leading | length)))
-    leading: $leading
-  }
-}
-
-# Split the config at every table header. Lines before the first form a headerless section.
-def config-sections [content: string]: nothing -> list<record> {
-  mut sections = []
-  mut current: oneof<record, nothing> = null
-
-  for line in ($content | lines) {
-    if ($line | str starts-with "[") {
-      let header = ($line | parse --regex $TRUST_HEADER)
-      let path = if ($header | is-empty) {
-        null
-      } else {
-        $header | get 0.path
-      }
-
-      if $current != null {
-        let split = (split-leading $current.body)
-        $current = ($current | upsert body $split.body)
-        $sections = ($sections | append $current)
-        $current = {
-          header: $line
-          path: $path
-          leading: $split.leading
-          body: []
-        }
-      } else {
-        $current = {
-          header: $line
-          path: $path
-          leading: []
-          body: []
-        }
-      }
-
-    } else if $current == null {
-      $current = {
-        header: null
-        path: null
-        leading: []
-        body: [$line]
-      }
-
-    } else {
-      $current = ($current | update body { $in | append $line })
-    }
-  }
-  if $current != null { $sections = ($sections | append $current) }
-  $sections
-}
-
-def section-lines [section: record]: nothing -> list<string> {
-  if $section.header == null {
-    $section.body
-  } else {
-    $section.leading ++ [$section.header] ++ $section.body
-  }
-}
-
-def trust-blocks-in [content: string]: nothing -> list<record> {
-  config-sections $content | where {|section| $section.path != null }
-}
-
-def trust-blocks []: nothing -> list<record> {
-  let file = (config-path)
-  if not ($file | path exists) { return [] }
-  trust-blocks-in (open --raw $file)
-}
-
-export def move-trust [content: string, old: string, new: string]: nothing -> string {
-  let sections = (config-sections $content)
-  let existing = ($sections | get -o path | compact)
-  let kept = (
-    $sections
-    | where {|section| ($section.path == null) or (not (path-match $old $section.path)) }
-  )
-
-  let moved = (
-    $sections
-    | where {|section| ($section.path != null) and (path-match $old $section.path) }
-    | each {|section|
-      let target = (path-map $old $new $section.path)
-      if $target in $existing {
-        null
-      } else {
-        {
-          header: $"[projects.\"($target)\"]"
-          path: $target
-          leading: $section.leading
-          body: $section.body
-        }
-      }
-    }
-    | compact
-  )
-
-  let lines = (
-    $kept ++ $moved
-    | each {|section| section-lines $section }
-    | flatten
-  )
-
-  ($lines | str join "\n") + "\n"
-}
-
-export def prune-trust [content: string, paths: list<string>, --exact]: nothing -> string {
-  let kept = (
-    config-sections $content
-    | where {|section|
-      if $exact {
-        $section.path not-in $paths
-      } else {
-        not (($section.path != null) and (match-any $paths $section.path))
-      }
-    }
-    | each {|section| section-lines $section }
-    | flatten
-  )
-  if ($kept | is-empty) {
-    ""
-  } else {
-    ($kept | str join "\n") + "\n"
-  }
-}
-
-# --------------------------------------------------------------------------------------------------
 # Move
 # --------------------------------------------------------------------------------------------------
-
-def trust-actions [old: string, new: string]: nothing -> list<record> {
-  let config = (config-path)
-  let match = (trust-blocks | any {|block| path-match $old $block.path })
-  if ($config | path exists) and $match {
-    let edit = (edit-action "codex" "config" $config {|content|
-      move-trust $content $old $new
-    } "rewrite trust blocks")
-    [$edit]
-  } else {
-    []
-  }
-}
 
 def projection-actions [
   db: any
@@ -358,7 +196,6 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
   }
 
   $actions = ($actions ++ (projection-actions (history-db) $edited_ids $old $new))
-  $actions = ($actions ++ (trust-actions $old $new))
   $actions
 }
 
@@ -412,12 +249,7 @@ def selected-threads [
 # Prune
 # --------------------------------------------------------------------------------------------------
 
-def delete-threads [
-  state: string
-  threads: list<record>
-  paths: list<string>
-  --exact
-]: nothing -> list<record> {
+def delete-threads [state: string, threads: list<record>]: nothing -> list<record> {
   let ids = ($threads | get -o id)
   mut actions = []
 
@@ -459,23 +291,6 @@ def delete-threads [
     }
   }
 
-  let config = (config-path)
-  let trust_match = (
-    trust-blocks
-    | any {|block|
-      if $exact {
-        $block.path in $paths
-      } else {
-        match-any $paths $block.path
-      }
-    }
-  )
-
-  if ($config | path exists) and $trust_match {
-    $actions = ($actions | append (edit-action "codex" "config" $config {|content|
-      prune-trust $content $paths --exact=$exact
-    } "remove trust blocks"))
-  }
   $actions
 }
 
@@ -486,7 +301,7 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
     sqlite-rows $state "SELECT * FROM threads"
     | where {|row| match-any $paths $row.cwd }
   )
-  delete-threads $state $threads $paths
+  delete-threads $state $threads
 }
 
 export def plan-retire [
@@ -498,20 +313,7 @@ export def plan-retire [
   if $state == null { return [] }
   let inventory = (sqlite-rows $state "SELECT * FROM threads")
   let threads = (selected-threads $state $inventory $old --exact=$exact --session-ids $session_ids)
-  let ids = ($threads | get -o id)
-  let remaining = (
-    $inventory
-    | where {|row| $row.id not-in $ids }
-  )
-
-  let unused = (
-    $threads
-    | get -o cwd
-    | uniq
-    | where {|cwd| not ($remaining | any {|row| $cwd == $row.cwd }) }
-  )
-
-  mut actions = (delete-threads $state $threads $unused --exact)
+  mut actions = (delete-threads $state $threads)
   let projects = (
     $threads
     | get -o project_id
