@@ -16,15 +16,14 @@ def "test a colliding destination row wins" [] {
   )
 
   let statements = (column-statements "t" "c" "/work/app" "/work/new" --collide)
+  let sql = (
+    $statements
+    | each {|statement| $statement + ";" }
+    | str join " "
+  )
+
   let remaining = (
-    ^sqlite3 -json ":memory:" (
-      $setup + " " + (
-        $statements
-        | each {|statement| $statement + ";" }
-        | str join " "
-      )
-      + " SELECT c FROM t;"
-    )
+    ^sqlite3 -json ":memory:" $"($setup) ($sql) SELECT c FROM t;"
     | complete
     | get stdout
     | from json

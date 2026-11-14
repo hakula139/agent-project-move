@@ -99,12 +99,11 @@ def make-codex [root: string, project: string]: nothing -> record {
     ]
     write-jsonl $file $body
 
-    let insert = (
-      "INSERT INTO threads VALUES (" + (sql-quote $row.id) + ", "
-      + (sql-quote $row.cwd) + ", " + (sql-quote $file) + ", 'shared', "
-      + (sql-quote (if $row.id == "other-child" { $row.parent } else { null })) + ", 1, 1000); "
-      + "INSERT INTO dependent VALUES (" + (sql-quote $row.id) + ");"
-    )
+    let id = (sql-quote $row.id)
+    let cwd = (sql-quote $row.cwd)
+    let rollout = (sql-quote $file)
+    let parent = (sql-quote (if $row.id == "other-child" { $row.parent } else { null }))
+    let insert = $"INSERT INTO threads VALUES \(($id), ($cwd), ($rollout), 'shared', ($parent), 1, 1000\); INSERT INTO dependent VALUES \(($id)\);"
     $insert | ^sqlite3 $db
   }
 
@@ -1033,10 +1032,8 @@ def "test OMP rows without session ids cannot widen exact selection to protected
     }
   ]
   let original = (open --raw $protected)
-  (
-    "INSERT INTO history(session_id, cwd, prompt) VALUES (NULL, " + (sql-quote $project)
-    + ", 'selected metadata'), (NULL, '/safe/project', 'protected metadata');"
-  ) | ^sqlite3 $dbs.history
+  $"INSERT INTO history\(session_id, cwd, prompt\) VALUES \(NULL, (sql-quote $project), 'selected metadata'\), \(NULL, '/safe/project', 'protected metadata'\);"
+  | ^sqlite3 $dbs.history
   let directory = ($root | path join "bundle")
 
   with-env (fixture-env $root) {
@@ -1152,10 +1149,8 @@ def "test default OMP export preserves path metadata without session ids" [] {
   let directory = ($root | path join "bundle")
   let key = (sql-quote ("global:" + $project))
   $"INSERT INTO jobs VALUES \('summary', ($key), 'global memory'\);" | ^sqlite3 $source_dbs.agent
-  (
-    "INSERT INTO history(session_id, cwd, prompt) VALUES (NULL, "
-    + (sql-quote $project) + ", 'path prompt');"
-  ) | ^sqlite3 $source_dbs.history
+  $"INSERT INTO history\(session_id, cwd, prompt\) VALUES \(NULL, (sql-quote $project), 'path prompt'\);"
+  | ^sqlite3 $source_dbs.history
 
   with-env (fixture-env $source) {
     let export = (run-cli export $project $directory --assistant "omp")
@@ -1461,10 +1456,8 @@ def "test OMP selected titles transfer and retire without requiring history rows
       let value = (sql-quote $id)
       $"INSERT INTO session_titles VALUES \(($value), ($value)\);" | ^sqlite3 $dbs.history
       if $with_recap {
-        (
-          "INSERT INTO session_recaps(session_id, cwd, created_at, recap) VALUES ("
-          + $value + ", " + (sql-quote $project) + ", 1, " + $value + ");"
-        ) | ^sqlite3 $dbs.history
+        $"INSERT INTO session_recaps\(session_id, cwd, created_at, recap\) VALUES \(($value), (sql-quote $project), 1, ($value)\);"
+        | ^sqlite3 $dbs.history
       } else {
         let file = ($root | path join "omp/sessions" (session-encode-here $project) $"($id).jsonl")
         write-jsonl $file [

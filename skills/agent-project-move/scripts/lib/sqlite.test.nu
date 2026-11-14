@@ -24,7 +24,7 @@ const VALUES = [
 
 def rows [table: string, values: list<string>]: nothing -> string {
   $values
-  | each {|value| "INSERT INTO " + $table + " (c) VALUES (" + (sql-quote $value) + ");" }
+  | each {|value| $"INSERT INTO ($table) \(c\) VALUES \((sql-quote $value)\);" }
   | str join " "
 }
 
@@ -90,7 +90,7 @@ def "test SQL path conditions select the path and its children" [] {
   for case in $cases {
     let condition = (path-condition "c" [$case.path] --prefix $case.prefix)
     let output = (
-      ^sqlite3 -json ":memory:" ($setup + " SELECT id FROM t WHERE " + $condition + " ORDER BY id;")
+      ^sqlite3 -json ":memory:" $"($setup) SELECT id FROM t WHERE ($condition) ORDER BY id;"
       | complete
       | get stdout
       | str trim
