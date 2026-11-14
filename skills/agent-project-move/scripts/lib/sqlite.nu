@@ -73,7 +73,10 @@ export def latest-db [pattern: string, table: string]: nothing -> any {
         | default "0"
         | into int
       )
-      {db: $db, version: $version}
+      {
+        db: $db
+        version: $version
+      }
     }
     | where {|entry| sqlite-has-table $entry.db $table }
     | sort-by version

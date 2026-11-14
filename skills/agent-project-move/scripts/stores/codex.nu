@@ -64,14 +64,24 @@ def plain-rollout-path [path: string]: nothing -> string {
 
 def rollout-file [path: string]: nothing -> any {
   let plain = (plain-rollout-path $path)
-  if ($plain | path exists) { return {file: $plain, compressed: false} }
+  if ($plain | path exists) {
+    return {
+      file: $plain
+      compressed: false
+    }
+  }
 
   let compressed = if $plain == $path {
     $path + ".zst"
   } else {
     $path
   }
-  if ($compressed | path exists) { return {file: $compressed, compressed: true} }
+  if ($compressed | path exists) {
+    return {
+      file: $compressed
+      compressed: true
+    }
+  }
   null
 }
 
@@ -120,7 +130,10 @@ def split-leading [body: list<string>]: nothing -> record {
     | reverse
   )
   let leading = ($trailing | skip while {|line| ($line | str trim) == "" })
-  {body: ($body | take (($body | length) - ($leading | length))), leading: $leading}
+  {
+    body: ($body | take (($body | length) - ($leading | length)))
+    leading: $leading
+  }
 }
 
 # Split the config at every table header. Lines before the first form a headerless section.
@@ -141,13 +154,28 @@ def config-sections [content: string]: nothing -> list<record> {
         let split = (split-leading $current.body)
         $current = ($current | upsert body $split.body)
         $sections = ($sections | append $current)
-        $current = {header: $line, path: $path, leading: $split.leading, body: []}
+        $current = {
+          header: $line
+          path: $path
+          leading: $split.leading
+          body: []
+        }
       } else {
-        $current = {header: $line, path: $path, leading: [], body: []}
+        $current = {
+          header: $line
+          path: $path
+          leading: []
+          body: []
+        }
       }
 
     } else if $current == null {
-      $current = {header: null, path: null, leading: [], body: [$line]}
+      $current = {
+        header: null
+        path: null
+        leading: []
+        body: [$line]
+      }
 
     } else {
       $current = ($current | update body { $in | append $line })
@@ -257,8 +285,17 @@ def projection-actions [
   if ($db == null) or ($ids | is-empty) { return [] }
 
   if (offsets-kept $old $new) {
-    let columns = [{db: $db, table: "thread_items", column: "item_json", json: true}]
+    let columns = [
+      {
+        db: $db
+        table: "thread_items"
+        column: "item_json"
+        json: true
+      }
+    ]
+
     column-actions "codex" $columns $old $new
+
   } else {
     let id_list = (sql-list $ids)
     $PROJECTION_TABLES
@@ -297,8 +334,17 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
 
   mut actions = (
     column-actions "codex" [
-      {db: $state, table: "threads", column: "cwd"}
-      {db: $state, table: "threads", column: "sandbox_policy", json: true}
+    {
+      db: $state
+      table: "threads"
+      column: "cwd"
+    }
+    {
+      db: $state
+      table: "threads"
+      column: "sandbox_policy"
+      json: true
+    }
     ] $old $new
   )
 
@@ -497,7 +543,12 @@ export def export-bundle [
 ]: nothing -> record {
   let db = (state-db)
   if $db == null {
-    return {assistant: "codex", old: $old, files: [], tables: []}
+    return {
+      assistant: "codex"
+      old: $old
+      files: []
+      tables: []
+    }
   }
 
   let inventory = (sqlite-rows $db "SELECT * FROM threads")
@@ -535,8 +586,20 @@ export def export-bundle [
   }
 
   mut tables = [
-    {db: "state", table: "projects", columns: (table-columns $db "projects"), rows: $projects, key: ["id"]}
-    {db: "state", table: "threads", columns: (table-columns $db "threads"), rows: $threads, key: ["id"]}
+    {
+      db: "state"
+      table: "projects"
+      columns: (table-columns $db "projects")
+      rows: $projects
+      key: ["id"]
+    }
+    {
+      db: "state"
+      table: "threads"
+      columns: (table-columns $db "threads")
+      rows: $threads
+      key: ["id"]
+    }
   ]
 
   if (table-columns $db "thread_spawn_edges" | is-not-empty) {
@@ -554,7 +617,12 @@ export def export-bundle [
     })
   }
 
-  {assistant: "codex", old: $old, files: $files, tables: $tables}
+  {
+    assistant: "codex"
+    old: $old
+    files: $files
+    tables: $tables
+  }
 }
 
 def rollout-target [file: record]: nothing -> string {

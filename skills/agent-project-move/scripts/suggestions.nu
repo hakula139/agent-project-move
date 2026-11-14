@@ -125,6 +125,9 @@ export def scan-suggestions [
   $paths
   | where {|path| path-missing $path }
   | each {|path|
-    {path: $path, suggested: (suggested-move $path $roots $home $temp_roots)}
+    {
+      path: $path
+      suggested: (suggested-move $path $roots $home $temp_roots)
+    }
   }
 }

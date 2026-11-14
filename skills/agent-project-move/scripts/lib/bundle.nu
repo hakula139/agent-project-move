@@ -15,7 +15,10 @@ export def bundle-table [bundle: record, table: string]: nothing -> record {
   $bundle.tables
   | where table == $table
   | get -o 0
-  | default {columns: [], rows: []}
+  | default {
+    columns: []
+    rows: []
+  }
 }
 
 export def write-bundle [directory: string, bundle: record]: nothing -> nothing {

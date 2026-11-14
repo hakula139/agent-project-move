@@ -168,7 +168,12 @@ export def scan []: nothing -> list<record> {
       | math max
     }
 
-    {assistant: "omp", path: $path, sessions: ($files | length), last_used: $last_used}
+    {
+      assistant: "omp"
+      path: $path
+      sessions: ($files | length)
+      last_used: $last_used
+    }
   }
   | sort-by path
 }
@@ -188,8 +193,18 @@ def session-actions [candidates: list<string>, old: string, new: string]: nothin
   for path in $candidates {
     let mapped = (path-map $old $new $path)
     for spec in [
-      {kind: "sessions", root: (session-root), from: $path, to: $mapped}
-      {kind: "archives", root: (archive-root), from: $path, to: $mapped}
+      {
+        kind: "sessions"
+        root: (session-root)
+        from: $path
+        to: $mapped
+      }
+      {
+        kind: "archives"
+        root: (archive-root)
+        from: $path
+        to: $mapped
+      }
     ] {
       let source = ($spec.root | path join (session-encode-here $spec.from))
       let target = ($spec.root | path join (session-encode-here $spec.to))
@@ -257,10 +272,28 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
   let agent_db = ($agent | path join "agent.db")
 
   let columns = [
-    {db: $history_db, table: "history", column: "cwd"}
-    {db: $history_db, table: "session_recaps", column: "cwd"}
-    {db: $agent_db, table: "threads", column: "cwd"}
-    {db: $agent_db, table: "jobs", column: "job_key", prefix: "global:", collide: true}
+    {
+      db: $history_db
+      table: "history"
+      column: "cwd"
+    }
+    {
+      db: $history_db
+      table: "session_recaps"
+      column: "cwd"
+    }
+    {
+      db: $agent_db
+      table: "threads"
+      column: "cwd"
+    }
+    {
+      db: $agent_db
+      table: "jobs"
+      column: "job_key"
+      prefix: "global:"
+      collide: true
+    }
   ]
 
   (
@@ -292,8 +325,14 @@ def session-header [file: string]: nothing -> any {
 def session-records []: nothing -> list<record> {
   mut rows = []
   for spec in [
-    {kind: "sessions", root: (session-root)}
-    {kind: "archives", root: (archive-root)}
+    {
+      kind: "sessions"
+      root: (session-root)
+    }
+    {
+      kind: "archives"
+      root: (archive-root)
+    }
   ] {
     for file in (files-under $spec.root | where {|file| $file | str ends-with ".jsonl" }) {
       let header = (session-header $file)
@@ -318,16 +357,32 @@ def session-records []: nothing -> list<record> {
 
   let agent = (agent-dir)
   for spec in [
-    {db: ($agent | path join "agent.db"), table: "threads", key: "id"}
-    {db: ($agent | path join "history.db"), table: "history", key: "session_id"}
-    {db: ($agent | path join "history.db"), table: "session_recaps", key: "session_id"}
+    {
+      db: ($agent | path join "agent.db")
+      table: "threads"
+      key: "id"
+    }
+    {
+      db: ($agent | path join "history.db")
+      table: "history"
+      key: "session_id"
+    }
+    {
+      db: ($agent | path join "history.db")
+      table: "session_recaps"
+      key: "session_id"
+    }
   ] {
     if not ($spec.db | path exists) { continue }
     let records = (sqlite-rows $spec.db $"SELECT * FROM ($spec.table)")
     let sessions = (
       $records
       | each {|row|
-        {id: ($row | get $spec.key), cwd: $row.cwd, parent: ($row | get -o parent_thread_id)}
+        {
+          id: ($row | get $spec.key)
+          cwd: $row.cwd
+          parent: ($row | get -o parent_thread_id)
+        }
       }
     )
     $rows = ($rows ++ $sessions)
@@ -399,9 +454,18 @@ def directory-prune-actions [
   mut actions = []
   for path in ($paths | uniq) {
     for spec in [
-      {kind: "sessions", directory: (session-root | path join (session-encode-here $path))}
-      {kind: "archives", directory: (archive-root | path join (session-encode-here $path))}
-      {kind: "memories", directory: (memory-root | path join (memory-encode $path))}
+      {
+        kind: "sessions"
+        directory: (session-root | path join (session-encode-here $path))
+      }
+      {
+        kind: "archives"
+        directory: (archive-root | path join (session-encode-here $path))
+      }
+      {
+        kind: "memories"
+        directory: (memory-root | path join (memory-encode $path))
+      }
     ] {
       let directory = $spec.directory
       if not ($directory | path exists) { continue }
@@ -647,9 +711,32 @@ def history-tables [
   }
 
   [
-    {db: "history", table: "history", columns: (table-columns $db "history"), rows: $history, key: null, natural: ["prompt"], drop: ["id"]}
-    {db: "history", table: "session_titles", columns: (table-columns $db "session_titles"), rows: $session_titles, key: ["session_id"], drop: []}
-    {db: "history", table: "session_recaps", columns: (table-columns $db "session_recaps"), rows: $recaps, key: null, natural: ["session_id" "created_at"], drop: ["id"]}
+    {
+      db: "history"
+      table: "history"
+      columns: (table-columns $db "history")
+      rows: $history
+      key: null
+      natural: ["prompt"]
+      drop: ["id"]
+    }
+    {
+      db: "history"
+      table: "session_titles"
+      columns: (table-columns $db "session_titles")
+      rows: $session_titles
+      key: ["session_id"]
+      drop: []
+    }
+    {
+      db: "history"
+      table: "session_recaps"
+      columns: (table-columns $db "session_recaps")
+      rows: $recaps
+      key: null
+      natural: ["session_id" "created_at"]
+      drop: ["id"]
+    }
   ]
 }
 
@@ -682,9 +769,30 @@ def agent-tables [
   )
 
   [
-    {db: "agent", table: "threads", columns: (table-columns $db "threads"), rows: $threads, key: ["id"], drop: []}
-    {db: "agent", table: "stage1_outputs", columns: (table-columns $db "stage1_outputs"), rows: $stage1, key: ["thread_id"], drop: []}
-    {db: "agent", table: "jobs", columns: (table-columns $db "jobs"), rows: $jobs, key: ["kind" "job_key"], drop: []}
+    {
+      db: "agent"
+      table: "threads"
+      columns: (table-columns $db "threads")
+      rows: $threads
+      key: ["id"]
+      drop: []
+    }
+    {
+      db: "agent"
+      table: "stage1_outputs"
+      columns: (table-columns $db "stage1_outputs")
+      rows: $stage1
+      key: ["thread_id"]
+      drop: []
+    }
+    {
+      db: "agent"
+      table: "jobs"
+      columns: (table-columns $db "jobs")
+      rows: $jobs
+      key: ["kind" "job_key"]
+      drop: []
+    }
   ]
 }
 
@@ -759,7 +867,12 @@ export def export-bundle [
     }
   }
 
-  {assistant: "omp", old: $old, files: $files, tables: $tables}
+  {
+    assistant: "omp"
+    old: $old
+    files: $files
+    tables: $tables
+  }
 }
 
 def artifact-target [file: record, targets: list<record>]: nothing -> string {
@@ -796,7 +909,10 @@ def mapped-parent [file: record, targets: list<record>]: nothing -> any {
   if $target == null or $target.target == $parent {
     null
   } else {
-    {old: $parent, new: $target.target}
+    {
+      old: $parent
+      new: $target.target
+    }
   }
 }
 
@@ -1022,7 +1138,12 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   let rollout_map = (
     $targets
     | where {|file| $file.header != null }
-    | each {|file| {id: $file.header.id, target: $file.target} }
+    | each {|file|
+      {
+        id: $file.header.id
+        target: $file.target
+      }
+    }
   )
 
   mut history_statements = []

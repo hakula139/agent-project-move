@@ -206,7 +206,11 @@ def "main export" [
         | append 0
         | math sum
       )
-      {assistant: $bundle.assistant, files: $files, rows: $rows}
+      {
+        assistant: $bundle.assistant
+        files: $files
+        rows: $rows
+      }
     }
   )
   for count in $counts {
@@ -278,7 +282,10 @@ def "main import" [
   let plans = (
     $bundles
     | each {|bundle|
-      {assistant: $bundle.assistant, actions: (assistant-plan-import $bundle.assistant $bundle)}
+      {
+        assistant: $bundle.assistant
+        actions: (assistant-plan-import $bundle.assistant $bundle)
+      }
     }
   )
 

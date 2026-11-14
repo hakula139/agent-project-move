@@ -16,7 +16,13 @@ export def action [
   path: string
   description: string
 ]: nothing -> record {
-  {assistant: $assistant, store: $store, op: $op, path: $path, description: $description}
+  {
+    assistant: $assistant
+    store: $store
+    op: $op
+    path: $path
+    description: $description
+  }
 }
 
 export def edit-action [
@@ -39,7 +45,10 @@ export def copy-action [
   --transform: closure
 ]: nothing -> record {
   action $assistant $store "copy" $source $description
-  | merge {to: $target, transform: $transform}
+  | merge {
+    to: $target
+    transform: $transform
+  }
 }
 
 export def rename-action [

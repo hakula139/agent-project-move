@@ -246,7 +246,16 @@ export def recorded-paths []: nothing -> list<string> {
 def selected-dirs [old: string]: nothing -> list<record> {
   let recorded = (recorded-paths)
   let owned = ($recorded | where {|path| path-match $old $path })
-  let names = ($owned | each {|path| {name: (encode-path $path), owner: $path} })
+  let names = (
+    $owned
+    | each {|path|
+      {
+        name: (encode-path $path)
+        owner: $path
+      }
+    }
+  )
+
   let old_name = (encode-path $old)
 
   project-dirs
@@ -276,7 +285,10 @@ def selected-dirs [old: string]: nothing -> list<record> {
       print $"Skipping ($dir): another recorded path encodes to the same name"
       return null
     }
-    {dir: $dir, owner: $owner}
+    {
+      dir: $dir
+      owner: $owner
+    }
   }
   | compact
 }
@@ -291,7 +303,12 @@ export def scan []: nothing -> list<record> {
     $identity
     | get file
     | uniq
-    | each {|file| {file: $file, timestamp: (file-mtime $file)} }
+    | each {|file|
+      {
+        file: $file
+        timestamp: (file-mtime $file)
+      }
+    }
   )
 
   let transcript = (
@@ -327,7 +344,14 @@ export def scan []: nothing -> list<record> {
     | where {|path| valid-path $path }
     | uniq
     | where {|path| $path not-in ($transcript | get path) }
-    | each {|path| {assistant: "claude", path: $path, sessions: 0, last_used: null} }
+    | each {|path|
+      {
+        assistant: "claude"
+        path: $path
+        sessions: 0
+        last_used: null
+      }
+    }
   )
   let seen = (($transcript | get path) ++ ($history | get path))
 
@@ -335,7 +359,14 @@ export def scan []: nothing -> list<record> {
     config-paths
     | where {|path| (valid-path $path) and ($path not-in $seen) }
     | uniq
-    | each {|path| {assistant: "claude", path: $path, sessions: 0, last_used: null} }
+    | each {|path|
+      {
+        assistant: "claude"
+        path: $path
+        sessions: 0
+        last_used: null
+      }
+    }
   )
   ($transcript ++ $history ++ $config) | sort-by path
 }
@@ -788,7 +819,12 @@ export def export-bundle [
 
   let selected = if $exact or ($session_ids | is-not-empty) {
     $selected_sessions
-    | each {|row| {dir: $row.directory, owner: $row.owner} }
+    | each {|row|
+      {
+        dir: $row.directory
+        owner: $row.owner
+      }
+    }
     | uniq
   } else {
     selected-dirs $old
@@ -858,7 +894,12 @@ export def export-bundle [
     }
   }
 
-  {assistant: "claude", old: $old, files: $files, tables: []}
+  {
+    assistant: "claude"
+    old: $old
+    files: $files
+    tables: []
+  }
 }
 
 def imported-elsewhere [projects: list<string>, file: record]: nothing -> bool {
