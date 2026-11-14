@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-15
+
+### Breaking changes
+
+- Remove `prune` and automatic collection of state for missing directories. Review `scan` and use `retire --exact` or `retire --session-ids` to remove selected session copies. Investigate orphaned metadata separately ([#25](https://github.com/hakula139/agent-project-move/pull/25))
+- Remove the `suggested` column from `scan`. The skill determines migration targets from the user's intent and local repositories ([#22](https://github.com/hakula139/agent-project-move/pull/22))
+- _(claude)_ Transfer and retire only selected transcripts, their owned artifacts, and file history. Project memory, global configuration, and prompt history stay in place. Moves rewrite canonical session and subagent transcripts, leave other artifact bytes unchanged, and merge memory and stale indexes as ordinary files. Handle shared state separately and review differing files when directory merges stop ([#30](https://github.com/hakula139/agent-project-move/pull/30))
+- _(omp)_ Limit every operation to session files and their owned artifacts, leaving memory, `history.db`, and `agent.db` unchanged. Re-export older bundles that carry auxiliary state before importing ([#28](https://github.com/hakula139/agent-project-move/pull/28))
+- _(codex)_ Leave project trust configuration unchanged. Codex can ask for trust again after migration ([#23](https://github.com/hakula139/agent-project-move/pull/23))
+
+### Added
+
+- Select exports by exact cwd with `--exact` or by session ID with `--session-ids`, including dependent descendants and owned artifacts. Use `retire` with either selector to preview and remove source copies after verifying a transfer, preserving unrelated sessions and shared metadata still in use ([#20](https://github.com/hakula139/agent-project-move/pull/20))
+- Map incoming project paths with `import --target`, including descendant suffixes and Codex project roots, while preserving unrelated local sessions. Imports reject differing transcripts for reused session IDs and complete missing dependent records for identical sessions. Exported files include `origin_path` provenance without changing import destinations ([#20](https://github.com/hakula139/agent-project-move/pull/20))
+- Skip recovery backups explicitly with `--no-backup` on move, import, and retirement. Backups remain enabled by default, and dry runs report the selected behavior ([#20](https://github.com/hakula139/agent-project-move/pull/20))
+
+### Changed
+
+- _(codex)_ Invalidate history projections whenever a rollout is rewritten, including equal-length path changes. Resume rebuilds the projection, so previews stay empty until then. Unarchive archived sessions before resuming. Desktop workspace paths in `.codex-global-state.json` stay unchanged and can be updated separately ([#26](https://github.com/hakula139/agent-project-move/pull/26))
+
+### Fixed
+
+- _(omp)_ Keep absolute `parentSession` references pointing at relocated session files after a local move, including references from sessions whose cwd stays elsewhere. Previously moved copies may still need separate repair ([#31](https://github.com/hakula139/agent-project-move/pull/31))
+
+[0.3.0]: https://github.com/hakula139/agent-project-move/compare/v0.2.0...v0.3.0
+
 ## [0.2.0] - 2026-11-11
 
 ### Breaking changes

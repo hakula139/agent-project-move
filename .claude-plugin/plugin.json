@@ -1,6 +1,6 @@
 {
   "name": "agent-project-move",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Move, transfer, and retire coding agent sessions",
   "author": { "name": "Hakula", "url": "https://hakula.xyz" },
   "repository": "https://github.com/hakula139/agent-project-move",
