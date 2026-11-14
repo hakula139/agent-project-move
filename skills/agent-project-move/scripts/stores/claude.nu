@@ -14,6 +14,7 @@ use ../lib/actions.nu [
   same-directory
 ]
 use ../lib/paths.nu [files-under match-any path-map path-match valid-path]
+use ../lib/selection.nu [select-sessions]
 use ../lib/rewrite.nu [files-with-path json-value rewrite-text rg-lines]
 
 const ENCODED_MAX = 200
@@ -508,14 +509,115 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
 # Transfer
 # --------------------------------------------------------------------------------------------------
 
-export def export-bundle [old: string]: nothing -> record {
-  let selected = (selected-dirs $old)
+def selected-transcripts [old: string, --exact, --session-ids: list<string> = []]: nothing -> list<record> {
+  mut rows = []
+  let known = (recorded-paths)
+  for dir in (project-dirs) {
+    let owners = ($known | where {|cwd| (encode-path $cwd) == ($dir | path basename) })
+    if ($owners | length) != 1 { continue }
+    let owner = ($owners | first)
+    let entries = (
+      rg-lines [-o --with-filename --no-messages -g '*.jsonl' '"cwd":"[^"]*"' $dir]
+      | parse --regex '^(?<file>.+?):"cwd":"(?<cwd>[^"]*)"$'
+    )
+    for entry in $entries {
+      let relative = ($entry.file | path relative-to $dir)
+      let segments = ($relative | split row "/")
+      let nested = ($segments | length) > 1
+      let parent = if $nested { $segments | first } else { null }
+      let id = ($entry.file | path basename | str replace --regex '\.jsonl$' '' | str replace --regex '^agent-' '')
+      let tree = if $nested { $dir | path join ($parent + ".jsonl") } else { $entry.file }
+      $rows = ($rows | append {
+        id: $id
+        cwd: (json-value $entry.cwd)
+        parent: $parent
+        file: $entry.file
+        tree: $tree
+        directory: $dir
+        owner: $owner
+      })
+    }
+  }
+  select-sessions $rows $old --exact=$exact --session-ids $session_ids
+}
+
+export def plan-retire [old: string, --exact, --session-ids: list<string> = []]: nothing -> list<record> {
+  let selected = (selected-transcripts $old --exact=$exact --session-ids $session_ids)
+  let files = ($selected | get -o tree | uniq)
+  let ids = ($selected | get -o id | uniq)
+  mut actions = []
+  for dir in ($files | each {|file| $file | path dirname } | uniq) {
+    let remaining = (top-files $dir | where {|file| $file not-in $files })
+    if ($remaining | is-empty) {
+      $actions = ($actions | append (action claude projects delete $dir "retire project sessions"))
+    } else {
+      for file in ($files | where {|file| ($file | path dirname) == $dir }) {
+        $actions = ($actions | append (action claude projects delete $file "retire session"))
+        let subtree = ($dir | path join ($file | path basename | str replace --regex '\.jsonl$' ''))
+        if ($subtree | path exists) {
+          $actions = ($actions | append (action claude projects delete $subtree "retire subagents"))
+        }
+      }
+      let index = ($dir | path join sessions-index.json)
+      if ($index | path exists) {
+        $actions = ($actions | append (action claude projects delete $index "invalidate session index"))
+      }
+    }
+  }
+  for id in $ids {
+    let history = (root | path join file-history $id)
+    if ($history | path exists) {
+      $actions = ($actions | append (action claude file-history delete $history "retire file history"))
+    }
+  }
+  let history = (root | path join history.jsonl)
+  if ($history | path exists) and ($ids | is-not-empty) {
+    $actions = ($actions | append (edit-action claude history $history {|content|
+      let trailing = ($content | str ends-with "\n")
+      let body = (
+        $content | lines | where {|line|
+          let row = (try { $line | from json } catch { {} })
+          ($row | get -o sessionId) not-in $ids
+        } | str join "\n"
+      )
+      if $trailing { $body + "\n" } else { $body }
+    } "retire session history"))
+  }
+  let remaining = (transcript-cwds | where {|row| $row.file not-in $files })
+  let unused = (
+    $selected | get -o owner | uniq
+    | where {|cwd| not ($remaining | any {|row| path-match $cwd $row.cwd }) }
+  )
+  let config = (global-config)
+  if ($config | path exists) and ($unused | is-not-empty) {
+    $actions = ($actions | append (edit-action claude global-config $config {|content|
+      $content | from json | prune-config $in $unused | to json
+    } "remove unreferenced projects"))
+  }
+  $actions
+}
+
+export def export-bundle [old: string, --exact, --session-ids: list<string> = []]: nothing -> record {
+  let selected = if $exact or ($session_ids | is-not-empty) {
+    selected-transcripts $old --exact=$exact --session-ids $session_ids
+    | each {|row| {dir: $row.directory, owner: $row.owner} } | uniq
+  } else { selected-dirs $old }
+  let selected_files = (
+    selected-transcripts $old --exact=$exact --session-ids $session_ids | get -o tree | uniq
+  )
   mut files = []
 
   for item in $selected {
     for file in (files-under $item.dir) {
       if ($file | path basename) == sessions-index.json { continue }
       let name = ($file | path relative-to $item.dir)
+      if $exact or ($session_ids | is-not-empty) {
+        let first = ($name | split row "/" | first)
+        let parent = ($item.dir | path join ($first + ".jsonl"))
+        if ($file not-in $selected_files) and ($parent not-in $selected_files) and ($first != "memory") {
+          continue
+        }
+      }
       $files = ($files | append {
         kind: projects
         project: $item.owner
@@ -529,6 +631,7 @@ export def export-bundle [old: string]: nothing -> record {
     $selected
     | each {|item|
       top-files $item.dir
+      | where {|file| (not $exact and ($session_ids | is-empty)) or ($file in $selected_files) }
       | each {|file| $file | path basename | str replace --regex '\.jsonl$' '' }
     }
     | flatten
@@ -559,6 +662,9 @@ def imported-elsewhere [projects: list<string>, file: record]: nothing -> bool {
     } else if ($file.name | str starts-with "memory/") {
       same-content $file.bundle $candidate
     } else {
+      if not (same-content $file.bundle $candidate) {
+        error make --unspanned {msg: $"Existing session ($file.name) differs from the bundle"}
+      }
       true
     }
   }

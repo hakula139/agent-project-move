@@ -344,7 +344,7 @@ def run-sql-actions [actions: list<record>]: nothing -> nothing {
   }
 }
 
-export def apply-all [actions: list<record>, --apply]: nothing -> nothing {
+export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> nothing {
   if ($actions | is-empty) {
     print "No changes."
     return
@@ -371,13 +371,17 @@ export def apply-all [actions: list<record>, --apply]: nothing -> nothing {
   if not $apply {
     $ordered | each {|action| manifest-view $action | default "" to } | print-table
     let count = ($ordered | length)
-    print $"Dry run: ($count) (plural $count 'action' 'actions') planned, nothing written. Rerun with --apply to write the plan. A backup goes to (backup-root) first."
+    let backup = if $no_backup { "No backup will be created." } else {
+      $"A backup goes to (backup-root) first."
+    }
+    print $"Dry run: ($count) (plural $count 'action' 'actions') planned, nothing written. Rerun with --apply to write the plan. ($backup)"
     return
   }
 
   let stamp = (date now | format date '%Y%m%dT%H%M%S')
   let root = (backup-root)
   let backup_dir = ($root | path join $"($stamp)-($nu.pid)")
+  if not $no_backup {
   let databases = ($actions | where op == sql | get path | uniq)
   mkdir $root
   ^chmod 700 $root
@@ -403,6 +407,7 @@ export def apply-all [actions: list<record>, --apply]: nothing -> nothing {
     }
   }
   print $"Backed up to ($backup_dir)"
+  }
 
   run-sql-actions $derived
   for action in $tail {
@@ -415,5 +420,7 @@ export def apply-all [actions: list<record>, --apply]: nothing -> nothing {
 
   let count = ($actions | length)
   print $"Applied ($count) (plural $count 'action' 'actions')."
-  print $"Run 'agent-project-move scan' to check the result, and keep ($backup_dir) until you have."
+  if not $no_backup {
+    print $"Run 'agent-project-move scan' to check the result, and keep ($backup_dir) until you have."
+  }
 }

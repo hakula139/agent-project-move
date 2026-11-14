@@ -153,7 +153,10 @@
 
           tests = dk.nuTests {
             src = ./.;
-            runtimeInputs = [ pkgs.sqlite ];
+            runtimeInputs = [
+              pkgs.sqlite
+              pkgs.zstd
+            ];
           };
         };
 

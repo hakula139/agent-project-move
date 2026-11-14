@@ -70,12 +70,32 @@ def assistant-plan-prune [assistant: string, paths: list<string>]: nothing -> li
   }
 }
 
-export def assistant-export-bundle [assistant: string, old: string]: nothing -> record {
+export def assistant-export-bundle [
+  assistant: string
+  old: string
+  --exact
+  --session-ids: list<string> = []
+]: nothing -> record {
   match $assistant {
-    'claude' => { claude export-bundle $old }
-    'codex' => { codex export-bundle $old }
-    'omp' => { omp export-bundle $old }
+    'claude' => { claude export-bundle $old --exact=$exact --session-ids $session_ids }
+    'codex' => { codex export-bundle $old --exact=$exact --session-ids $session_ids }
+    'omp' => { omp export-bundle $old --exact=$exact --session-ids $session_ids }
   }
+}
+
+export def plan-retire [
+  selected: list<string>
+  path: string
+  --exact
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
+  $selected | each {|assistant|
+    match $assistant {
+      'claude' => { claude plan-retire $path --exact=$exact --session-ids $session_ids }
+      'codex' => { codex plan-retire $path --exact=$exact --session-ids $session_ids }
+      'omp' => { omp plan-retire $path --exact=$exact --session-ids $session_ids }
+    }
+  } | flatten
 }
 
 export def assistant-plan-import [assistant: string, bundle: record]: nothing -> list<record> {

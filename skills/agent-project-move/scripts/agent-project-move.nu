@@ -25,6 +25,7 @@ use ./assistants.nu [
   parse-assistants
   plan-move
   plan-prune
+  plan-retire
   prune-missing-paths
   scan-all
 ]
@@ -155,11 +156,16 @@ def "main export" [
   path: string # Project path to export, or a parent of it
   dir: string # Directory receiving one subdirectory per assistant
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to export
+  --exact # Select sessions whose recorded cwd equals the path
+  --session-ids: string = "" # Comma-separated session IDs under the path
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
   let old = (normalize-path $path)
+  let ids = (selection-ids $exact $session_ids)
 
-  let bundles = ($selected | each {|assistant| assistant-export-bundle $assistant $old })
+  let bundles = ($selected | each {|assistant|
+    assistant-export-bundle $assistant $old --exact=$exact --session-ids $ids
+  })
   let counts = (
     $bundles
     | each {|bundle|
@@ -188,6 +194,36 @@ def "main export" [
     write-bundle $dir $bundle
   }
   print $"Exported to ($dir)"
+}
+
+def selection-ids [exact: bool, value: string]: nothing -> list<string> {
+  if $exact and $value != "" {
+    error make --unspanned {msg: "--exact and --session-ids are mutually exclusive"}
+  }
+  let ids = ($value | split row "," | each {|id| $id | str trim } | where {|id| $id != "" } | uniq)
+  if $value != "" and ($ids | is-empty) {
+    error make --unspanned {msg: "--session-ids requires at least one session ID"}
+  }
+  $ids
+}
+
+# Retire selected session trees even when their project directory still exists.
+def "main retire" [
+  path: string # Recorded project path, or a parent of selected sessions
+  --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to retire
+  --exact # Select sessions whose recorded cwd equals the path
+  --session-ids: string = "" # Comma-separated session IDs under the path
+  --apply # Write the planned changes
+  --no-backup # Permanently remove selected copies without creating a backup
+]: nothing -> nothing {
+  let selected = (parse-assistants $assistant)
+  let old = (normalize-path $path)
+  let ids = (selection-ids $exact $session_ids)
+  if not $exact and ($ids | is-empty) {
+    error make --unspanned {msg: "retire requires --exact or --session-ids"}
+  }
+  let actions = (plan-retire $selected $old --exact=$exact --session-ids $ids)
+  apply-all $actions --apply=$apply --no-backup=$no_backup
 }
 
 # Merge a bundle directory into local state. Prints the plan, and writes only with --apply.
