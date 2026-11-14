@@ -116,7 +116,8 @@ export def column-statements [
   --collide
 ]: nothing -> list<string> {
   let condition = (path-condition $column [$old] --prefix $prefix)
-  let value = $"(sql-quote $prefix) || (sql-quote $new) || substr\(($column), length\((sql-quote ($prefix + $old))\) + 1\)"
+  let offset = if $new == "/" { 2 } else { 1 }
+  let value = $"(sql-quote $prefix) || (sql-quote $new) || substr\(($column), length\((sql-quote ($prefix + $old))\) + ($offset)\)"
   let update = $"UPDATE ($table) SET ($column) = ($value) WHERE ($condition)"
 
   if $collide {
