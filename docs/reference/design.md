@@ -80,7 +80,7 @@ Each file descriptor records its exported source in `origin_path`. This field is
 - Existing session IDs are checked against their transcripts before skipping copies, including decoded compressed Codex rollouts and OMP IDs from session headers. A differing transcript aborts before writing. Dependent file history and Codex parent edges are reconciled even when the session already exists.
 - A repeated import requires identical transcript content after the import's explicit file mapping. Rewritten paths count as a content difference, so reconcile or re-export moved sessions before importing them again.
 - OMP rollout rows map to imported files by header ID, so identical nested filenames stay distinct. Shared memory for an already imported session set stays in place, while a memory-only bundle still imports.
-- A carried OMP header's path-valued `parentSession` is mapped to the known imported parent file. Other header and message bytes stay unchanged, and external parent identities remain opaque.
+- A carried OMP header's path-valued `parentSession` is mapped to the known imported parent file after any explicit incoming-path mapping. Other header and message bytes stay unchanged, and external parent identities remain opaque.
 - An existing target file with identical content counts as done.
 - Each carried table is checked at plan time: the import aborts before writing when the target lacks a carried column, or requires a not-null column without a default that the bundle does not fill.
 - Codex carries available `project_roots` rows with selected projects. Targeted imports map those paths and reject an existing project ID whose ordered root paths differ. Project metadata and logical agent identities stay unchanged.

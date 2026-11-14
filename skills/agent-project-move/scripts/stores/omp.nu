@@ -896,10 +896,7 @@ def mapped-parent [file: record, targets: list<record>, --remap]: nothing -> any
   if $target == null or (not $remap and $target.target == $parent) {
     null
   } else {
-    {
-      old: $parent
-      new: $target.target
-    }
+    $target.target
   }
 }
 
@@ -951,6 +948,7 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
     )
     files-with-path $bundle.old $sources
   }
+
   let agent = (agent-dir)
   let history_db = ($agent | path join "history.db")
   let agent_db = ($agent | path join "agent.db")
@@ -1024,6 +1022,7 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
         } else {
           path-map $bundle.old $destination $file.project
         }
+
         match $file.kind {
           "sessions" => (session-root | path join (session-encode-here $project) $file.name)
           "archives" => (archive-root | path join (session-encode-here $project) $file.name)
@@ -1073,9 +1072,11 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
     } else {
       null
     }
+
     let rewrite = $file.bundle in $rewritten and ($content | describe) == "string"
     let transform = if not $rewrite and $parent == null {
       null
+
     } else {
       {|content|
         let content = if $rewrite {
@@ -1083,13 +1084,16 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
         } else {
           $content
         }
+
         if $parent == null {
           $content
         } else {
-          remap-parent $content $parent.new
+          remap-parent $content $parent
         }
       }
+
     }
+
     let expected = if $file.header != null or $transform != null {
       if $transform == null {
         $content
@@ -1188,6 +1192,7 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
         } else {
           $row
         }
+
         if $spec.table == "threads" {
           $row | upsert rollout_path (rollout-target $row.id $row.rollout_path $rollout_map)
         } else {

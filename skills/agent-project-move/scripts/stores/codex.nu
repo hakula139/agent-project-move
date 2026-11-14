@@ -605,6 +605,7 @@ export def export-bundle [
       sqlite-rows $db "SELECT * FROM project_roots"
       | where {|row| $row.project_id in $project_ids }
     )
+
     $tables = ($tables | append {
       db: "state"
       table: "project_roots"
@@ -660,6 +661,7 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
   } else {
     {|content| rewrite-text $content $bundle.old $target }
   }
+
   let state_db = (state-db)
   let projects = (bundle-table $bundle "projects")
   let roots = (bundle-table $bundle "project_roots")
@@ -708,6 +710,7 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
     } else {
       do $rewrite $content
     }
+
     let local_body = (rollout-content $local.file $local.compressed)
     if $source_body != $local_body {
       error make --unspanned {msg: $"Existing thread ($file.thread) differs from the bundle"}
@@ -728,6 +731,7 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
       } else {
         do $rewrite $content
       }
+
       let equal = $expected == (rollout-content $to $compress)
       if $equal { continue }
       error make --unspanned {
@@ -776,12 +780,14 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
         | sort-by position
         | get -o path
       )
+
       let actual = (
         $local_roots
         | where project_id == $project.id
         | sort-by position
         | get -o path
       )
+
       if $actual != $expected {
         error make --unspanned {
           msg: $"Existing project ($project.id) has different roots from the targeted import"

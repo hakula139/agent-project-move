@@ -941,7 +941,12 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
   let rewritten = if $target == null {
     []
   } else {
-    let sources = ($bundle.files | where kind == "projects" | get -o bundle)
+    let sources = (
+      $bundle.files
+      | where kind == "projects"
+      | get -o bundle
+    )
+
     files-with-path $bundle.old $sources --glob ["*.jsonl" "*.json"]
   }
 
@@ -953,16 +958,19 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
       } else {
         null
       }
+
       let transform = if ($content | describe) == "string" {
         {|content| rewrite-text $content $bundle.old $target }
       } else {
         null
       }
+
       let expected = if $transform == null {
         null
       } else {
         do $transform $content
       }
+
       let project = if $target != null and $file.kind == "projects" {
         path-map $bundle.old $target $file.project
       } else {
