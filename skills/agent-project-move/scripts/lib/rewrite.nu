@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Agent Project Move: Rewrites
 # ==================================================================================================
-# JSON string tokens that hold a recorded path, file selection, and byte-offset stability.
+# JSON string tokens that hold a recorded path and file selection.
 # ==================================================================================================
 
 # Codex records some path fields as file URIs. Mirrors the url crate's Unix `from_file_path` set
@@ -95,13 +95,4 @@ export def rewrite-text [content: string, old: string, new: string]: nothing -> 
   let root = $old == "/"
   let plain = (rewrite-token $content (json-escape $old) (json-escape $new) $root)
   rewrite-token $plain (json-escape (file-uri $old)) (json-escape (file-uri $new)) $root
-}
-
-# Whether both spellings keep the byte length of their JSON-escaped form, so JSON Lines offsets
-# stay valid. A URI carries no JSON escapes.
-export def offsets-kept [old: string, new: string]: nothing -> bool {
-  (
-    ((json-escape $old | str length -b) == (json-escape $new | str length -b))
-    and ((file-uri $old | str length -b) == (file-uri $new | str length -b))
-  )
 }
