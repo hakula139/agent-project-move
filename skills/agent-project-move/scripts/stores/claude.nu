@@ -940,6 +940,7 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
 
   let rewritten = if $target == null {
     []
+
   } else {
     let sources = (
       $bundle.files
