@@ -51,6 +51,13 @@ export def match-any [bases: list<string>, path: any]: nothing -> bool {
   $bases | any {|base| path-match $base $path }
 }
 
+export def outermost-paths [paths: list<string>]: nothing -> list<string> {
+  let unique = ($paths | uniq)
+  $unique | where {|path|
+    not ($unique | any {|other| $other != $path and (path-match $other $path) })
+  }
+}
+
 export def parse-paths [value: string]: nothing -> list<string> {
   $value | split row "," | each {|path| $path | str trim } | where {|path| $path != "" }
 }

@@ -19,6 +19,7 @@ use ../lib/paths.nu [
   files-under
   match-any
   normalize-path
+  outermost-paths
   path-map
   path-match
   valid-path
@@ -256,6 +257,77 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
   )
 }
 
+def session-header [file: string]: nothing -> any {
+  if not ($file | str ends-with ".jsonl") { return null }
+  open --raw $file | lines
+  | each {|line| try { $line | from json } catch { null } }
+  | where {|row| ($row | get -o type) == "session" }
+  | first
+}
+
+def session-records []: nothing -> list<record> {
+  mut rows = []
+  for spec in [
+    {kind: sessions, root: (session-root)}
+    {kind: archives, root: (archive-root)}
+  ] {
+    for file in (files-under $spec.root | where {|file| $file | str ends-with ".jsonl" }) {
+      let header = (session-header $file)
+      if $header == null { continue }
+      let directory = ($spec.root | path join ($file | path relative-to $spec.root | split row "/" | first))
+      $rows = ($rows | append {
+        id: $header.id
+        cwd: $header.cwd
+        parent: ($header | get -o parentSession)
+        file: $file
+        directory: $directory
+        kind: $spec.kind
+      })
+    }
+  }
+  let agent = (agent-dir)
+  for spec in [
+    {db: ($agent | path join agent.db), table: threads, key: id}
+    {db: ($agent | path join history.db), table: history, key: session_id}
+    {db: ($agent | path join history.db), table: session_recaps, key: session_id}
+  ] {
+    if not ($spec.db | path exists) { continue }
+    let records = (sqlite-rows $spec.db $"SELECT * FROM ($spec.table)")
+    $rows = ($rows ++ ($records | each {|row|
+      {id: ($row | get $spec.key), cwd: $row.cwd, parent: ($row | get -o parent_thread_id)}
+    }))
+  }
+  let inventory = $rows
+  $inventory | each {|row|
+    let file = ($row | get -o file)
+    let parent = ($row | get -o parent)
+    let linked = (
+      $inventory | where {|candidate|
+        let candidate_file = ($candidate | get -o file)
+        (
+          ($parent != null and ($candidate.id == $parent or $candidate_file == $parent))
+          or ($file != null and $candidate_file != null and (
+            path-match ($candidate_file | str replace --regex '\.jsonl$' '') $file
+          ))
+        )
+      } | sort-by {|candidate| $candidate | get -o file | default "" | str length } | last
+    )
+    let owner = if $file == null { $row.cwd } else {
+      let main = (
+        $inventory | where {|candidate|
+          (
+            ($candidate | get -o directory) == $row.directory
+            and (($candidate | get -o file | default "" | path dirname) == $row.directory)
+          )
+        } | first
+      )
+      if $main == null { $row.cwd } else { $main.cwd }
+    }
+    $row | upsert parent (if $linked == null { null } else { $linked.id }) | upsert owner $owner
+  }
+}
+
+
 # --------------------------------------------------------------------------------------------------
 # Prune
 # --------------------------------------------------------------------------------------------------
@@ -297,11 +369,18 @@ def directory-prune-actions [
   $actions
 }
 
-def history-deletions [db: string, paths: list<string>]: nothing -> list<record> {
+def history-deletions [
+  db: string
+  ids: list<string>
+  --metadata-paths: list<string> = []
+]: nothing -> list<record> {
   if not ($db | path exists) { return [] }
-
-  let condition = (path-condition cwd $paths)
-  let history = $"history WHERE cwd IS NOT NULL AND \(($condition)\)"
+  let sessions = if ($ids | is-empty) { "0" } else { $"session_id IN \((sql-list $ids)\)" }
+  let metadata = if ($metadata_paths | is-empty) { "0" } else {
+    $"session_id IS NULL AND cwd IN \((sql-list $metadata_paths)\)"
+  }
+  let condition = $"\(($sessions)\) OR \(($metadata)\)"
+  let history = $"history WHERE ($condition)"
   let recaps = $"session_recaps WHERE \(($condition)\)"
   let counts = (
     sqlite-rows $db (
@@ -323,7 +402,7 @@ def history-deletions [db: string, paths: list<string>]: nothing -> list<record>
       $statements | append $"DELETE FROM session_recaps WHERE session_id IN \(($scope)\)"
     )
     $statements = (
-      $statements | append $"DELETE FROM history WHERE cwd IS NOT NULL AND \(($condition)\)"
+      $statements | append $"DELETE FROM history WHERE \(($condition)\)"
     )
     $statements = ($statements | append "INSERT INTO history_fts(history_fts) VALUES('rebuild')")
   }
@@ -333,11 +412,14 @@ def history-deletions [db: string, paths: list<string>]: nothing -> list<record>
   [(sql-action omp history $db $statements "delete history" --rows-first)]
 }
 
-def agent-deletions [db: string, paths: list<string>]: nothing -> list<record> {
+def agent-deletions [db: string, ids: list<string>, paths: list<string>]: nothing -> list<record> {
   if not ($db | path exists) { return [] }
 
-  let condition = (path-condition cwd $paths)
-  let global = (path-condition job_key $paths --prefix "global:")
+  let condition = if ($ids | is-empty) { "0" } else { $"id IN \((sql-list $ids)\)" }
+  let global = if ($paths | is-empty) { "0" } else {
+    let keys = ($paths | each {|path| "global:" + $path })
+    $"job_key IN \((sql-list $keys)\)"
+  }
   let counts = (
     sqlite-rows $db (
       $"SELECT \(SELECT count\(*\) FROM threads WHERE ($condition)\) AS threads,"
@@ -366,58 +448,74 @@ def agent-deletions [db: string, paths: list<string>]: nothing -> list<record> {
 
 export def plan-prune [paths: list<string>]: nothing -> list<record> {
   let agent = (agent-dir)
-  let live_paths = (recorded-paths | where {|path| (valid-path $path) and ($path | path exists) })
+  let recorded = (recorded-paths)
+  let live_paths = ($recorded | where {|path| (valid-path $path) and ($path | path exists) })
+  let ids = (session-records | where {|row| match-any $paths $row.cwd } | get -o id | compact | uniq)
+  let metadata = ($recorded | where {|path| match-any $paths $path })
 
   (
     (directory-prune-actions $paths $live_paths)
-    ++ (history-deletions ($agent | path join history.db) $paths)
-    ++ (agent-deletions ($agent | path join agent.db) $paths)
+    ++ (history-deletions ($agent | path join history.db) $ids --metadata-paths $metadata)
+    ++ (agent-deletions ($agent | path join agent.db) $ids $metadata)
   )
 }
+
+export def plan-retire [old: string, --exact, --session-ids: list<string> = []]: nothing -> list<record> {
+  let records = (session-records)
+  let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
+  let ids = ($selected | get -o id | compact | uniq)
+  if ($ids | is-empty) { return [] }
+  let remaining = ($records | where {|row| $row.id not-in $ids })
+  let paths = (
+    ($selected | get -o cwd) ++ ($selected | get -o owner) | uniq
+    | where {|cwd| valid-path $cwd }
+    | where {|cwd| not ($remaining | any {|row| $row.cwd == $cwd or $row.owner == $cwd }) }
+  )
+  let session_files = (
+    $selected | where {|row| ($row | get -o file) != null } | get file | uniq
+  )
+  let subtrees = ($session_files | each {|file| $file | str replace --regex '\.jsonl$' '' }
+    | where {|path| $path | path exists })
+  mut actions = ($session_files ++ $subtrees | outermost-paths $in
+    | each {|file| action omp sessions delete $file "retire session tree" })
+  for path in $paths {
+    let memory = (memory-root | path join (memory-encode $path))
+    let shared = ($remaining | any {|row|
+      (valid-path $row.cwd) and ((memory-encode $row.cwd) == (memory-encode $path))
+    })
+    if ($memory | path exists) and not $shared {
+      $actions = ($actions | append (action omp memories delete $memory "unreferenced memory"))
+    }
+  }
+  let agent = (agent-dir)
+  (
+    $actions
+    ++ (history-deletions ($agent | path join history.db) $ids)
+    ++ (agent-deletions ($agent | path join agent.db) $ids $paths)
+  )
+}
+
 
 # --------------------------------------------------------------------------------------------------
 # Transfer
 # --------------------------------------------------------------------------------------------------
 
-def export-files [candidates: list<string>]: nothing -> list<record> {
-  mut files = []
-  for path in $candidates {
-    for spec in [
-      {kind: sessions, root: (session-root), project: $path}
-      {kind: archives, root: (archive-root), project: $path}
-      {kind: memories, root: (memory-root), project: $path}
-    ] {
-      let source_root = if $spec.kind == "memories" {
-        (memory-root | path join (memory-encode $path))
-      } else {
-        ($spec.root | path join (session-encode-here $path))
-      }
-      for file in (files-under $source_root) {
-        let name = ($file | path relative-to $source_root)
-        $files = ($files | append {
-          kind: $spec.kind
-          project: $path
-          name: $name
-          source: $file
-        })
-      }
-    }
-  }
-  $files
-}
-
-def history-tables [db: string, old: string, --session-ids: list<string> = []]: nothing -> list<record> {
+def history-tables [
+  db: string
+  ids: list<string>
+  --metadata-paths: list<string> = []
+]: nothing -> list<record> {
   if not ($db | path exists) { return [] }
   let history = (
     sqlite-rows $db "SELECT * FROM history"
     | where {|row|
-      if ($session_ids | is-empty) { path-match $old $row.cwd } else { $row.session_id in $session_ids }
+      ($row.session_id in $ids) or ($row.session_id == null and $row.cwd in $metadata_paths)
     }
   )
   let recaps = (
     sqlite-rows $db "SELECT * FROM session_recaps"
     | where {|row|
-      if ($session_ids | is-empty) { path-match $old $row.cwd } else { $row.session_id in $session_ids }
+      ($row.session_id in $ids) or ($row.session_id == null and $row.cwd in $metadata_paths)
     }
   )
   let sessions = (
@@ -461,12 +559,16 @@ def history-tables [db: string, old: string, --session-ids: list<string> = []]: 
   ]
 }
 
-def agent-tables [db: string, old: string, --session-ids: list<string> = []]: nothing -> list<record> {
+def agent-tables [
+  db: string
+  ids: list<string>
+  paths: list<string>
+]: nothing -> list<record> {
   if not ($db | path exists) { return [] }
   let threads = (
     sqlite-rows $db "SELECT * FROM threads"
     | where {|row|
-      if ($session_ids | is-empty) { path-match $old $row.cwd } else { $row.id in $session_ids }
+      $row.id in $ids
     }
   )
   let thread_ids = ($threads | get -o id)
@@ -478,9 +580,7 @@ def agent-tables [db: string, old: string, --session-ids: list<string> = []]: no
   let jobs = (
     sqlite-rows $db "SELECT * FROM jobs"
     | where {|row|
-      if ($session_ids | is-not-empty) { $row.job_key in $session_ids } else {
-        ($row.job_key | str starts-with "global:") and (path-match $old ($row.job_key | str substring 7..))
-      }
+      ($row.job_key in $ids) or ($paths | any {|path| $row.job_key == ("global:" + $path) })
     }
   )
 
@@ -512,81 +612,19 @@ def agent-tables [db: string, old: string, --session-ids: list<string> = []]: no
   ]
 }
 
-def session-records []: nothing -> list<record> {
-  mut rows = []
-  for spec in [
-    {kind: sessions, root: (session-root)}
-    {kind: archives, root: (archive-root)}
-  ] {
-    for file in (files-under $spec.root | where {|file| $file | str ends-with ".jsonl" }) {
-      let header = (
-        open --raw $file | lines
-        | each {|line| try { $line | from json } catch { null } }
-        | where {|row| ($row | get -o type) == "session" }
-        | first
-      )
-      if $header == null { continue }
-      let directory = ($spec.root | path join ($file | path relative-to $spec.root | split row "/" | first))
-      $rows = ($rows | append {
-        id: $header.id
-        cwd: $header.cwd
-        parent: ($header | get -o parentSession)
-        file: $file
-        directory: $directory
-        kind: $spec.kind
-      })
-    }
-  }
-  let agent = (agent-dir)
-  for spec in [
-    {db: ($agent | path join agent.db), table: threads, key: id}
-    {db: ($agent | path join history.db), table: history, key: session_id}
-    {db: ($agent | path join history.db), table: session_recaps, key: session_id}
-  ] {
-    if not ($spec.db | path exists) { continue }
-    let records = (sqlite-rows $spec.db $"SELECT * FROM ($spec.table)")
-    $rows = ($rows ++ ($records | each {|row|
-      {id: ($row | get $spec.key), cwd: $row.cwd, parent: ($row | get -o parent_thread_id)}
-    }))
-  }
-  let inventory = $rows
-  $inventory | each {|row|
-    let file = ($row | get -o file)
-    let parent = ($row | get -o parent)
-    let linked = (
-      $inventory | where {|candidate|
-        let candidate_file = ($candidate | get -o file)
-        (
-          ($parent != null and ($candidate.id == $parent or $candidate_file == $parent))
-          or ($file != null and $candidate_file != null and (
-            path-match ($candidate_file | str replace --regex '\.jsonl$' '') $file
-          ))
-        )
-      } | sort-by {|candidate| $candidate | get -o file | default "" | str length } | last
-    )
-    let owner = if $file == null { $row.cwd } else {
-      let main = (
-        $inventory | where {|candidate|
-          ($candidate | get -o directory) == $row.directory
-          and (($candidate | get -o file | default "" | path dirname) == $row.directory)
-        } | first
-      )
-      if $main == null { $row.cwd } else { $main.cwd }
-    }
-    $row | upsert parent (if $linked == null { null } else { $linked.id }) | upsert owner $owner
-  }
-}
-
-def selective-bundle [old: string, --exact, --session-ids: list<string> = []]: nothing -> record {
+export def export-bundle [old: string, --exact, --session-ids: list<string> = []]: nothing -> record {
   let records = (session-records)
   let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
   let ids = ($selected | get -o id | compact | uniq)
-  let paths = ($selected | get -o owner | uniq)
-  let agent = (agent-dir)
-  let tables = if ($ids | is-empty) { [] } else {
-    (history-tables ($agent | path join history.db) $old --session-ids $ids)
-    ++ (agent-tables ($agent | path join agent.db) $old --session-ids $ids)
+  let owned = (($selected | get -o owner) ++ ($selected | get -o cwd) | where {|path| valid-path $path })
+  let paths = if ($session_ids | is-not-empty) { $owned | uniq } else {
+    let recorded = (recorded-paths | where {|path| if $exact { $path == $old } else { path-match $old $path } })
+    $owned ++ $recorded ++ [$old] | uniq
   }
+  let agent = (agent-dir)
+  let history_paths = if ($session_ids | is-empty) { $paths } else { [] }
+  let history = (history-tables ($agent | path join history.db) $ids --metadata-paths $history_paths)
+  let tables = ($history ++ (agent-tables ($agent | path join agent.db) $ids $paths))
   mut files = []
   for row in ($selected | where {|row| ($row | get -o file) != null }) {
     let subtree = ($row.file | str replace --regex '\.jsonl$' '')
@@ -596,6 +634,7 @@ def selective-bundle [old: string, --exact, --session-ids: list<string> = []]: n
         project: $row.owner
         name: ($file | path relative-to $row.directory)
         source: $file
+        session: (session-header $file | get -o id)
       })
     }
   }
@@ -612,74 +651,6 @@ def selective-bundle [old: string, --exact, --session-ids: list<string> = []]: n
     }
   }
   {assistant: omp, old: $old, files: $files, tables: $tables}
-}
-
-export def plan-retire [old: string, --exact, --session-ids: list<string> = []]: nothing -> list<record> {
-  let records = (session-records)
-  let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
-  let ids = ($selected | get -o id | compact | uniq)
-  if ($ids | is-empty) { return [] }
-  let ids_sql = (sql-list $ids)
-  let remaining = ($records | where {|row| $row.id not-in $ids })
-  let paths = (
-    $selected | get -o cwd | uniq
-    | where {|cwd| not ($remaining | any {|row| $row.cwd == $cwd }) }
-  )
-  mut actions = (
-    $selected | where {|row| ($row | get -o file) != null } | get file | uniq
-    | each {|file| action omp sessions delete $file "retire session" }
-  )
-  for row in ($selected | where {|row| ($row | get -o file) != null }) {
-    let subtree = ($row.file | str replace --regex '\.jsonl$' '')
-    if ($subtree | path exists) {
-      $actions = ($actions | append (action omp sessions delete $subtree "retire session artifacts"))
-    }
-  }
-  for path in $paths {
-    let memory = (memory-root | path join (memory-encode $path))
-    let shared = ($remaining | any {|row| (memory-encode $row.cwd) == (memory-encode $path) })
-    if ($memory | path exists) and not $shared {
-      $actions = ($actions | append (action omp memories delete $memory "unreferenced memory"))
-    }
-  }
-  let agent = (agent-dir)
-  let agent_db = ($agent | path join agent.db)
-  if ($agent_db | path exists) {
-    mut statements = [
-      $"DELETE FROM stage1_outputs WHERE thread_id IN \(($ids_sql)\)"
-      $"DELETE FROM jobs WHERE job_key IN \(($ids_sql)\)"
-      $"DELETE FROM threads WHERE id IN \(($ids_sql)\)"
-    ]
-    if ($paths | is-not-empty) {
-      let keys = ($paths | each {|path| "global:" + $path } | sql-list $in)
-      $statements = ($statements | append $"DELETE FROM jobs WHERE job_key IN \(($keys)\)")
-    }
-    $actions = ($actions | append (
-      sql-action omp agent $agent_db $statements "retire threads and jobs" --rows-first --foreign-keys
-    ))
-  }
-  let history_db = ($agent | path join history.db)
-  if ($history_db | path exists) {
-    let statements = [
-      $"DELETE FROM session_titles WHERE session_id IN \(($ids_sql)\)"
-      $"DELETE FROM session_recaps WHERE session_id IN \(($ids_sql)\)"
-      $"DELETE FROM history WHERE session_id IN \(($ids_sql)\)"
-      "INSERT INTO history_fts(history_fts) VALUES('rebuild')"
-    ]
-    $actions = ($actions | append (
-      sql-action omp history $history_db $statements "retire history" --rows-first
-    ))
-  }
-  $actions
-}
-
-export def export-bundle [old: string, --exact, --session-ids: list<string> = []]: nothing -> record {
-  let bundle = (selective-bundle $old --exact=$exact --session-ids $session_ids)
-  if $exact or ($session_ids | is-not-empty) { return $bundle }
-  let recorded = (recorded-paths | where {|path| path-match $old $path })
-  let candidates = ($recorded ++ [$old] | uniq)
-  let memories = (export-files $candidates | where kind == memories)
-  $bundle | upsert files ($bundle.files ++ $memories | uniq)
 }
 
 export def plan-import [bundle: record]: nothing -> list<record> {
@@ -716,6 +687,7 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     })
   )
 
+  let local_inventory = (session-records)
   let session_dirs = (
     [(session-root) (archive-root)]
     | each {|root|
@@ -725,6 +697,20 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   )
   let session_files = ($bundle.files | where {|file| $file.kind in [sessions archives] })
   for file in $session_files {
+    let header = (session-header $file.bundle)
+    if $header != null {
+      let copies = ($local_inventory | where {|row|
+        $row.id == $header.id and ($row | get -o file) != null
+      })
+      for copy in $copies {
+        if not (same-content $file.bundle $copy.file) {
+          error make --unspanned {msg: $"Existing session ($header.id) differs from the bundle"}
+        }
+      }
+      if ($copies | is-empty) and ($header.id in $local_sessions) {
+        error make --unspanned {msg: $"Existing session ($header.id) has no readable transcript"}
+      }
+    }
     for dir in $session_dirs {
       let candidate = ($dir | path join $file.name)
       if ($candidate | path exists) and not (same-content $file.bundle $candidate) {
@@ -739,9 +725,6 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       $session_dirs | any {|dir| ($dir | path join $file.name) | path exists }
     })
   )
-  if (($bundle_sessions | is-not-empty) or ($session_files | is-not-empty)) and $already_imported {
-    return []
-  }
 
   mut actions = []
   mut rollout_targets = []
@@ -757,6 +740,7 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   }
 
   for file in $bundle.files {
+    if $already_imported and $file.kind == "memories" { continue }
     let target = match $file.kind {
       'sessions' => (session-root | path join (session-encode-here $file.project) $file.name)
       'archives' => (archive-root | path join (session-encode-here $file.project) $file.name)
@@ -769,10 +753,15 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       }
     }
     if ($file.kind in [sessions archives]) {
-      let entry = {kind: $file.kind, name: ($file.name | path basename), target: $target}
-      $rollout_targets = ($rollout_targets | append $entry)
-      let imported = ($session_dirs | any {|dir| ($dir | path join $file.name) | path exists })
-      if $imported { continue }
+      let header = (session-header $file.bundle)
+      if $header != null {
+        let local = ($local_inventory | where {|row|
+          $row.id == $header.id and ($row | get -o file) != null
+        } | first)
+        let destination = if $local == null { $target } else { $local.file }
+        $rollout_targets = ($rollout_targets | append {id: $header.id, target: $destination})
+        if $local != null { continue }
+      }
     }
     if ($target | path exists) {
       if (same-content $file.bundle $target) { continue }
@@ -806,7 +795,7 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       | each {|row|
         let row = ($row | reject --optional ...$spec.drop)
         if $spec.table == "threads" {
-          $row | upsert rollout_path (rollout-target $row.rollout_path $rollout_map)
+          $row | upsert rollout_path (rollout-target $row.id $row.rollout_path $rollout_map)
         } else {
           $row
         }
@@ -840,14 +829,12 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   $actions
 }
 
-def rollout-target [value: any, targets: list<record>]: nothing -> any {
+def rollout-target [id: string, value: any, targets: list<record>]: nothing -> any {
   if ($value | describe) != "string" { return $value }
 
-  let kind = if ($value | str contains "/archive/sessions/") { "archives" } else { "sessions" }
-  let name = ($value | path basename)
   let found = (
     $targets
-    | where {|target| $target.kind == $kind and $target.name == $name }
+    | where {|target| $target.id == $id }
     | get -o 0
   )
   if $found == null { $value } else { $found.target }

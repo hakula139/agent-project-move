@@ -13,7 +13,7 @@ use ../lib/actions.nu [
   same-content
   same-directory
 ]
-use ../lib/paths.nu [files-under match-any path-map path-match valid-path]
+use ../lib/paths.nu [files-under match-any outermost-paths path-map path-match valid-path]
 use ../lib/selection.nu [select-sessions]
 use ../lib/rewrite.nu [files-with-path json-value rewrite-text rg-lines]
 
@@ -398,6 +398,43 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
   $actions
 }
 
+def session-records []: nothing -> list<record> {
+  mut rows = []
+  let known = (recorded-paths)
+  for dir in (project-dirs) {
+    let owners = ($known | where {|cwd| (encode-path $cwd) == ($dir | path basename) })
+    if ($owners | length) != 1 { continue }
+    let owner = ($owners | first)
+    for file in (files-under $dir | where {|file| $file | str ends-with ".jsonl" }) {
+      let cwds = (
+        rg-lines [-o --no-messages '"cwd":"[^"]*"' $file]
+        | parse --regex '^"cwd":"(?<cwd>[^"]*)"$'
+        | each {|entry| json-value $entry.cwd }
+        | uniq
+      )
+      let relative = ($file | path relative-to $dir | split row "/")
+      let parent = if ($relative | length) > 1 { $relative | first } else { null }
+      let id = ($file | path basename | str replace --regex '\.jsonl$' ''
+        | str replace --regex '^agent-' '')
+      for cwd in (if ($cwds | is-empty) { [$owner] } else { $cwds }) {
+        $rows = ($rows | append {
+          id: $id
+          cwd: $cwd
+          parent: $parent
+          file: $file
+          directory: $dir
+          owner: $owner
+        })
+      }
+    }
+  }
+  $rows
+}
+
+def selected-transcripts [old: string, --exact, --session-ids: list<string> = []]: nothing -> list<record> {
+  select-sessions (session-records) $old --exact=$exact --session-ids $session_ids
+}
+
 # --------------------------------------------------------------------------------------------------
 # Prune
 # --------------------------------------------------------------------------------------------------
@@ -449,8 +486,23 @@ def prune-history [content: string, paths: list<string>]: nothing -> string {
   if $trailing { $body + "\n" } else { $body }
 }
 
+def session-deletions [records: list<record>, directories: list<string>]: nothing -> list<record> {
+  let files = ($records | get -o file | uniq)
+  let subtrees = ($files | each {|file| $file | str replace --regex '\.jsonl$' '' }
+    | where {|path| $path | path exists })
+  let indexes = ($records | get -o directory | uniq
+    | each {|dir| $dir | path join sessions-index.json }
+    | where {|path| $path | path exists })
+  let history = ($records | get -o id | uniq
+    | each {|id| root | path join file-history $id }
+    | where {|path| $path | path exists })
+  $directories ++ $files ++ $subtrees ++ $indexes ++ $history
+  | outermost-paths $in
+  | each {|path| action claude sessions delete $path "session state" }
+}
+
 export def plan-prune [paths: list<string>]: nothing -> list<record> {
-  mut actions = []
+  mut directories = []
   let transcripts = (identity-records (transcript-cwds))
   let known = (recorded-from $transcripts)
   let live_paths = ($known | where {|path| $path | path exists })
@@ -483,8 +535,11 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
       print $"Skipping ($dir): a live path encodes to the same name"
       continue
     }
-    $actions = ($actions | append (action claude projects delete $dir "project directory"))
+    $directories = ($directories | append $dir)
   }
+
+  let records = (session-records | where {|row| $row.directory in $directories })
+  mut actions = (session-deletions $records $directories)
 
   let config = (global-config)
   let config_match = (config-paths | any {|path| match-any $paths $path })
@@ -511,67 +566,18 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
 # Transfer
 # --------------------------------------------------------------------------------------------------
 
-def selected-transcripts [old: string, --exact, --session-ids: list<string> = []]: nothing -> list<record> {
-  mut rows = []
-  let known = (recorded-paths)
-  for dir in (project-dirs) {
-    let owners = ($known | where {|cwd| (encode-path $cwd) == ($dir | path basename) })
-    if ($owners | length) != 1 { continue }
-    let owner = ($owners | first)
-    let entries = (
-      rg-lines [-o --with-filename --no-messages -g '*.jsonl' '"cwd":"[^"]*"' $dir]
-      | parse --regex '^(?<file>.+?):"cwd":"(?<cwd>[^"]*)"$'
-    )
-    for entry in $entries {
-      let relative = ($entry.file | path relative-to $dir)
-      let segments = ($relative | split row "/")
-      let nested = ($segments | length) > 1
-      let parent = if $nested { $segments | first } else { null }
-      let id = ($entry.file | path basename | str replace --regex '\.jsonl$' '' | str replace --regex '^agent-' '')
-      let tree = if $nested { $dir | path join ($parent + ".jsonl") } else { $entry.file }
-      $rows = ($rows | append {
-        id: $id
-        cwd: (json-value $entry.cwd)
-        parent: $parent
-        file: $entry.file
-        tree: $tree
-        directory: $dir
-        owner: $owner
-      })
-    }
-  }
-  select-sessions $rows $old --exact=$exact --session-ids $session_ids
-}
 
 export def plan-retire [old: string, --exact, --session-ids: list<string> = []]: nothing -> list<record> {
   let selected = (selected-transcripts $old --exact=$exact --session-ids $session_ids)
-  let files = ($selected | get -o tree | uniq)
+  let files = ($selected | get -o file | uniq)
   let ids = ($selected | get -o id | uniq)
-  mut actions = []
-  for dir in ($files | each {|file| $file | path dirname } | uniq) {
-    let remaining = (top-files $dir | where {|file| $file not-in $files })
-    if ($remaining | is-empty) {
-      $actions = ($actions | append (action claude projects delete $dir "retire project sessions"))
-    } else {
-      for file in ($files | where {|file| ($file | path dirname) == $dir }) {
-        $actions = ($actions | append (action claude projects delete $file "retire session"))
-        let subtree = ($dir | path join ($file | path basename | str replace --regex '\.jsonl$' ''))
-        if ($subtree | path exists) {
-          $actions = ($actions | append (action claude projects delete $subtree "retire subagents"))
-        }
-      }
-      let index = ($dir | path join sessions-index.json)
-      if ($index | path exists) {
-        $actions = ($actions | append (action claude projects delete $index "invalidate session index"))
-      }
+  let inventory = (session-records)
+  let directories = (
+    $selected | get -o directory | uniq | where {|dir|
+      $inventory | where directory == $dir | all {|row| $row.file in $files }
     }
-  }
-  for id in $ids {
-    let history = (root | path join file-history $id)
-    if ($history | path exists) {
-      $actions = ($actions | append (action claude file-history delete $history "retire file history"))
-    }
-  }
+  )
+  mut actions = (session-deletions $selected $directories)
   let history = (root | path join history.jsonl)
   if ($history | path exists) and ($ids | is-not-empty) {
     $actions = ($actions | append (edit-action claude history $history {|content|
@@ -608,7 +614,7 @@ export def export-bundle [old: string, --exact, --session-ids: list<string> = []
     | each {|row| {dir: $row.directory, owner: $row.owner} } | uniq
   } else { selected-dirs $old }
   let selected_files = (
-    $selected_sessions | get -o tree | uniq
+    $selected_sessions | get -o file | uniq
   )
   mut files = []
 
@@ -617,9 +623,10 @@ export def export-bundle [old: string, --exact, --session-ids: list<string> = []
       if ($file | path basename) == sessions-index.json { continue }
       let name = ($file | path relative-to $item.dir)
       if $exact or ($session_ids | is-not-empty) {
-        let first = ($name | split row "/" | first)
-        let parent = ($item.dir | path join ($first + ".jsonl"))
-        if ($file not-in $selected_files) and ($parent not-in $selected_files) and ($first != "memory") {
+        let dependency = ($selected_files | any {|session|
+          path-match ($session | str replace --regex '\.jsonl$' '') $file
+        })
+        if ($file not-in $selected_files) and not $dependency and not ($name | str starts-with "memory/") {
           continue
         }
       }
@@ -680,9 +687,9 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     | where {|file| ($file | get -o kind) == "projects" }
     | where {|file| not ($file.name | str starts-with "memory/") }
   )
-  if ($sessions | is-not-empty) and ($sessions | all {|file| imported-elsewhere $projects $file }) {
-    return []
-  }
+  let imported = ($sessions | is-not-empty) and ($sessions | all {|file|
+    imported-elsewhere $projects $file
+  })
   mut actions = []
 
   for file in $bundle.files {
@@ -701,6 +708,7 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       $actions = ($actions | append $write)
       continue
     }
+    if $imported and ($file.name | str starts-with "memory/") { continue }
 
     let project_dir = ($root | path join projects (encode-path $file.project))
     let memory_dir = ($project_dir | path join memory)

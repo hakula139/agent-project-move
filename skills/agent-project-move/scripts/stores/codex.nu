@@ -191,10 +191,14 @@ export def move-trust [content: string, old: string, new: string]: nothing -> st
   ($lines | str join "\n") + "\n"
 }
 
-export def prune-trust [content: string, paths: list<string>]: nothing -> string {
+export def prune-trust [content: string, paths: list<string>, --exact]: nothing -> string {
   let kept = (
     config-sections $content
-    | where {|section| not (($section.path != null) and (match-any $paths $section.path)) }
+    | where {|section|
+      if $exact { $section.path not-in $paths } else {
+        not (($section.path != null) and (match-any $paths $section.path))
+      }
+    }
     | each {|section| section-lines $section }
     | flatten
   )
@@ -287,7 +291,7 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
 # Prune
 # --------------------------------------------------------------------------------------------------
 
-def delete-threads [threads: list<record>, paths: list<string>]: nothing -> list<record> {
+def delete-threads [threads: list<record>, paths: list<string>, --exact]: nothing -> list<record> {
   let state = (state-db)
   if $state == null { return [] }
 
@@ -329,10 +333,12 @@ def delete-threads [threads: list<record>, paths: list<string>]: nothing -> list
   }
 
   let config = (config-path)
-  let trust_match = (trust-blocks | any {|block| match-any $paths $block.path })
+  let trust_match = (trust-blocks | any {|block|
+    if $exact { $block.path in $paths } else { match-any $paths $block.path }
+  })
   if ($config | path exists) and $trust_match {
     $actions = ($actions | append (edit-action codex config $config {|content|
-      prune-trust $content $paths
+      prune-trust $content $paths --exact=$exact
     } "remove trust blocks"))
   }
   $actions
@@ -378,9 +384,9 @@ export def plan-retire [old: string, --exact, --session-ids: list<string> = []]:
   )
   let unused = (
     $threads | get -o cwd | uniq
-    | where {|cwd| not ($remaining | any {|row| path-match $cwd $row.cwd }) }
+    | where {|cwd| not ($remaining | any {|row| $cwd == $row.cwd }) }
   )
-  mut actions = (delete-threads $threads $unused)
+  mut actions = (delete-threads $threads $unused --exact)
   let projects = ($threads | get -o project_id | compact | uniq)
   if ($projects | is-not-empty) {
     let statement = (
@@ -450,7 +456,7 @@ export def export-bundle [old: string, --exact, --session-ids: list<string> = []
     let ids = ($threads | get -o id)
     let edges = (
       sqlite-rows $db "SELECT * FROM thread_spawn_edges"
-      | where {|row| $row.child_thread_id in $ids and $row.parent_thread_id in $ids }
+      | where {|row| $row.child_thread_id in $ids }
     )
     $tables = ($tables | append {
       db: state
@@ -493,16 +499,16 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   if ($edges.rows | is-not-empty) {
     check-columns $state_db thread_spawn_edges $edges.columns "Codex"
   }
-  let imported = if $state_db == null {
+  let local_threads = if $state_db == null {
     []
   } else {
-    sqlite-rows $state_db "SELECT id FROM threads" | get -o id
+    sqlite-rows $state_db "SELECT * FROM threads"
   }
+  let imported = ($local_threads | get -o id)
   for file in $bundle.files {
     if (($file | get -o thread | default "") not-in $imported) { continue }
     let row = (
-      sqlite-rows $state_db "SELECT * FROM threads"
-      | where id == $file.thread | first
+      $local_threads | where id == $file.thread | first
     )
     let local = (rollout-file $row.rollout_path)
     if $local == null {
@@ -517,9 +523,6 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     if $source_body != $local_body {
       error make --unspanned {msg: $"Existing thread ($file.thread) differs from the bundle"}
     }
-  }
-  if (($threads.rows | get -o id) | all {|id| $id in $imported }) {
-    return []
   }
   mut actions = []
 
@@ -543,11 +546,16 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     $actions = ($actions | append $write)
   }
 
+  let local_ids = if $state_db == null { [] } else {
+    sqlite-rows $state_db "SELECT id FROM projects" | get -o id
+  }
   let project_statements = (
-    $projects.rows | each {|row| sqlite-insert-if-new projects $projects.columns $row }
+    $projects.rows | where {|row| $row.id not-in $local_ids }
+    | each {|row| sqlite-insert-if-new projects $projects.columns $row }
   )
   let mapped = (
     $threads.rows
+    | where {|row| $row.id not-in $imported }
     | each {|row|
       let file = ($bundle.files | where thread == $row.id | get -o 0)
       if $file != null {
@@ -561,8 +569,18 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   let thread_statements = (
     $mapped | each {|row| sqlite-insert-if-new threads $threads.columns $row }
   )
+  let local_edges = if ($edges.rows | is-empty) { [] } else {
+    sqlite-rows $state_db "SELECT * FROM thread_spawn_edges"
+  }
   let edge_statements = (
-    $edges.rows | each {|row| sqlite-insert-if-new thread_spawn_edges $edges.columns $row }
+    $edges.rows | each {|row|
+      let local = ($local_edges | where child_thread_id == $row.child_thread_id | first)
+      if $local == null {
+        sqlite-insert-if-new thread_spawn_edges $edges.columns $row
+      } else if $local.parent_thread_id != $row.parent_thread_id {
+        error make --unspanned {msg: $"Existing thread ($row.child_thread_id) has a different parent"}
+      } else { null }
+    } | compact
   )
   let statements = ($project_statements ++ $thread_statements ++ $edge_statements)
   if ($statements | is-not-empty) {

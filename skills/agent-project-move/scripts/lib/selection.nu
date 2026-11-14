@@ -13,6 +13,9 @@ export def select-sessions [
   if $exact and ($session_ids | is-not-empty) {
     error make --unspanned {msg: "--exact and --session-ids are mutually exclusive"}
   }
+  let rows = ($rows | where {|row|
+    ($row.id | describe) == "string" and $row.id != ""
+  })
   mut ids = (
     $rows
     | where {|row|
@@ -28,8 +31,7 @@ export def select-sessions [
       | where {|row| ($row | get -o parent) in $ids }
       | get -o id
     )
-    let parents = ($rows | where {|row| $row.id in $ids } | get -o parent | compact)
-    let expanded = ($ids ++ $descendants ++ $parents | uniq)
+    let expanded = ($ids ++ $descendants | uniq)
     if ($expanded | length) == ($ids | length) { break }
     $ids = $expanded
   }

@@ -5,6 +5,7 @@
 # ==================================================================================================
 
 use ./output.nu [plural print-table]
+use ./paths.nu [outermost-paths]
 use ./rewrite.nu [file-uri json-escape rewrite-text]
 use ./sqlite.nu [path-condition run-sql sql-quote sqlite-rows]
 
@@ -344,6 +345,38 @@ def run-sql-actions [actions: list<record>]: nothing -> nothing {
   }
 }
 
+def backup-all [actions: list<record>]: nothing -> string {
+  let stamp = (date now | format date '%Y%m%dT%H%M%S')
+  let root = (backup-root)
+  let backup_dir = ($root | path join $"($stamp)-($nu.pid)")
+  let databases = ($actions | where op == sql | get path | uniq)
+  mkdir $root
+  ^chmod 700 $root
+  mkdir $backup_dir
+  ^chmod 700 $backup_dir
+  $actions
+  | each {|action| manifest-view $action }
+  | to json
+  | save --force ($backup_dir | path join manifest.json)
+
+  for path in ($actions | where op in [edit delete] | get path | outermost-paths $in) {
+    backup-path $backup_dir $path
+  }
+  for db in $databases {
+    let destination = ($backup_dir | path join ($db | str replace --regex '^/' ''))
+    mkdir ($destination | path dirname)
+    let run = (^sqlite3 $db $".backup '($destination)'" | complete)
+    if $run.exit_code != 0 {
+      error make --unspanned {
+        msg: $"SQLite backup failed on ($db): ($run.stderr | str trim)"
+        help: $"Close the assistant that uses ($db) and rerun the same command."
+      }
+    }
+  }
+  print $"Backed up to ($backup_dir)"
+  $backup_dir
+}
+
 export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> nothing {
   if ($actions | is-empty) {
     print "No changes."
@@ -378,36 +411,7 @@ export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> n
     return
   }
 
-  let stamp = (date now | format date '%Y%m%dT%H%M%S')
-  let root = (backup-root)
-  let backup_dir = ($root | path join $"($stamp)-($nu.pid)")
-  if not $no_backup {
-  let databases = ($actions | where op == sql | get path | uniq)
-  mkdir $root
-  ^chmod 700 $root
-  mkdir $backup_dir
-  ^chmod 700 $backup_dir
-  $ordered
-  | each {|action| manifest-view $action }
-  | to json
-  | save --force ($backup_dir | path join manifest.json)
-
-  for action in ($actions | where op in [edit delete]) {
-    backup-path $backup_dir $action.path
-  }
-  for db in $databases {
-    let destination = ($backup_dir | path join ($db | str replace --regex '^/' ''))
-    mkdir ($destination | path dirname)
-    let run = (^sqlite3 $db $".backup '($destination)'" | complete)
-    if $run.exit_code != 0 {
-      error make --unspanned {
-        msg: $"SQLite backup failed on ($db): ($run.stderr | str trim)"
-        help: $"Close the assistant that uses ($db) and rerun the same command."
-      }
-    }
-  }
-  print $"Backed up to ($backup_dir)"
-  }
+  let backup_dir = if $no_backup { null } else { backup-all $ordered }
 
   run-sql-actions $derived
   for action in $tail {
@@ -420,7 +424,7 @@ export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> n
 
   let count = ($actions | length)
   print $"Applied ($count) (plural $count 'action' 'actions')."
-  if not $no_backup {
+  if $backup_dir != null {
     print $"Run 'agent-project-move scan' to check the result, and keep ($backup_dir) until you have."
   }
 }
