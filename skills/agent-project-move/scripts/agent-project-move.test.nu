@@ -628,6 +628,253 @@ def "test an imported Codex id with different rollout content is rejected" [] {
   }
 }
 
+def make-target-codex [root: string, project: string]: nothing -> record {
+  let fixture = (make-codex $root $project)
+  (
+    "DROP TABLE projects; "
+    + "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, metadata TEXT, position INTEGER, "
+    + "created_at_ms INTEGER, updated_at_ms INTEGER); "
+    + "CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT); "
+    + "ALTER TABLE threads ADD COLUMN sandbox_policy TEXT; "
+    + "ALTER TABLE threads ADD COLUMN agent_path TEXT;"
+  ) | ^sqlite3 $fixture.db
+
+  let metadata = (
+    {source: $project}
+    | to json --raw
+    | sql-quote $in
+  )
+  let policy = (
+    {writable_roots: [$project]}
+    | to json --raw
+    | sql-quote $in
+  )
+  $"INSERT INTO projects VALUES \('shared', 'Example', ($metadata), 2, 1001, 2002\); INSERT INTO project_roots VALUES \('shared', 0, (sql-quote $project)\), \('shared', 1, (sql-quote ($project + '/worktree'))\); UPDATE threads SET sandbox_policy = ($policy), agent_path = (sql-quote ($project + '/logical-agent'));"
+  | ^sqlite3 $fixture.db
+
+  let plain = ($fixture.compressed | str replace --regex '\.zst$' '')
+  write-jsonl $plain [
+    {
+      type: "session_meta"
+      payload: {
+        id: "parent"
+        cwd: $project
+        timestamp: "2026-01-01T00:00:00.123456789Z"
+      }
+    }
+    {
+      type: "response_item"
+      payload: {
+        path: ($project + "/file.txt")
+        uri: ("file://" + $project + "/file.txt")
+        sibling: ($project + "-peer/file.txt")
+      }
+    }
+  ]
+
+  (
+    ^zstd $plain
+      -q
+      -f
+      -o $fixture.compressed
+  )
+  rm $plain
+  ^touch -d "2026-01-01T00:00:00.123456789Z" $fixture.compressed
+
+  $fixture
+}
+
+def "test targeted Codex imports map incoming paths and preserve local state" [] {
+  let root = (mktemp -d)
+  let source = ($root | path join "source")
+  let local = ($root | path join "local")
+  let project = "/home/u/src/app"
+  let target = $project + "/relocated"
+  let fixture = (make-target-codex $source $project)
+  let destination = (make-target-codex $local "/other/live")
+  let directory = ($root | path join "bundle")
+  let metadata = (sqlite-rows $fixture.db "SELECT * FROM projects")
+  let timestamp = (with-env {TZ: "UTC"} { ^stat -c "%y" $fixture.compressed })
+
+  "DELETE FROM dependent WHERE thread_id != 'retained'; DELETE FROM thread_spawn_edges; DELETE FROM threads WHERE id != 'retained'; UPDATE projects SET id = 'live'; UPDATE project_roots SET project_id = 'live'; UPDATE threads SET project_id = 'live';"
+  | ^sqlite3 $destination.db
+
+  let opaque = (
+    {source: $project}
+    | to json --raw
+    | sql-quote $in
+  )
+  let policy = (
+    {writable_roots: [$project]}
+    | to json --raw
+    | sql-quote $in
+  )
+  $"UPDATE projects SET metadata = ($opaque); UPDATE threads SET sandbox_policy = ($policy), agent_path = (sql-quote ($project + '/local-agent'));"
+  | ^sqlite3 $destination.db
+
+  let sessions = ($local | path join "codex/sessions")
+  for file in (glob ($sessions | path join "*")) {
+    if ($file | path basename) != "retained.jsonl" {
+      rm $file
+    }
+  }
+  let retained = ($sessions | path join "retained.jsonl")
+  {cwd: $project}
+  | to json
+  | save --force $retained
+
+  let desktop = ($local | path join "codex/.codex-global-state.json")
+  {saved: [$project]}
+  | to json
+  | save $desktop
+
+  let local_rows = (sqlite-rows $destination.db "SELECT * FROM threads")
+  let local_project = (sqlite-rows $destination.db "SELECT * FROM projects")
+  let retained_bytes = (open --raw $retained)
+  let desktop_bytes = (open --raw $desktop)
+  let projection_bytes = (open --raw $destination.history | hash sha256)
+
+  with-env (fixture-env $source) {
+    let export = (
+      run-cli export $project $directory --assistant "codex" --session-ids "parent,nested"
+    )
+    assert equal $export.exit_code 0 $export.stderr
+  }
+
+  with-env (fixture-env $local) {
+    $"INSERT INTO projects VALUES \('shared', 'Local', '{}', 9, 3003, 4004\); INSERT INTO project_roots VALUES \('shared', 0, (sql-quote ($target + '/worktree'))\), \('shared', 1, (sql-quote $target)\);"
+    | ^sqlite3 $destination.db
+    let conflicting = (open --raw $destination.db | hash sha256)
+
+    let refused = (
+      run-cli import $directory --assistant "codex" --target $target --no-backup --apply
+    )
+    assert ($refused.exit_code != 0) $refused.stdout
+    assert str contains $refused.stderr "different roots"
+
+    assert equal (open --raw $destination.db | hash sha256) $conflicting
+    assert not (($sessions | path join "parent.jsonl.zst") | path exists)
+
+    "DELETE FROM project_roots WHERE project_id = 'shared'; DELETE FROM projects WHERE id = 'shared';"
+    | ^sqlite3 $destination.db
+    let before = (open --raw $destination.db | hash sha256)
+
+    let preview = (run-cli import $directory --assistant "codex" --target $target --no-backup)
+    assert equal $preview.exit_code 0 $preview.stderr
+
+    assert equal (open --raw $destination.db | hash sha256) $before
+    assert not (($sessions | path join "parent.jsonl.zst") | path exists)
+
+    let import = (
+      run-cli import $directory --assistant "codex" --target $target --no-backup --apply
+    )
+    assert equal $import.exit_code 0 $import.stderr
+
+    assert equal (
+      sqlite-rows $destination.db "SELECT * FROM threads WHERE id = 'retained'"
+    ) $local_rows
+    assert equal (
+      sqlite-rows $destination.db "SELECT * FROM projects WHERE id = 'live'"
+    ) $local_project
+    assert equal (
+      sqlite-rows $destination.db "SELECT * FROM projects WHERE id = 'shared'"
+    ) $metadata
+    assert equal (open --raw $retained) $retained_bytes
+    assert equal (open --raw $desktop) $desktop_bytes
+    assert equal (open --raw $destination.history | hash sha256) $projection_bytes
+
+    let roots_query = "SELECT path FROM project_roots WHERE project_id = 'shared' ORDER BY position"
+    let roots = (
+      sqlite-rows $destination.db $roots_query
+      | get path
+    )
+
+    assert equal $roots [$target ($target + "/worktree")]
+
+    let rows = (
+      sqlite-rows $destination.db "SELECT * FROM threads WHERE id != 'retained' ORDER BY id"
+    )
+
+    assert equal ($rows | select id cwd) [
+      {
+        id: "child"
+        cwd: "/other/worker"
+      }
+      {
+        id: "nested"
+        cwd: ($target + "/sub")
+      }
+      {
+        id: "other-child"
+        cwd: "/another/worker"
+      }
+      {
+        id: "parent"
+        cwd: $target
+      }
+    ]
+    for row in $rows {
+      assert equal $row.agent_path ($project + "/logical-agent") $row.id
+      assert equal $row.updated_at_ms 1000 $row.id
+      assert equal ($row.sandbox_policy | from json) {writable_roots: [$target]} $row.id
+      assert equal $row.rollout_path ($sessions | path join $"($row.id).jsonl") $row.id
+    }
+    assert equal (sqlite-rows $destination.db "SELECT * FROM thread_spawn_edges") [
+      {
+        parent_thread_id: "parent"
+        child_thread_id: "child"
+        status: "completed"
+      }
+    ]
+    assert equal (
+      $rows
+      | where id == "other-child"
+      | get 0.attached_thread_parent_id
+    ) "parent"
+
+    let compressed = ($sessions | path join "parent.jsonl.zst")
+    let content = (
+      ^zstd -dc $compressed
+      | lines
+      | each {|line| $line | from json }
+    )
+
+    assert equal ($content | get 0.payload) {
+      id: "parent"
+      cwd: $target
+      timestamp: "2026-01-01T00:00:00.123456789Z"
+    }
+    assert equal ($content | get 1.payload) {
+      path: ($target + "/file.txt")
+      uri: ("file://" + $target + "/file.txt")
+      sibling: ($project + "-peer/file.txt")
+    }
+    assert equal (^stat -c "%y" $compressed) $timestamp
+
+    "UPDATE projects SET name = 'Destination metadata', position = 8 WHERE id = 'shared';"
+    | ^sqlite3 $destination.db
+    let reused = (sqlite-rows $destination.db "SELECT * FROM projects WHERE id = 'shared'")
+
+    let repeated = (
+      run-cli import $directory --assistant "codex" --target $target --no-backup --apply
+    )
+    assert equal $repeated.exit_code 0 $repeated.stderr
+    assert str contains $repeated.stdout "No changes"
+    assert equal (sqlite-rows $destination.db "SELECT * FROM projects WHERE id = 'shared'") $reused
+
+    let stable = (open --raw $destination.db | hash sha256)
+    let other = "/other/destination"
+
+    let conflict = (
+      run-cli import $directory --assistant "codex" --target $other --no-backup --apply
+    )
+    assert ($conflict.exit_code != 0) $conflict.stdout
+
+    assert equal (open --raw $destination.db | hash sha256) $stable
+    assert equal (^stat -c "%y" $compressed) $timestamp
+  }
+}
+
 def make-claude [root: string, project: string]: nothing -> record {
   let config = ($root | path join "claude")
   let dir = ($config | path join "projects" (encode-path $project))
@@ -891,6 +1138,89 @@ def "test identical Claude sessions still import and validate their file history
     assert equal (
       open --raw ($fixture.config | path join "file-history/child/child@v1")
     ) "different artifact"
+  }
+}
+
+def "test targeted Claude imports preserve local sessions and opaque file history" [] {
+  let root = (mktemp -d)
+  let source = ($root | path join "source")
+  let local = ($root | path join "local")
+  let project = "/home/u/src/app"
+  let target = "/home/u/destination"
+  let fixture = (make-claude $source $project)
+  let directory = ($root | path join "bundle")
+  let config = ($local | path join "claude")
+  let retained = ($config | path join "projects" (encode-path "/other/live") "local.jsonl")
+  write-jsonl $retained [
+    {
+      type: "user"
+      sessionId: "local"
+      cwd: "/other/live"
+      message: {content: $project}
+    }
+  ]
+  {
+    projects: {"/other/live": {note: $project}}
+    opaque: $project
+  }
+  | to json
+  | save ($config | path join ".claude.json")
+  let history = ($fixture.config | path join "file-history/parent/file@v1")
+  $project | save --force $history
+  let bytes = (open --raw $retained)
+
+  with-env (fixture-env $source) {
+    let export = (
+      run-cli export $project $directory --assistant "claude" --session-ids "parent,nested"
+    )
+    assert equal $export.exit_code 0 $export.stderr
+  }
+
+  with-env (fixture-env $local) {
+    let preview = (run-cli import $directory --assistant "claude" --target $target --no-backup)
+    assert equal $preview.exit_code 0 $preview.stderr
+
+    assert not (($config | path join "file-history/parent") | path exists)
+    assert equal (open --raw $retained) $bytes
+
+    let import = (
+      run-cli import $directory --assistant "claude" --target $target --no-backup --apply
+    )
+    assert equal $import.exit_code 0 $import.stderr
+
+    let owner = ($config | path join "projects" (encode-path $target))
+    let body = (
+      open --raw ($owner | path join "parent.jsonl")
+      | lines
+      | each {|line| $line | from json }
+    )
+    let nested = ($config | path join "projects" (encode-path ($target + "/sub")) "nested.jsonl")
+    let child = ($owner | path join "parent/subagents/agent-child.jsonl")
+    let settings = (open ($config | path join ".claude.json"))
+
+    assert equal ($body | get cwd) [$target "/other/visited"]
+    assert equal ($body | get sessionId) ["parent" "parent"]
+    assert equal (
+      open --raw $nested
+      | from json
+      | get cwd
+    ) ($target + "/sub")
+    assert equal (
+      open --raw $child
+      | from json
+      | get cwd
+    ) "/other/worker"
+    assert equal (open --raw ($config | path join "file-history/parent/file@v1")) $project
+    assert equal (open --raw ($config | path join "file-history/child/child@v1")) "child artifact"
+    assert equal (open --raw $retained) $bytes
+    assert equal $settings.opaque $project
+    assert equal ($settings.projects | get "/other/live") {note: $project}
+
+    let repeated = (
+      run-cli import $directory --assistant "claude" --target $target --no-backup --apply
+    )
+    assert equal $repeated.exit_code 0 $repeated.stderr
+    assert str contains $repeated.stdout "No changes"
   }
 }
 
@@ -1602,6 +1932,231 @@ def "test flat OMP forks keep parent links after importing to a different state 
     assert ("path-fork.jsonl" in $names)
     assert ("escaped-fork.jsonl" in $names)
     assert ("id-fork.jsonl" in $names)
+  }
+}
+
+def "test targeted OMP imports restore native parent links after path rewrites" [] {
+  for same_store in [false true] {
+    let label = if $same_store { "existing native parent" } else { "different native state root" }
+    let root = (
+      mktemp -d
+      | path expand
+    )
+    let source = ($root | path join "source")
+    let local = if $same_store {
+      $source
+    } else {
+      $root | path join "local"
+    }
+    let project = $root
+    let target = ($root | path join "relocated")
+    let owner = "/other/owner"
+    let source_dir = ($source | path join "omp/sessions" (session-encode-here $owner))
+    let parent = ($source_dir | path join "000-parent.jsonl")
+    let fork = ($source_dir | path join "fork.jsonl")
+    let outside = "/other/dependent"
+    let external = (
+      $source | path join "omp/sessions" (session-encode-here $outside) "external.jsonl"
+    )
+    let source_dbs = (make-omp-dbs $source $project --empty)
+    write-jsonl $parent [
+      {
+        type: "session"
+        id: "parent"
+        cwd: $project
+        timestamp: "2026-01-01T00:00:00Z"
+      }
+    ]
+    write-jsonl $fork [
+      {
+        type: "session"
+        id: "fork"
+        cwd: ($project + "/worktree")
+        parentSession: $parent
+      }
+      {
+        type: "message"
+        message: {content: ("file://" + $project + "/notes.md")}
+      }
+    ]
+    write-jsonl $external [
+      {
+        type: "session"
+        id: "external"
+        cwd: $outside
+        parentSession: "parent"
+      }
+      {
+        type: "message"
+        message: {content: ($project + "/external.txt")}
+      }
+    ]
+
+    let value = ($parent | to json --raw)
+    let escaped = ($value | str replace --all "/" '\/')
+    open --raw $fork
+    | str replace ('"parentSession":' + $value) ('"parentSession":' + $escaped)
+    | save --force $fork
+    mkdir ($source_dir | path join "000-parent")
+    let artifact = ($source_dir | path join "000-parent/output.bin")
+    0x[00 ff 80 0a] | save $artifact
+    ^touch -d "2026-01-01T00:00:00.987654321Z" $fork
+    let timestamp = (with-env {TZ: "UTC"} { ^stat -c "%y" $fork })
+    "INSERT INTO history VALUES (1, 'parent', NULL, 'incoming'); INSERT INTO session_recaps VALUES (1, 'parent', NULL, 1234, 'recap');"
+    | ^sqlite3 $source_dbs.history
+    let directory = ($root | path join "bundle")
+
+    with-env (fixture-env $source) {
+      let export = (run-cli export $project $directory --assistant "omp" --session-ids "parent")
+      assert equal $export.exit_code 0 $"($label): ($export.stderr)"
+
+      assert equal (
+        open ($directory | path join "omp/entries.json")
+        | get files
+        | where session == "external"
+        | get 0.project
+      ) $outside $label
+    }
+
+    let dbs = if $same_store {
+      rm $fork
+      rm $external
+      rm --recursive ($source_dir | path join "000-parent")
+
+      write-jsonl ($source_dir | path join "mapped-parent.jsonl") [
+        {
+          type: "session"
+          id: "parent"
+          cwd: $target
+          timestamp: "2026-01-01T00:00:00Z"
+        }
+      ]
+      mv --force ($source_dir | path join "mapped-parent.jsonl") $parent
+
+      "DELETE FROM history; DELETE FROM session_recaps;" | ^sqlite3 $source_dbs.history
+
+      $source_dbs
+
+    } else {
+      make-omp-dbs $local $project --empty
+    }
+    let prompt = (sql-quote $project)
+    $"INSERT INTO history VALUES \(9, 'local', '/other/live', ($prompt)\);"
+    | ^sqlite3 $dbs.history
+    let retained = (sqlite-rows $dbs.history "SELECT * FROM history")
+    let destination = ($local | path join "omp/sessions" (session-encode-here $target))
+    let native_parent = if $same_store {
+      $parent
+    } else {
+      $destination | path join "000-parent.jsonl"
+    }
+    let native_artifact = (
+      $native_parent
+      | str replace --regex '\.jsonl$' ""
+      | path join "output.bin"
+    )
+    let native_external = (
+      $local
+      | path join "omp/sessions" (session-encode-here $outside) "external.jsonl"
+    )
+
+    with-env (fixture-env $local) {
+      let before = (open --raw $dbs.history | hash sha256)
+
+      let preview = (run-cli import $directory --assistant "omp" --target $target --no-backup)
+      assert equal $preview.exit_code 0 $"($label): ($preview.stderr)"
+
+      assert equal (open --raw $dbs.history | hash sha256) $before $label
+      assert not (($destination | path join "fork.jsonl") | path exists) $label
+
+      let import = (
+        run-cli import $directory --assistant "omp" --target $target --no-backup --apply
+      )
+      assert equal $import.exit_code 0 $"($label): ($import.stderr)"
+
+      let body = (
+        open --raw ($destination | path join "fork.jsonl")
+        | lines
+        | each {|line| $line | from json }
+      )
+      let history_query = "SELECT session_id, cwd, prompt FROM history WHERE session_id = 'parent'"
+      let incoming_history = (sqlite-rows $dbs.history $history_query)
+      let recap_query = "SELECT session_id, cwd, created_at, recap FROM session_recaps"
+      let incoming_recaps = (sqlite-rows $dbs.history $recap_query)
+
+      assert equal ($body | get 0) {
+        type: "session"
+        id: "fork"
+        cwd: ($target + "/worktree")
+        parentSession: $native_parent
+      } $label
+      assert equal ($body | get 1.message.content) ("file://" + $target + "/notes.md") $label
+      assert equal (
+        open --raw $native_parent
+        | from json
+      ) {
+        type: "session"
+        id: "parent"
+        cwd: $target
+        timestamp: "2026-01-01T00:00:00Z"
+      } $label
+      assert equal (
+        open --raw $native_artifact
+        | into binary
+      ) 0x[00 ff 80 0a] $label
+      assert equal (
+        open --raw $native_external
+        | lines
+        | each {|line| $line | from json }
+      ) [
+        {
+          type: "session"
+          id: "external"
+          cwd: $outside
+          parentSession: "parent"
+        }
+        {
+          type: "message"
+          message: {content: ($target + "/external.txt")}
+        }
+      ] $label
+      assert equal (^stat -c "%y" ($destination | path join "fork.jsonl")) $timestamp $label
+      assert equal (
+        sqlite-rows $dbs.history "SELECT * FROM history WHERE session_id = 'local'"
+      ) $retained $label
+      assert equal $incoming_history [
+        {
+          session_id: "parent"
+          cwd: null
+          prompt: "incoming"
+        }
+      ] $label
+      assert equal $incoming_recaps [
+        {
+          session_id: "parent"
+          cwd: null
+          created_at: 1234
+          recap: "recap"
+        }
+      ] $label
+
+      let history_rows = (sqlite-rows $dbs.history "SELECT * FROM history ORDER BY id")
+      let recap_rows = (sqlite-rows $dbs.history "SELECT * FROM session_recaps ORDER BY id")
+      let fork_bytes = (open --raw ($destination | path join "fork.jsonl"))
+
+      let repeated = (
+        run-cli import $directory --assistant "omp" --target $target --no-backup --apply
+      )
+      assert equal $repeated.exit_code 0 $"($label): ($repeated.stderr)"
+      assert equal (
+        sqlite-rows $dbs.history "SELECT * FROM history ORDER BY id"
+      ) $history_rows $label
+      assert equal (
+        sqlite-rows $dbs.history "SELECT * FROM session_recaps ORDER BY id"
+      ) $recap_rows $label
+      assert equal (open --raw ($destination | path join "fork.jsonl")) $fork_bytes $label
+      assert equal (^stat -c "%y" ($destination | path join "fork.jsonl")) $timestamp $label
+    }
   }
 }
 
