@@ -880,6 +880,7 @@ def "test flat OMP forks keep parent links after importing to a different state 
   let fixture = (make-omp $source $project)
   for row in [
     {id: "path-fork", parentSession: $fixture.parent}
+    {id: "escaped-fork", parentSession: $fixture.parent}
     {id: "id-fork", parentSession: "parent"}
   ] {
     let file = ($fixture.dir | path join $"($row.id).jsonl")
@@ -887,7 +888,12 @@ def "test flat OMP forks keep parent links after importing to a different state 
       ($row | merge {type: "session", cwd: $project})
       {type: "message", message: {role: "user", content: $fixture.parent}}
     ]
-    let content = (open --raw $file)
+    let original = (open --raw $file)
+    let content = if $row.id == "escaped-fork" {
+      let value = ($fixture.parent | to json --raw)
+      let escaped = ($value | str replace --all "/" '\/')
+      $original | str replace ('"parentSession":' + $value) ('"parentSession":' + $escaped)
+    } else { $original }
     "  " + $content + "\n\n" | save --force $file
   }
   let directory = ($root | path join "bundle")
@@ -903,6 +909,7 @@ def "test flat OMP forks keep parent links after importing to a different state 
     let destination = ($target | path join "omp/sessions" (session-encode-here $project))
     for row in [
       {id: "path-fork", parent: ($destination | path join "2026-01-01T00-00-00_parent.jsonl")}
+      {id: "escaped-fork", parent: ($destination | path join "2026-01-01T00-00-00_parent.jsonl")}
       {id: "id-fork", parent: "parent"}
     ] {
       let parent = (
@@ -911,8 +918,12 @@ def "test flat OMP forks keep parent links after importing to a different state 
       )
       assert equal $parent $row.parent $row.id
       let original = (open --raw ($fixture.dir | path join $"($row.id).jsonl"))
-      let expected = if $row.id == "path-fork" {
-        let old = ('"parentSession":' + ($fixture.parent | to json --raw))
+      let expected = if $row.id != "id-fork" {
+        let value = ($fixture.parent | to json --raw)
+        let encoded = if $row.id == "escaped-fork" {
+          $value | str replace --all "/" '\/'
+        } else { $value }
+        let old = ('"parentSession":' + $encoded)
         let new = ('"parentSession":' + ($row.parent | to json --raw))
         $original | str replace $old $new
       } else { $original }
@@ -927,34 +938,41 @@ def "test flat OMP forks keep parent links after importing to a different state 
 
     let names = (open ($exported | path join "omp/entries.json") | get files | get name)
     assert ("path-fork.jsonl" in $names)
+    assert ("escaped-fork.jsonl" in $names)
     assert ("id-fork.jsonl" in $names)
   }
 }
 
-def "test OMP retirement removes recap titles without requiring a history row" [] {
-  let root = (mktemp -d)
-  let project = "/home/u/src/app"
-  let dbs = (make-omp-dbs $root $project --empty)
-  for id in ["selected" "retained"] {
-    let value = (sql-quote $id)
-    (
-      $"INSERT INTO session_titles VALUES \(($value), ($value)\); "
-      + "INSERT INTO session_recaps(session_id, cwd, created_at, recap) VALUES ("
-      + $value + ", " + (sql-quote $project) + ", 1, " + $value + ");"
-    ) | ^sqlite3 $dbs.history
-  }
+def "test OMP retirement removes selected titles without requiring history rows" [] {
+  for with_recap in [true false] {
+    let root = (mktemp -d)
+    let project = "/home/u/src/app"
+    let dbs = (make-omp-dbs $root $project --empty)
+    for id in ["selected" "retained"] {
+      let value = (sql-quote $id)
+      $"INSERT INTO session_titles VALUES \(($value), ($value)\);" | ^sqlite3 $dbs.history
+      if $with_recap {
+        (
+          "INSERT INTO session_recaps(session_id, cwd, created_at, recap) VALUES ("
+          + $value + ", " + (sql-quote $project) + ", 1, " + $value + ");"
+        ) | ^sqlite3 $dbs.history
+      } else {
+        let file = ($root | path join "omp/sessions" (session-encode-here $project) $"($id).jsonl")
+        write-jsonl $file [{type: "session", id: $id, cwd: $project}]
+      }
+    }
 
-  with-env (fixture-env $root) {
-    let apply = (
-      run-cli retire $project --assistant omp --session-ids selected --apply --no-backup
-    )
-    assert equal $apply.exit_code 0 $apply.stderr
+    with-env (fixture-env $root) {
+      let apply = (
+        run-cli retire $project --assistant omp --session-ids selected --apply --no-backup
+      )
+      assert equal $apply.exit_code 0 $apply.stderr
 
-    assert equal (sqlite-rows $dbs.history "SELECT session_id, title FROM session_titles") [
-      {session_id: "retained", title: "retained"}
-    ]
-    assert equal (sqlite-rows $dbs.history "SELECT session_id, recap FROM session_recaps") [
-      {session_id: "retained", recap: "retained"}
-    ]
+      assert equal (sqlite-rows $dbs.history "SELECT session_id, title FROM session_titles") [
+        {session_id: "retained", title: "retained"}
+      ]
+      let expected = if $with_recap { [{session_id: "retained", recap: "retained"}] } else { [] }
+      assert equal (sqlite-rows $dbs.history "SELECT session_id, recap FROM session_recaps") $expected
+    }
   }
 }
