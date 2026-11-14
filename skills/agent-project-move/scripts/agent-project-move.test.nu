@@ -870,3 +870,80 @@ def "test default OMP export preserves path metadata without session ids" [] {
     {session_id: null, cwd: $project, prompt: "path prompt"}
   ]
 }
+
+def "test flat OMP forks keep parent links after importing to a different state root" [] {
+  let root = (mktemp -d)
+  let source = ($root | path join "source")
+  let target = ($root | path join "target")
+  let project = "/home/u/src/app"
+  let fixture = (make-omp $source $project)
+  for row in [
+    {id: "path-fork", parentSession: $fixture.parent}
+    {id: "id-fork", parentSession: "parent"}
+  ] {
+    write-jsonl ($fixture.dir | path join $"($row.id).jsonl") [
+      ($row | merge {type: "session", cwd: $project})
+      {type: "message", message: {role: "user", content: $row.id}}
+    ]
+  }
+  let directory = ($root | path join "bundle")
+
+  with-env (fixture-env $source) {
+    let export = (run-cli export $project $directory --assistant omp --session-ids parent)
+    assert equal $export.exit_code 0 $export.stderr
+  }
+  with-env (fixture-env $target) {
+    let import = (run-cli import $directory --assistant omp --apply)
+    assert equal $import.exit_code 0 $import.stderr
+
+    let destination = ($target | path join "omp/sessions" (session-encode-here $project))
+    for row in [
+      {id: "path-fork", parent: ($destination | path join "2026-01-01T00-00-00_parent.jsonl")}
+      {id: "id-fork", parent: "parent"}
+    ] {
+      let parent = (
+        open --raw ($destination | path join $"($row.id).jsonl")
+        | lines | first | from json | get parentSession
+      )
+      assert equal $parent $row.parent $row.id
+    }
+
+    let repeated = (run-cli import $directory --assistant omp --apply)
+    assert equal $repeated.exit_code 0 $repeated.stderr
+    let exported = ($root | path join "target-bundle")
+    let export = (run-cli export $project $exported --assistant omp --session-ids parent)
+    assert equal $export.exit_code 0 $export.stderr
+
+    let names = (open ($exported | path join "omp/entries.json") | get files | get name)
+    assert ("path-fork.jsonl" in $names)
+    assert ("id-fork.jsonl" in $names)
+  }
+}
+
+def "test OMP retirement removes recap titles without requiring a history row" [] {
+  let root = (mktemp -d)
+  let project = "/home/u/src/app"
+  let dbs = (make-omp-dbs $root $project --empty)
+  for id in ["selected" "retained"] {
+    let value = (sql-quote $id)
+    (
+      $"INSERT INTO session_titles VALUES \(($value), ($value)\); "
+      + "INSERT INTO session_recaps(session_id, cwd, created_at, recap) VALUES ("
+      + $value + ", " + (sql-quote $project) + ", 1, " + $value + ");"
+    ) | ^sqlite3 $dbs.history
+  }
+
+  with-env (fixture-env $root) {
+    let apply = (
+      run-cli retire $project --assistant omp --session-ids selected --apply --no-backup
+    )
+    assert equal $apply.exit_code 0 $apply.stderr
+
+    assert equal (sqlite-rows $dbs.history "SELECT session_id, title FROM session_titles") [
+      {session_id: "retained", title: "retained"}
+    ]
+    assert equal (sqlite-rows $dbs.history "SELECT session_id, recap FROM session_recaps") [
+      {session_id: "retained", recap: "retained"}
+    ]
+  }
+}
