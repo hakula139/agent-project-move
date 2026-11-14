@@ -1770,18 +1770,9 @@ def "test flat OMP forks keep parent links after importing to a different state 
   let project = "/home/u/src/app"
   let fixture = (make-omp $source $project)
   let forks = [
-    {
-      id: "path-fork"
-      parentSession: $fixture.parent
-    }
-    {
-      id: "escaped-fork"
-      parentSession: $fixture.parent
-    }
-    {
-      id: "id-fork"
-      parentSession: "parent"
-    }
+    {id: "path-fork", parentSession: $fixture.parent}
+    {id: "escaped-fork", parentSession: $fixture.parent}
+    {id: "id-fork", parentSession: "parent"}
   ]
   for row in $forks {
     let file = ($fixture.dir | path join $"($row.id).jsonl")
