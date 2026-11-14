@@ -13,6 +13,7 @@ export def select-sessions [
   if $exact and ($session_ids | is-not-empty) {
     error make --unspanned {msg: "--exact and --session-ids are mutually exclusive"}
   }
+
   let rows = (
     $rows
     | where {|row| ($row.id | describe) == "string" and $row.id != "" }

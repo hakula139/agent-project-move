@@ -17,7 +17,7 @@ export def normalize-path [
   } else {
     $path | path expand --no-symlink
   }
-  let trimmed = ($expanded | str replace --regex '/+$' '')
+  let trimmed = ($expanded | str replace --regex "/+$" "")
   if $trimmed == "" { "/" } else { $trimmed }
 }
 
@@ -87,14 +87,30 @@ export def files-under [dir: string]: nothing -> list<string> {
 # does not delete state for a disk that is merely detached.
 export def path-missing [path: string]: nothing -> bool {
   if ($path | path exists) { return false }
-  let parts = ($path | str replace --regex '^/' '' | split row '/')
+  let parts = (
+    $path
+    | str replace --regex "^/" ""
+    | split row "/"
+  )
   if ($parts | length) < 2 { return true }
   let root = if ($parts | length) >= 4 and ($parts | first 2 | str join "/") == "run/media" {
-    "/" + ($parts | take 4 | str join "/")
+    "/" + (
+      $parts
+      | take 4
+      | str join "/"
+    )
   } else if ($parts | length) >= 3 and ($parts | first 1 | first) == "media" {
-    "/" + ($parts | take 3 | str join "/")
+    "/" + (
+      $parts
+      | take 3
+      | str join "/"
+    )
   } else {
-    "/" + ($parts | take 2 | str join "/")
+    "/" + (
+      $parts
+      | take 2
+      | str join "/"
+    )
   }
   if (
     ($root | str starts-with "/Volumes/")

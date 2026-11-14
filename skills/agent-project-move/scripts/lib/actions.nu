@@ -86,6 +86,7 @@ def json-column-statements [
     + " WHERE instr(" + $column + ", " + $plain + ") > 0"
     + " OR instr(" + $column + ", " + $uri + ") > 0"
   )
+
   sqlite-rows $db $query
   | each {|row|
     let value = ($row.value | into string)
@@ -119,8 +120,9 @@ export def column-statements [
   let update = (
     "UPDATE " + $table + " SET " + $column + " = " + $value + " WHERE " + $condition
   )
+
   if $collide {
-    let insert = ($update | str replace --regex '^UPDATE ' 'UPDATE OR IGNORE ')
+    let insert = ($update | str replace --regex "^UPDATE " "UPDATE OR IGNORE ")
     [$insert $"DELETE FROM ($table) WHERE ($condition)"]
   } else {
     [$update]
@@ -136,9 +138,11 @@ export def column-actions [
   new: string
 ]: nothing -> list<record> {
   mut actions = []
+
   for spec in $columns {
     let db = $spec.db
     if not ($db | path exists) { continue }
+
     let table = $spec.table
     let column = $spec.column
     let prefix = ($spec | get -o prefix | default "")
@@ -160,11 +164,13 @@ export def column-actions [
         column-statements $table $column $old $new --prefix $prefix --collide=$collide
       }
     }
+
     if ($statements | is-not-empty) {
       let description = $"rewrite ($table).($column)"
       $actions = ($actions | append (sql-action $assistant $table $db $statements $description))
     }
   }
+
   $actions
 }
 
@@ -185,6 +191,7 @@ export def same-content [left: string, right: string]: nothing -> bool {
 export def same-directory [left: string, right: string]: nothing -> bool {
   if $left == $right { return true }
   if not (($left | path exists) and ($right | path exists)) { return false }
+
   let left_id = (
     ^stat $left
       -L
@@ -241,7 +248,11 @@ export def merge-actions [
   }
 
   mut actions = []
-  let entries = (ls -a $source | get name | each {|path| $path | path basename })
+  let entries = (
+    ls -a $source
+    | get name
+    | each {|path| $path | path basename }
+  )
   for entry in $entries {
     let from = ($source | path join $entry)
     if $from in $skip { continue }
@@ -253,6 +264,7 @@ export def merge-actions [
       )
     )
   }
+
   $actions | append (action $assistant $store "rmdir" $source "remove emptied source directory")
 }
 
@@ -264,6 +276,7 @@ export def decompress-file [path: string]: nothing -> string {
       help: $"Check that ($path) is a valid zstd file."
     }
   }
+
   $run.stdout
 }
 
@@ -288,12 +301,14 @@ def write-file [path: string, content: any, --compress, --reference: string]: no
   let reference = ($reference | default $path)
   let mode = (^stat -c "%a" $reference | str trim)
   let temporary = (^mktemp $"($path).tmp.XXXXXXXXXX" | str trim)
+
   try {
     if $compress {
       compress-file $content $temporary
     } else {
       $content | save --force $temporary
     }
+
     ^chmod $mode $temporary
     ^touch -r $reference $temporary
     mv --force $temporary $path
@@ -316,6 +331,7 @@ def edit-file [path: string, transform: closure]: nothing -> nothing {
       help: "Convert the file to UTF-8, or move it by hand."
     }
   }
+
   let updated = (do $transform $content)
   if $updated == $content { return }
   write-file $path $updated --compress=$compress
@@ -357,11 +373,12 @@ def execute-action [action: record]: nothing -> nothing {
 
 def backup-path [root: string, path: string]: nothing -> nothing {
   if not ($path | path exists) { return }
-  let destination = ($root | path join ($path | str replace --regex '^/' ''))
+  let destination = ($root | path join ($path | str replace --regex "^/" ""))
   mkdir ($destination | path dirname)
-  (^cp $path $destination
-    --recursive
-    --preserve=mode,timestamps
+  (
+    ^cp $path $destination
+      --recursive
+      --preserve=mode,timestamps
   )
 }
 
@@ -386,11 +403,13 @@ def run-sql-actions [actions: list<record>]: nothing -> nothing {
       | get statements
       | flatten
     )
+
     let foreign = (
       $actions
       | where path == $db
       | any {|action| ($action | get -o foreign_keys) == true }
     )
+
     run-sql $db $statements --foreign-keys=$foreign
   }
 }
@@ -422,12 +441,13 @@ def backup-all [actions: list<record>]: nothing -> string {
     | get path
     | outermost-paths $in
   )
+
   for path in $paths {
     backup-path $backup_dir $path
   }
 
   for db in $databases {
-    let destination = ($backup_dir | path join ($db | str replace --regex '^/' ''))
+    let destination = ($backup_dir | path join ($db | str replace --regex "^/" ""))
     mkdir ($destination | path dirname)
     let run = (^sqlite3 $db $".backup '($destination)'" | complete)
     if $run.exit_code != 0 {
@@ -460,6 +480,7 @@ export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> n
       let group = ($remaining | where assistant == $assistant)
       let rows = ($group | where {|action| ($action | get -o rows_first) == true })
       let after = ($group | where {|action| ($action | get -o rows_first) != true })
+
       $rows ++ ($after | where op != "sql") ++ ($after | where op == "sql")
     }
   )
@@ -467,13 +488,16 @@ export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> n
   let ordered = ($derived ++ $tail)
 
   if not $apply {
-    $ordered | each {|action| manifest-view $action | default "" to } | print-table
+    $ordered
+    | each {|action| manifest-view $action | default "" to }
+    | print-table
     let count = ($ordered | length)
     let backup = if $no_backup {
       "No backup will be created."
     } else {
       $"A backup goes to (backup-root) first."
     }
+
     print $"Dry run: ($count) (plural $count 'action' 'actions') planned, nothing written. Rerun with --apply to write the plan. ($backup)"
     return
   }

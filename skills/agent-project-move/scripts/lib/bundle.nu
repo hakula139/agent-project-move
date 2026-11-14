@@ -25,12 +25,13 @@ export def write-bundle [directory: string, bundle: record]: nothing -> nothing 
   if ($bundle.files | is-not-empty) {
     mkdir ($base | path join "files")
   }
+
   let files = (
     $bundle.files
     | each {|file|
       let key = $"($file.kind)|($file.project)|($file.name)"
       let name = (sha1-hex $key) + "-" + ($file.name | path basename)
-      let relative = (["files" $name] | path join)
+      let relative = ("files" | path join $name)
       let target = ($base | path join $relative)
 
       ^cp --preserve=timestamps $file.source $target
@@ -68,5 +69,6 @@ export def read-bundle [directory: string, assistant: string]: nothing -> any {
       $file | upsert bundle $path
     }
   )
+
   $data | upsert files $files
 }

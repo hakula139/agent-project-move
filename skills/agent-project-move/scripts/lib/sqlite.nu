@@ -13,7 +13,12 @@ export def sql-quote [value: any]: nothing -> string {
   } else if $kind == "bool" {
     if $value { "1" } else { "0" }
   } else {
-    "'" + ($value | into string | str replace --all "'" "''") + "'"
+    let escaped = (
+      $value
+      | into string
+      | str replace --all "'" "''"
+    )
+    "'" + $escaped + "'"
   }
 }
 
@@ -37,6 +42,7 @@ export def sqlite-rows [db: string, query: string]: nothing -> list {
       help: $"Close the assistant that uses ($db) and rerun the same command."
     }
   }
+
   let output = ($run.stdout | str trim)
   if $output == "" {
     []
@@ -72,6 +78,7 @@ export def latest-db [pattern: string, table: string]: nothing -> any {
     | where {|entry| sqlite-has-table $entry.db $table }
     | sort-by version
   )
+
   if ($candidates | is-empty) {
     null
   } else {
@@ -125,6 +132,7 @@ export def check-columns [
       help: $"Start ($store) once on this host, then rerun the import."
     }
   }
+
   let missing = ($columns | where {|column| $column not-in $local })
   if ($missing | is-not-empty) {
     error make --unspanned {
@@ -132,6 +140,7 @@ export def check-columns [
       help: $"Update ($store) on this host to the source host's version, start it once, then rerun the import."
     }
   }
+
   let required = (
     sqlite-rows $db $"PRAGMA table_info\(($table)\)"
     | where {|row| $row.notnull == 1 and $row.dflt_value == null and $row.pk == 0 }
@@ -139,7 +148,7 @@ export def check-columns [
     | where {|column| $column not-in $columns }
   )
   if ($required | is-not-empty) {
-    let names = ($required | str join ', ')
+    let names = ($required | str join ", ")
     error make --unspanned {
       msg: $"($store) ($table) requires columns the bundle lacks ($names)"
       help: $"Update ($store) on the source host, export again, then rerun the import."
@@ -199,7 +208,11 @@ export def run-sql [
     | append "COMMIT;"
     | str join "\n"
   )
-  let run = ($sql | ^sqlite3 -bail $db | complete)
+  let run = (
+    $sql
+    | ^sqlite3 -bail $db
+    | complete
+  )
   if $run.exit_code != 0 {
     error make --unspanned {
       msg: $"sqlite3 failed on ($db): ($run.stderr | str trim)"

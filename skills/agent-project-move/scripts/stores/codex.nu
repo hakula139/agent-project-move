@@ -136,6 +136,7 @@ def config-sections [content: string]: nothing -> list<record> {
       } else {
         $header | get 0.path
       }
+
       if $current != null {
         let split = (split-leading $current.body)
         $current = ($current | upsert body $split.body)
@@ -179,6 +180,7 @@ export def move-trust [content: string, old: string, new: string]: nothing -> st
     $sections
     | where {|section| ($section.path == null) or (not (path-match $old $section.path)) }
   )
+
   let moved = (
     $sections
     | where {|section| ($section.path != null) and (path-match $old $section.path) }
@@ -197,11 +199,13 @@ export def move-trust [content: string, old: string, new: string]: nothing -> st
     }
     | compact
   )
+
   let lines = (
     $kept ++ $moved
     | each {|section| section-lines $section }
     | flatten
   )
+
   ($lines | str join "\n") + "\n"
 }
 
@@ -295,6 +299,7 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
       {db: $state, table: "threads", column: "sandbox_policy", json: true}
     ] $old $new
   )
+
   for file in $rollouts {
     $actions = ($actions | append (edit-action "codex" "rollouts" $file $rewrite "rewrite cwd"))
   }
@@ -303,6 +308,7 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
       $actions | append (edit-action "codex" "desktop-state" $file $rewrite "rewrite desktop state")
     )
   }
+
   $actions = ($actions ++ (projection-actions (history-db) $edited_ids $old $new))
   $actions = ($actions ++ (trust-actions $old $new))
   $actions
@@ -324,6 +330,7 @@ def selected-threads [
   } else {
     []
   }
+
   let linked = (
     $rows
     | each {|row|
@@ -332,6 +339,7 @@ def selected-threads [
         | where child_thread_id == $row.id
         | first
       )
+
       let parent = if $edge != null {
         $edge.parent_thread_id
       } else {
@@ -339,13 +347,16 @@ def selected-threads [
         | get -o attached_thread_parent_id
         | default ($row | get -o parent_thread_id)
       }
+
       $row | upsert parent $parent
     }
   )
+
   let ids = (
     select-sessions $linked $old --exact=$exact --session-ids $session_ids
     | get -o id
   )
+
   $rows | where {|row| $row.id in $ids }
 }
 
@@ -380,6 +391,7 @@ def delete-threads [
     } else {
       []
     }
+
     let statements = ($edges ++ [$delete])
     let remove = (
       sql-action "codex" "threads" $state $statements "delete threads" --rows-first --foreign-keys
@@ -407,6 +419,7 @@ def delete-threads [
       match-any $paths $block.path
     }
   })
+
   if ($config | path exists) and $trust_match {
     $actions = ($actions | append (edit-action "codex" "config" $config {|content|
       prune-trust $content $paths --exact=$exact
@@ -439,12 +452,14 @@ export def plan-retire [
     $inventory
     | where {|row| $row.id not-in $ids }
   )
+
   let unused = (
     $threads
     | get -o cwd
     | uniq
     | where {|cwd| not ($remaining | any {|row| $cwd == $row.cwd }) }
   )
+
   mut actions = (delete-threads $state $threads $unused --exact)
   let projects = (
     $threads
@@ -452,6 +467,7 @@ export def plan-retire [
     | compact
     | uniq
   )
+
   if ($projects | is-not-empty) {
     let statement = (
       $"DELETE FROM projects WHERE id IN \((sql-list $projects)\)"
@@ -505,6 +521,7 @@ export def export-bundle [
     | compact
     | uniq
   )
+
   let projects = if ($project_ids | is-not-empty) {
     sqlite-rows $db "SELECT * FROM projects"
     | where {|row| $row.id in $project_ids }
@@ -516,6 +533,7 @@ export def export-bundle [
     {db: "state", table: "projects", columns: (table-columns $db "projects"), rows: $projects, key: ["id"]}
     {db: "state", table: "threads", columns: (table-columns $db "threads"), rows: $threads, key: ["id"]}
   ]
+
   if (table-columns $db "thread_spawn_edges" | is-not-empty) {
     let ids = ($threads | get -o id)
     let edges = (
@@ -571,11 +589,13 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   if ($edges.rows | is-not-empty) {
     check-columns $state_db "thread_spawn_edges" $edges.columns "Codex"
   }
+
   let local_threads = if $state_db == null {
     []
   } else {
     sqlite-rows $state_db "SELECT * FROM threads"
   }
+
   let imported = ($local_threads | get -o id)
   for file in $bundle.files {
     if ($file | get -o thread | default "") not-in $imported { continue }
@@ -594,6 +614,7 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       error make --unspanned {msg: $"Existing thread ($file.thread) differs from the bundle"}
     }
   }
+
   mut actions = []
 
   for file in $bundle.files {
@@ -618,11 +639,13 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     sqlite-rows $state_db "SELECT id FROM projects"
     | get -o id
   }
+
   let project_statements = (
     $projects.rows
     | where {|row| $row.id not-in $local_ids }
     | each {|row| sqlite-insert-if-new "projects" $projects.columns $row }
   )
+
   let mapped = (
     $threads.rows
     | where {|row| $row.id not-in $imported }
@@ -640,15 +663,18 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       }
     }
   )
+
   let thread_statements = (
     $mapped
     | each {|row| sqlite-insert-if-new "threads" $threads.columns $row }
   )
+
   let local_edges = if ($edges.rows | is-empty) {
     []
   } else {
     sqlite-rows $state_db "SELECT * FROM thread_spawn_edges"
   }
+
   let edge_statements = (
     $edges.rows
     | each {|row|
@@ -657,6 +683,7 @@ export def plan-import [bundle: record]: nothing -> list<record> {
         | where child_thread_id == $row.child_thread_id
         | first
       )
+
       if $local == null {
         sqlite-insert-if-new "thread_spawn_edges" $edges.columns $row
       } else if $local.parent_thread_id != $row.parent_thread_id {
@@ -669,10 +696,12 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     }
     | compact
   )
+
   let statements = ($project_statements ++ $thread_statements ++ $edge_statements)
   if ($statements | is-not-empty) {
     let load = (sql-action "codex" "state" $state_db $statements "import state")
     $actions = ($actions | append $load)
   }
+
   $actions
 }

@@ -33,7 +33,11 @@ use ./suggestions.nu [scan-suggestions]
 # The stores call GNU stat, realpath, mv, and cp, which Homebrew keeps unprefixed only in gnubin.
 if $nu.os-info.name == "macos" and (which brew | is-not-empty) {
   let prefix = (^brew --prefix coreutils | complete)
-  let gnubin = ($prefix.stdout | str trim | path join "libexec/gnubin")
+  let gnubin = (
+    $prefix.stdout
+    | str trim
+    | path join "libexec/gnubin"
+  )
   if $prefix.exit_code == 0 and ($gnubin | path exists) {
     $env.PATH = ($env.PATH | prepend $gnubin)
   }
@@ -83,7 +87,9 @@ def "main scan" [
   if ($rows | is-empty) {
     print "No recorded project paths."
   } else {
-    $rows | select assistant path exists sessions last_used suggested | print-table
+    $rows
+    | select assistant path exists sessions last_used suggested
+    | print-table
   }
 }
 
@@ -184,17 +190,24 @@ def "main export" [
   let bundles = ($selected | each {|assistant|
     assistant-export-bundle $assistant $old --exact=$exact --session-ids $ids
   })
+
   let counts = (
     $bundles
     | each {|bundle|
       let files = ($bundle.files | length)
-      let rows = ($bundle.tables | each {|table| $table.rows | length } | append 0 | math sum)
+      let rows = (
+        $bundle.tables
+        | each {|table| $table.rows | length }
+        | append 0
+        | math sum
+      )
       {assistant: $bundle.assistant, files: $files, rows: $rows}
     }
   )
   for count in $counts {
     print $"($count.assistant): ($count.files) (plural $count.files 'file' 'files'), ($count.rows) (plural $count.rows 'row' 'rows')"
   }
+
   let carried = (
     $counts
     | where {|count| $count.files > 0 or $count.rows > 0 }
@@ -229,6 +242,7 @@ def "main retire" [
   if not $exact and ($ids | is-empty) {
     error make --unspanned {msg: "retire requires --exact or --session-ids"}
   }
+
   let actions = (plan-retire $selected $old --exact=$exact --session-ids $ids)
   apply-all $actions --apply=$apply --no-backup=$no_backup
 }
@@ -262,10 +276,17 @@ def "main import" [
       {assistant: $bundle.assistant, actions: (assistant-plan-import $bundle.assistant $bundle)}
     }
   )
+
   for plan in $plans {
     if ($plan.actions | is-empty) {
       print $"Skipped: ($plan.assistant) already holds these sessions."
     }
   }
-  apply-all ($plans | get actions | flatten) --apply=$apply
+
+  let actions = (
+    $plans
+    | get actions
+    | flatten
+  )
+  apply-all $actions --apply=$apply
 }
