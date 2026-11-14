@@ -572,59 +572,52 @@ export def plan-retire [
   --session-ids: list<string> = []
 ]: nothing -> list<record> {
   let selected = (selected-transcripts $old --exact=$exact --session-ids $session_ids)
-  let files = ($selected
-    | get -o file
-    | uniq)
-  let ids = ($selected
-    | get -o id
-    | uniq)
+  let files = ($selected | get -o file | uniq)
+  let ids = ($selected | get -o id | uniq)
   let inventory = (session-records)
   let directories = (
     $selected
-      | get -o directory
-      | uniq
-      | where {|dir|
+    | get -o directory
+    | uniq
+    | where {|dir|
       $inventory
-        | where directory == $dir
-        | all {|row| $row.file in $files }
+      | where directory == $dir
+      | all {|row| $row.file in $files }
     }
   )
   mut actions = (session-deletions $selected $directories)
   let history = (root | path join history.jsonl)
-  if ($history
-    | path exists) and ($ids
-    | is-not-empty) {
+  if ($history | path exists) and ($ids | is-not-empty) {
     $actions = ($actions | append (edit-action claude history $history {|content|
       let trailing = ($content | str ends-with "\n")
       let body = (
         $content
-          | lines
-          | where {|line|
+        | lines
+        | where {|line|
           let row = (try { $line | from json } catch { {} })
           ($row | get -o sessionId) not-in $ids
-        } | str join "\n"
+        }
+        | str join "\n"
       )
       if $trailing { $body + "\n" } else { $body }
     } "retire session history"))
   }
   let unused = (
     $selected
-      | get -o owner
-      | uniq
+    | get -o owner
+    | uniq
     | where {|cwd|
       let dir = (projects-dir | path join (encode-path $cwd))
       top-files $dir | all {|file| $file in $files }
     }
   )
   let config = (global-config)
-  if ($config
-    | path exists) and ($unused
-    | is-not-empty) {
+  if ($config | path exists) and ($unused | is-not-empty) {
     $actions = ($actions | append (edit-action claude global-config $config {|content|
       $content
-        | from json
-        | prune-config $in $unused --exact
-        | to json
+      | from json
+      | prune-config $in $unused --exact
+      | to json
     } "remove unreferenced projects"))
   }
   $actions
@@ -633,7 +626,6 @@ export def plan-retire [
 # --------------------------------------------------------------------------------------------------
 # Transfer
 # --------------------------------------------------------------------------------------------------
-
 
 export def export-bundle [
   old: string
@@ -648,8 +640,8 @@ export def export-bundle [
   } else { selected-dirs $old }
   let selected_files = (
     $selected_sessions
-      | get -o file
-      | uniq
+    | get -o file
+    | uniq
   )
   mut files = []
 
@@ -661,7 +653,10 @@ export def export-bundle [
         let dependency = ($selected_files | any {|session|
           path-match ($session | str replace --regex '\.jsonl$' '') $file
         })
-        if ($file not-in $selected_files) and not $dependency and not ($name | str starts-with "memory/") {
+        if (
+          ($file not-in $selected_files) and not $dependency
+          and not ($name | str starts-with "memory/")
+        ) {
           continue
         }
       }
@@ -675,10 +670,15 @@ export def export-bundle [
   }
 
   let directories = ($selected | get -o dir)
-  let sessions = ($selected_sessions
+  let carried = if $exact or ($session_ids | is-not-empty) { $selected_sessions } else {
+    session-records | where {|row| $row.directory in $directories }
+  }
+  let sessions = (
+    $carried
     | where {|row| $row.directory in $directories }
     | get -o id
-    | uniq)
+    | uniq
+  )
   for session in $sessions {
     let history = (root | path join file-history $session)
     for file in (files-under $history) {

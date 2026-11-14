@@ -174,8 +174,8 @@ After verifying the destination sessions and their artifacts, retire the source 
 
 ```bash
 agent-project-move retire ~/src/app --exact
-agent-project-move retire ~/src/app --session-ids <id,id>
-agent-project-move retire ~/src/app --session-ids <id,id> --apply
+agent-project-move retire ~/src/app --session-ids session-a,session-b
+agent-project-move retire ~/src/app --session-ids session-a,session-b --apply
 ```
 
 `retire` requires either `--exact` or `--session-ids`, using the same session selection as `export`. It removes selected transcripts and dependent rows, and removes shared project metadata only when no remaining session references it. Review the dry run before applying. Use `--no-backup` only when you have verified the transferred copies and intend to discard the selected source state permanently.

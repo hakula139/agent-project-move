@@ -105,8 +105,8 @@ After verifying the destination sessions and their artifacts, use [Retire](#reti
 
 ```bash
 agent-project-move retire ~/src/app --exact
-agent-project-move retire ~/src/app --session-ids <id,id>
-agent-project-move retire ~/src/app --session-ids <id,id> --apply
+agent-project-move retire ~/src/app --session-ids session-a,session-b
+agent-project-move retire ~/src/app --session-ids session-a,session-b --apply
 ```
 
 Review the dry run and confirm the selected sessions before applying. `--apply` creates the normal backup. Add `--no-backup` only with explicit authorization to permanently discard these source copies after destination verification. No backup is created in that mode, so [Restore](#restore) cannot recover the retirement.

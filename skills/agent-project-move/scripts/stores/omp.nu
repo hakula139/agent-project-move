@@ -274,7 +274,8 @@ def session-records []: nothing -> list<record> {
     for file in (files-under $spec.root | where {|file| $file | str ends-with ".jsonl" }) {
       let header = (session-header $file)
       if $header == null { continue }
-      let directory = ($spec.root | path join ($file | path relative-to $spec.root | split row "/" | first))
+      let project = ($file | path relative-to $spec.root | split row "/" | first)
+      let directory = ($spec.root | path join $project)
       $rows = ($rows | append {
         id: $header.id
         cwd: $header.cwd
@@ -381,16 +382,18 @@ def history-deletions [
   let condition = $"\(($sessions)\) OR \(($metadata)\)"
   let history = $"history WHERE ($condition)"
   let recaps = $"session_recaps WHERE \(($condition)\)"
+  let titles = if ($ids | is-empty) { "0" } else { $"session_id IN \((sql-list $ids)\)" }
   let counts = (
     sqlite-rows $db (
       $"SELECT \(SELECT count\(*\) FROM ($history)\) AS history,"
-      + $" \(SELECT count\(*\) FROM ($recaps)\) AS recaps"
+      + $" \(SELECT count\(*\) FROM ($recaps)\) AS recaps,"
+      + $" \(SELECT count\(*\) FROM session_titles WHERE ($titles)\) AS titles"
     )
     | get 0
   )
-  let removed = (($counts.history
-    | into int) + ($counts.recaps
-    | into int))
+  let removed = (
+    ($counts.history | into int) + ($counts.recaps | into int) + ($counts.titles | into int)
+  )
   if $removed == 0 { return [] }
 
   mut statements = []
@@ -451,7 +454,13 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
   let agent = (agent-dir)
   let recorded = (recorded-paths)
   let live_paths = ($recorded | where {|path| (valid-path $path) and ($path | path exists) })
-  let ids = (session-records | where {|row| match-any $paths $row.cwd } | get -o id | compact | uniq)
+  let ids = (
+    session-records
+    | where {|row| match-any $paths $row.cwd }
+    | get -o id
+    | compact
+    | uniq
+  )
   let metadata = ($recorded | where {|path| match-any $paths $path })
 
   (
@@ -468,35 +477,31 @@ export def plan-retire [
 ]: nothing -> list<record> {
   let records = (session-records)
   let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
-  let ids = ($selected
-    | get -o id
-    | compact
-    | uniq)
+  let ids = ($selected | get -o id | compact | uniq)
   if ($ids | is-empty) { return [] }
   let remaining = ($records | where {|row| $row.id not-in $ids })
   let paths = (
-    ($selected
-      | get -o cwd) ++ ($selected
-      | get -o owner)
-      | uniq
+    ($selected | get -o cwd) ++ ($selected | get -o owner)
+    | uniq
     | where {|cwd| valid-path $cwd }
-    | where {|cwd| not ($remaining
-    | any {|row| $row.cwd == $cwd or $row.owner == $cwd }) }
+    | where {|cwd| not ($remaining | any {|row| $row.cwd == $cwd or $row.owner == $cwd }) }
   )
   let session_files = (
     $selected
-      | where {|row| ($row
-      | get -o file) != null }
-      | get file
-      | uniq
+    | where {|row| ($row | get -o file) != null }
+    | get file
+    | uniq
   )
-  let subtrees = ($session_files
-    | each {|file| $file
-    | str replace --regex '\.jsonl$' '' }
-    | where {|path| $path
-    | path exists })
-  mut actions = ($session_files ++ $subtrees | outermost-paths $in
-    | each {|file| action omp sessions delete $file "retire session tree" })
+  let subtrees = (
+    $session_files
+    | each {|file| $file | str replace --regex '\.jsonl$' '' }
+    | where {|path| $path | path exists }
+  )
+  mut actions = (
+    $session_files ++ $subtrees
+    | outermost-paths $in
+    | each {|file| action omp sessions delete $file "retire session tree" }
+  )
   for path in $paths {
     let memory = (memory-root | path join (memory-encode $path))
     let shared = ($remaining | any {|row|
@@ -637,28 +642,26 @@ export def export-bundle [
 ]: nothing -> record {
   let records = (session-records)
   let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
-  let ids = ($selected
-    | get -o id
-    | compact
-    | uniq)
-  let owned = (($selected
-    | get -o owner) ++ ($selected
-    | get -o cwd)
-    | where {|path| valid-path $path })
-  let paths = if ($session_ids
-    | is-not-empty) { $owned
-    | uniq } else {
-    let recorded = (recorded-paths | where {|path| if $exact { $path == $old } else { path-match $old $path } })
+  let ids = ($selected | get -o id | compact | uniq)
+  let owned = (
+    ($selected | get -o owner) ++ ($selected | get -o cwd)
+    | where {|path| valid-path $path }
+  )
+  let paths = if ($session_ids | is-not-empty) { $owned | uniq } else {
+    let recorded = (
+      recorded-paths
+      | where {|path| if $exact { $path == $old } else { path-match $old $path } }
+    )
     $owned ++ $recorded ++ [$old] | uniq
   }
   let agent = (agent-dir)
   let history_paths = if ($session_ids | is-empty) { $paths } else { [] }
-  let history = (history-tables ($agent | path join history.db) $ids --metadata-paths $history_paths)
+  let history = (
+    history-tables ($agent | path join history.db) $ids --metadata-paths $history_paths
+  )
   let tables = ($history ++ (agent-tables ($agent | path join agent.db) $ids $paths))
   mut files = []
-  for row in ($selected
-    | where {|row| ($row
-    | get -o file) != null }) {
+  for row in ($selected | where {|row| ($row | get -o file) != null }) {
     let subtree = ($row.file | str replace --regex '\.jsonl$' '')
     for file in ([$row.file] ++ (files-under $subtree)) {
       let header = (session-header $file)
@@ -687,6 +690,27 @@ export def export-bundle [
   {assistant: omp, old: $old, files: $files, tables: $tables}
 }
 
+def artifact-target [file: record, targets: list<record>]: nothing -> string {
+  if $file.existing or $file.kind not-in [sessions archives] { return $file.target }
+  let owner = (
+    $targets
+    | where {|candidate|
+      let stem = ($candidate.name | str replace --regex '\.jsonl$' '')
+      (
+        $candidate.header != null and $candidate.kind == $file.kind
+        and $candidate.project == $file.project
+        and ($file.name | str starts-with ($stem + "/"))
+      )
+    }
+    | sort-by {|candidate| $candidate.name | str length } --reverse
+    | first
+  )
+  if $owner == null { return $file.target }
+  let source = ($owner.name | str replace --regex '\.jsonl$' '')
+  let target = (artifact-target $owner $targets | str replace --regex '\.jsonl$' '')
+  path-map $source $target $file.name
+}
+
 def mapped-parent [file: record, targets: list<record>]: nothing -> any {
   let parent = ($file.header | get -o parentSession)
   if not (valid-path $parent) { return null }
@@ -710,12 +734,12 @@ def remap-parent [content: string, old: string, new: string]: nothing -> string 
     }
     let field = (
       $line
-      | parse --regex '(?<field>"parentSession"\s*:\s*"(?:\\.|[^"\\])*")'
+      | parse --regex '(?<prefix>"parentSession"\s*:\s*)(?<value>"(?:\\.|[^"\\])*")'
       | first
-      | get field
     )
-    let mapped = ($field | str replace ($old | to json --raw) ($new | to json --raw))
-    $line | str replace $field $mapped
+    let original = ($field.prefix + $field.value)
+    let mapped = ($field.prefix + ($new | to json --raw))
+    $line | str replace $original $mapped
   }
   | str join "\n"
 }
@@ -766,9 +790,11 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   )
 
   let local_inventory = (session-records)
-  let targets = (
+  let planned = (
     $bundle.files | each {|file|
-      let header = if $file.kind in [sessions archives] { session-header $file.bundle } else { null }
+      let header = if $file.kind in [sessions archives] {
+        session-header $file.bundle
+      } else { null }
       let local = if $header == null { null } else {
         $local_inventory | where {|row|
           $row.id == $header.id and ($row | get -o file) != null
@@ -789,11 +815,13 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       }
       $file | merge {
         header: $header
+        existing: ($local != null)
         target: $target
         source_path: ($file | get -o source_path | default ($thread | get -o rollout_path))
       }
     }
   )
+  let targets = ($planned | each {|file| $file | upsert target (artifact-target $file $planned) })
   let already_imported = (
     ($bundle_sessions | all {|id| $id in $local_sessions })
     and ($targets | where {|file| $file.kind in [sessions archives] }

@@ -8,7 +8,7 @@ The final state after a `move <old> <new>` is that no structured path field refe
 
 - **Plan from current state.** Selection and every decision read what is on disk now, never what a previous run was expected to do. A transcript is selected because a record's `cwd` is under `<old>`, whatever its first line says. A rerun after a partial failure therefore converges on the same final state, and no step may make a rerun fail forever, as a key collision would.
 - **Rewrite sources of truth and drop derived data.** Transcripts, rollouts, and session rows are rewritten. Anything an assistant derives from them is deleted instead: Claude's `sessions-index.json` when a project directory merges, and Codex's `thread_history` projections when a rewritten rollout changes byte lengths. Nothing derived is maintained by hand.
-- **A Claude project directory's identity is its name.** A directory moves or exports only when its name encodes `<old>` or a path under it. Its owner is the recorded `cwd` whose encoding equals its name, which need not be any transcript's first `cwd`. Transcripts elsewhere that merely reference `<old>` are edited in place and stay in their directory.
+- **A Claude project directory's identity is its name.** A directory moves or participates in a default prefix export only when its name encodes `<old>` or a path under it. Its owner is the recorded `cwd` whose encoding equals its name, which need not be any transcript's first `cwd`. Transcripts elsewhere that merely reference `<old>` are edited in place during a move and stay in their directory. Exact and ID-selected exports preserve each selected transcript's physical project owner.
 - **Rewrite values generically.** Every JSON string token equal to `<old>` or starting with `<old>/` is rewritten, as a key or a value, at any depth, plain or as a `file://` URI, while every other byte round-trips untouched. Each assistant release adds record kinds, so a field list would never stay complete.
 - **Match and record one spelling each.** `<old>` matches as an exact, case-sensitive string prefix, and each rewritten value takes the spelling the working directory reports at the destination.
 - **Derive destinations from where files land.** An import sets `rollout_path` and similar fields to the path it writes the file to on the target, without mapping the source host's roots.
@@ -18,7 +18,7 @@ A backup makes a mistake restorable. An applied run copies everything it edits o
 
 ## Session selection
 
-Export selects sessions whose recorded cwd equals the path or lies under it. `--exact` limits the initial selection to equality, while `--session-ids` limits it to the given IDs under the path. The options are mutually exclusive, and retirement requires one of them. Every mode follows dependent descendants, even when their cwd differs. It never adds ancestors or siblings.
+Default exports select paths equal to the argument or under it. Claude preserves its directory-based prefix export, carrying the whole owning directory and its session dependencies. `--exact` selects sessions whose recorded cwd equals the path, while `--session-ids` selects the given IDs under the path. The options are mutually exclusive, and retirement requires one of them. Session selection follows dependent descendants, even when their cwd differs, without adding ancestors or siblings.
 
 Each store normalizes its session identities, recorded cwds, parent relationships, physical files, and project ownership before selection. Missing or invalid IDs never participate in the relationship graph. Physical project ownership stays separate from a visited cwd. A selected session owns its transcript and its same-stem artifact subtree. Shared project metadata is removed only after its remaining references are accounted for, using exact owners during retirement. Prune retains its missing-path semantics and shares session deletion helpers with retirement.
 
@@ -26,14 +26,14 @@ Each store normalizes its session identities, recorded cwds, parent relationship
 
 Each store returns plain records, and none of them writes. An action is `{assistant, store, op, path, description}` plus the fields its operation needs:
 
-| Operation | Extra fields       | Effect                                                                                                  |
-| --------- | ------------------ | ------------------------------------------------------------------------------------------------------- |
-| `rename`  | `to`               | Atomic `mv`. Merging into an existing directory renames entry by entry and then removes the emptied one |
-| `rmdir`   |                    | Removes a directory a merge emptied, aborting when anything else remains                                |
-| `edit`    | `transform`        | Reads the current file at apply time, transforms it, and replaces it atomically, keeping its mtime      |
-| `copy`    | `to`               | Writes a file from an export bundle, preserving mode and timestamps                                     |
-| `delete`  |                    | Removes a file or directory that a prune or a listed discard owns                                       |
-| `sql`     | `db`, `statements` | One `sqlite3 -bail` run per action, each in its own transaction                                         |
+| Operation | Extra fields               | Effect                                                                                                  |
+| --------- | -------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `rename`  | `to`                       | Atomic `mv`. Merging into an existing directory renames entry by entry and then removes the emptied one |
+| `rmdir`   |                            | Removes a directory a merge emptied, aborting when anything else remains                                |
+| `edit`    | `transform`                | Reads the current file at apply time, transforms it, and replaces it atomically, keeping its mtime      |
+| `copy`    | `to`, optional `transform` | Copies a bundle file or atomically writes its transformed content, preserving mode and timestamps       |
+| `delete`  |                            | Removes a file or directory that a prune or a listed discard owns                                       |
+| `sql`     | `db`, `statements`         | One `sqlite3 -bail` run per action, each in its own transaction                                         |
 
 `edit` runs at apply time, so a change another process made between plan and apply survives. Binary files are never edited.
 
@@ -77,6 +77,7 @@ An applied run creates `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/` a
 - Existing session IDs are checked against their transcripts before skipping copies, including decoded compressed Codex rollouts and OMP IDs from session headers. A differing transcript aborts before writing. Dependent file history and Codex parent edges are reconciled even when the session already exists.
 - A repeated import requires identical transcript content after the import's explicit file mapping. Rewritten paths count as a content difference, so reconcile or re-export moved sessions before importing them again.
 - OMP rollout rows map to imported files by header ID, so identical nested filenames stay distinct. Shared memory for an already imported session set stays in place, while a memory-only bundle still imports.
+- A carried OMP header's path-valued `parentSession` is mapped to the known imported parent file. Other header and message bytes stay unchanged, and external parent identities remain opaque.
 - An existing target file with identical content counts as done.
 - Each carried table is checked at plan time: the import aborts before writing when the target lacks a carried column, or requires a not-null column without a default that the bundle does not fill.
 
