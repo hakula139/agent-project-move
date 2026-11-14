@@ -196,13 +196,35 @@ export def scan []: nothing -> list<record> {
 # Move
 # --------------------------------------------------------------------------------------------------
 
+def remap-parent [content: string, new: string]: nothing -> string {
+  $content
+  | split row "\n"
+  | each {|line|
+    let header = try {
+      $line | from json
+    } catch {
+      null
+    }
+
+    if ($header | get -o type) != "session" {
+      return $line
+    }
+    let field = (
+      $line
+      | parse --regex '(?<prefix>"parentSession"\s*:\s*)(?<value>"(?:\\.|[^"\\])*")'
+      | first
+    )
+    let original = ($field.prefix + $field.value)
+    let mapped = ($field.prefix + ($new | to json --raw))
+    $line | str replace $original $mapped
+  }
+  | str join "\n"
+}
+
 def session-actions [candidates: list<string>, old: string, new: string]: nothing -> list<record> {
-  let session_files = (files-with-path $old [(session-root) (archive-root)])
-  let rewrite = {|content| rewrite-text $content $old $new }
-  mut actions = (
-    $session_files
-    | each {|file| edit-action "omp" "sessions" $file $rewrite "rewrite session cwd" }
-  )
+  let records = (session-records)
+  mut targets = []
+  mut merges = []
 
   for path in $candidates {
     let mapped = (path-map $old $new $path)
@@ -222,13 +244,43 @@ def session-actions [candidates: list<string>, old: string, new: string]: nothin
     ] {
       let source = ($spec.root | path join (session-encode-here $spec.from))
       let target = ($spec.root | path join (session-encode-here $spec.to))
-      $actions = (
-        $actions
+      $merges = (
+        $merges
         ++ (merge-actions "omp" $spec.kind $source $target $"merge ($spec.kind) directory")
+      )
+      if $source == $target { continue }
+      $targets = (
+        $targets
+        ++ ($records | where {|row| path-match $source $row.file } | each {|row|
+          {source_path: $row.file, target: (path-map $source $target $row.file)}
+        })
       )
     }
   }
-  $actions
+
+  let targets = $targets
+  let parents = (
+    $records
+    | each {|row|
+      let parent = (session-header $row.file | get -o parentSession)
+      let target = ($targets | where source_path == $parent | first)
+      if $target != null { {file: $row.file, parent: $target.target} }
+    }
+  )
+  let session_files = (files-with-path $old [(session-root) (archive-root)])
+  let edits = (
+    $session_files ++ ($parents | get -o file)
+    | uniq
+    | each {|file|
+      let parent = ($parents | where file == $file | first | get -o parent)
+      let rewrite = {|content|
+        let rewritten = (rewrite-text $content $old $new)
+        if $parent == null { $rewritten } else { remap-parent $rewritten $parent }
+      }
+      edit-action "omp" "sessions" $file $rewrite "rewrite session paths"
+    }
+  )
+  $edits ++ $merges
 }
 
 export def plan-move [old: string, new: string]: nothing -> list<record> {
@@ -337,31 +389,6 @@ def mapped-parent [file: record, targets: list<record>, --remap]: nothing -> any
   } else {
     $target.target
   }
-}
-
-def remap-parent [content: string, new: string]: nothing -> string {
-  $content
-  | split row "\n"
-  | each {|line|
-    let header = try {
-      $line | from json
-    } catch {
-      null
-    }
-
-    if ($header | get -o type) != "session" {
-      return $line
-    }
-    let field = (
-      $line
-      | parse --regex '(?<prefix>"parentSession"\s*:\s*)(?<value>"(?:\\.|[^"\\])*")'
-      | first
-    )
-    let original = ($field.prefix + $field.value)
-    let mapped = ($field.prefix + ($new | to json --raw))
-    $line | str replace $original $mapped
-  }
-  | str join "\n"
 }
 
 export def plan-import [bundle: record, --target: string]: nothing -> list<record> {
