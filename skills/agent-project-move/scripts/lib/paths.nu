@@ -49,10 +49,17 @@ export def check-destination [old: string, new: string]: nothing -> nothing {
 }
 
 export def path-map [old: string, new: string, path: string]: nothing -> string {
+  if not (path-match $old $path) { return $path }
   if $path == $old {
     $new
   } else {
-    $new + ($path | str substring ($old | str length)..)
+    let offset = if $old == "/" {
+      0
+    } else {
+      $old | str length
+    }
+    let base = ($new | str trim --right --char "/")
+    $"($base)($path | str substring $offset..)"
   }
 }
 

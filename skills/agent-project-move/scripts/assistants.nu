@@ -83,11 +83,15 @@ export def assistant-export-bundle [
   }
 }
 
-export def assistant-plan-import [assistant: string, bundle: record]: nothing -> list<record> {
+export def assistant-plan-import [
+  assistant: string
+  bundle: record
+  --target: string
+]: nothing -> list<record> {
   match $assistant {
-    "claude" => { claude plan-import $bundle }
-    "codex" => { codex plan-import $bundle }
-    "omp" => { omp plan-import $bundle }
+    "claude" => { claude plan-import $bundle --target $target }
+    "codex" => { codex plan-import $bundle --target $target }
+    "omp" => { omp plan-import $bundle --target $target }
   }
 }
 

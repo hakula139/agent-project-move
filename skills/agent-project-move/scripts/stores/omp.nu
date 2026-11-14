@@ -884,7 +884,7 @@ def artifact-target [file: record, targets: list<record>]: nothing -> string {
   path-map $source $target $file.name
 }
 
-def mapped-parent [file: record, targets: list<record>]: nothing -> any {
+def mapped-parent [file: record, targets: list<record>, --remap]: nothing -> any {
   let parent = ($file.header | get -o parentSession)
   if not (valid-path $parent) { return null }
   let target = (
@@ -893,7 +893,7 @@ def mapped-parent [file: record, targets: list<record>]: nothing -> any {
     | first
   )
 
-  if $target == null or $target.target == $parent {
+  if $target == null or (not $remap and $target.target == $parent) {
     null
   } else {
     {
@@ -903,7 +903,7 @@ def mapped-parent [file: record, targets: list<record>]: nothing -> any {
   }
 }
 
-def remap-parent [content: string, old: string, new: string]: nothing -> string {
+def remap-parent [content: string, new: string]: nothing -> string {
   $content
   | split row "\n"
   | each {|line|
@@ -913,7 +913,7 @@ def remap-parent [content: string, old: string, new: string]: nothing -> string 
       null
     }
 
-    if ($header | get -o type) != "session" or ($header | get -o parentSession) != $old {
+    if ($header | get -o type) != "session" {
       return $line
     }
     let field = (
@@ -939,7 +939,18 @@ def rollout-target [id: string, value: any, targets: list<record>]: nothing -> a
   if $found == null { $value } else { $found.target }
 }
 
-export def plan-import [bundle: record]: nothing -> list<record> {
+export def plan-import [bundle: record, --target: string]: nothing -> list<record> {
+  let destination = $target
+  let rewritten = if $destination == null {
+    []
+  } else {
+    let sources = (
+      $bundle.files
+      | where {|file| $file.kind in ["sessions" "archives"] }
+      | get -o bundle
+    )
+    files-with-path $bundle.old $sources
+  }
   let agent = (agent-dir)
   let history_db = ($agent | path join "history.db")
   let agent_db = ($agent | path join "agent.db")
@@ -1008,10 +1019,15 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       let target = if $local != null {
         $local.file
       } else {
+        let project = if $destination == null {
+          $file.project
+        } else {
+          path-map $bundle.old $destination $file.project
+        }
         match $file.kind {
-          "sessions" => (session-root | path join (session-encode-here $file.project) $file.name)
-          "archives" => (archive-root | path join (session-encode-here $file.project) $file.name)
-          "memories" => (memory-root | path join (memory-encode $file.project) $file.name)
+          "sessions" => (session-root | path join (session-encode-here $project) $file.name)
+          "archives" => (archive-root | path join (session-encode-here $project) $file.name)
+          "memories" => (memory-root | path join (memory-encode $project) $file.name)
           _ => {
             error make --unspanned {msg: $"Unknown OMP file kind ($file.kind)"}
           }
@@ -1051,16 +1067,37 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   let memories = (files-under (memory-root))
 
   for file in $targets {
-    let parent = (mapped-parent $file $targets)
-    let expected = if $file.header == null {
+    let parent = (mapped-parent $file $targets --remap=($destination != null))
+    let content = if $file.header != null or $file.bundle in $rewritten {
+      open --raw $file.bundle
+    } else {
+      null
+    }
+    let rewrite = $file.bundle in $rewritten and ($content | describe) == "string"
+    let transform = if not $rewrite and $parent == null {
       null
     } else {
-      let content = (open --raw $file.bundle)
-      if $parent == null {
+      {|content|
+        let content = if $rewrite {
+          rewrite-text $content $bundle.old $destination
+        } else {
+          $content
+        }
+        if $parent == null {
+          $content
+        } else {
+          remap-parent $content $parent.new
+        }
+      }
+    }
+    let expected = if $file.header != null or $transform != null {
+      if $transform == null {
         $content
       } else {
-        remap-parent $content $parent.old $parent.new
+        do $transform $content
       }
+    } else {
+      null
     }
 
     if $file.header != null {
@@ -1111,13 +1148,9 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       if $identical { continue }
     }
 
-    let copy = if $parent == null {
-      copy-action "omp" "files" $file.bundle $file.target "import file"
-    } else {
-      copy-action "omp" "files" $file.bundle $file.target "import session" --transform {|content|
-        remap-parent $content $parent.old $parent.new
-      }
-    }
+    let copy = (
+      copy-action "omp" "files" $file.bundle $file.target "import file" --transform $transform
+    )
 
     $actions = ($actions | append $copy)
   }
@@ -1142,6 +1175,19 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       $spec.rows
       | each {|row|
         let row = ($row | reject --optional ...$spec.drop)
+        let row = if $destination == null {
+          $row
+        } else if (
+          $spec.table in ["threads" "history" "session_recaps"]
+          and (valid-path $row.cwd)
+        ) {
+          $row | upsert cwd (path-map $bundle.old $destination $row.cwd)
+        } else if $spec.table == "jobs" and ($row.job_key | str starts-with "global:") {
+          let path = ($row.job_key | str substring 7..)
+          $row | upsert job_key $"global:(path-map $bundle.old $destination $path)"
+        } else {
+          $row
+        }
         if $spec.table == "threads" {
           $row | upsert rollout_path (rollout-target $row.id $row.rollout_path $rollout_map)
         } else {

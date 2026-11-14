@@ -26,14 +26,14 @@ Each store normalizes its session identities, recorded cwds, parent relationship
 
 Each store returns plain records, and none of them writes. An action is `{assistant, store, op, path, description}` plus the fields its operation needs:
 
-| Operation | Extra fields               | Effect                                                                                                  |
-| --------- | -------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `rename`  | `to`                       | Atomic `mv`. Merging into an existing directory renames entry by entry and then removes the emptied one |
-| `rmdir`   |                            | Removes a directory a merge emptied, aborting when anything else remains                                |
-| `edit`    | `transform`                | Reads the current file at apply time, transforms it, and replaces it atomically, keeping its mtime      |
-| `copy`    | `to`, optional `transform` | Copies a bundle file or atomically writes its transformed content, preserving mode and timestamps       |
-| `delete`  |                            | Removes a file or directory that a prune or a listed discard owns                                       |
-| `sql`     | `db`, `statements`         | One `sqlite3 -bail` run per action, each in its own transaction                                         |
+| Operation | Extra fields                             | Effect                                                                                                                                          |
+| --------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rename`  | `to`                                     | Atomic `mv`. Merging into an existing directory renames entry by entry and then removes the emptied one                                         |
+| `rmdir`   |                                          | Removes a directory a merge emptied, aborting when anything else remains                                                                        |
+| `edit`    | `transform`                              | Reads the current file at apply time, transforms it, and replaces it atomically, keeping its mtime                                              |
+| `copy`    | `to`, optional `transform`, `compressed` | Copies a bundle file or atomically writes its transformed content, decoding and re-encoding zstd when requested, preserving mode and timestamps |
+| `delete`  |                                          | Removes a file or directory that a prune or a listed discard owns                                                                               |
+| `sql`     | `db`, `statements`                       | One `sqlite3 -bail` run per action, each in its own transaction                                                                                 |
 
 `edit` runs at apply time, so a change another process made between plan and apply survives. Binary files are never edited.
 
@@ -74,6 +74,7 @@ Each file descriptor records its exported source in `origin_path`. This field is
 
 `import <dir>` plans the merge:
 
+- Optional `--target` maps `bundle.old` and its descendants into the target path, preserving suffixes. Outside-root paths remain unchanged. Only incoming path fields and JSON path tokens are rewritten. Bundle locations, provenance, IDs, and timestamps retain their source values, and existing local state is only read for collision checks.
 - Directories are encoded with the target's own rules and `HOME`, and carried `rollout_path` values point at the copied files.
 - A row is inserted unless its unique key already exists. Every other constraint stays fatal, and a failing row aborts that database's whole load.
 - Existing session IDs are checked against their transcripts before skipping copies, including decoded compressed Codex rollouts and OMP IDs from session headers. A differing transcript aborts before writing. Dependent file history and Codex parent edges are reconciled even when the session already exists.
@@ -82,6 +83,7 @@ Each file descriptor records its exported source in `origin_path`. This field is
 - A carried OMP header's path-valued `parentSession` is mapped to the known imported parent file. Other header and message bytes stay unchanged, and external parent identities remain opaque.
 - An existing target file with identical content counts as done.
 - Each carried table is checked at plan time: the import aborts before writing when the target lacks a carried column, or requires a not-null column without a default that the bundle does not fill.
+- Codex carries available `project_roots` rows with selected projects. Targeted imports map those paths and reject an existing project ID whose ordered root paths differ. Project metadata and logical agent identities stay unchanged.
 
 Codex trust blocks are not carried, so the target asks for trust once on the first resume. A bundle carries no Codex history projection, because rewriting the rollout invalidates its byte offsets.
 

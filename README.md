@@ -19,7 +19,7 @@ Coding assistants key their sessions, memory, and history by absolute directory 
 - **`scan`** lists every recorded path with its session count, last use, and whether the directory exists, and suggests where a missing worktree or subdirectory belongs.
 - **`move`** rewrites and relocates the state under an old path so the sessions belong to the new one, and a merge into an existing project keeps the unique transcripts from both sides.
 - **`prune`** deletes state whose directory exists nowhere, after you move anything worth keeping.
-- **`export`** and **`import`** carry a project's sessions, memory, and history in a bundle between hosts, and a normal `move` on the target then points them at its own path.
+- **`export`** and **`import`** carry a project's sessions, memory, and history in a bundle between hosts. Import can map incoming state to the target project's path.
 
 `move`, `prune`, `retire`, and `import` print a plan and change assistant state only with `--apply`. `scan` and `export` never change assistant state, and `export` writes only the bundle directory you name.
 
@@ -158,15 +158,13 @@ agent-project-move export ~/src/app ~/agent-project-move-bundle
 rsync -a ~/agent-project-move-bundle target:~/
 
 # Target host
-agent-project-move import ~/agent-project-move-bundle
-agent-project-move import ~/agent-project-move-bundle --apply
-agent-project-move move ~/src/app ~/work/app           # When the path differs
-agent-project-move move ~/src/app ~/work/app --apply
+agent-project-move import ~/agent-project-move-bundle --target ~/work/app
+agent-project-move import ~/agent-project-move-bundle --target ~/work/app --apply
 ```
 
 `export` copies the files and rows recorded for the path and its child paths, unchanged, and needs no `--apply`. Add `--exact` to select only sessions recorded at that cwd, or `--session-ids <id,id>` to select specific sessions under the path. These options are mutually exclusive. Each selection also carries linked descendants and each selected session's own artifact subtree. Selecting a child leaves its parent and siblings alone.
 
-`import` writes the bundle where the target's assistant keeps the same path, preserves existing state, and rejects a reused session ID with a different transcript. It also aborts before writing when a target table lacks a column the bundle contains. The bundle holds transcripts, so keep it in a private directory, transfer it over a trusted channel, and delete it on both hosts once the import is done. Selection follows the project path, so the assistants' credential files and tables, such as `auth.json` and `.credentials.json`, stay out of a bundle.
+`import` keeps the original project path by default. `--target` maps the exported root and its descendants to a new project path, preserving each suffix. Carried sessions and owners outside that root keep their paths. The mapping affects incoming files and rows, so existing local sessions stay unchanged. A reused session ID requires an identical transcript after mapping, and a different body aborts before writing. Import also aborts when a target table lacks a column the bundle contains. The bundle holds transcripts, so keep it in a private directory, transfer it over a trusted channel, and delete it on both hosts once the import is done. Selection follows the project path, so the assistants' credential files and tables, such as `auth.json` and `.credentials.json`, stay out of a bundle.
 
 ### Retire transferred sessions
 

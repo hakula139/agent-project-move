@@ -902,6 +902,14 @@ export def export-bundle [
   }
 }
 
+def matches-import [file: record, target: string]: nothing -> bool {
+  if $file.expected == null {
+    same-content $file.bundle $target
+  } else {
+    (open --raw $target) == $file.expected
+  }
+}
+
 def imported-elsewhere [projects: list<string>, file: record]: nothing -> bool {
   $projects
   | any {|project|
@@ -909,9 +917,9 @@ def imported-elsewhere [projects: list<string>, file: record]: nothing -> bool {
     if not ($candidate | path exists) {
       false
     } else if ($file.name | str starts-with "memory/") {
-      same-content $file.bundle $candidate
+      matches-import $file $candidate
     } else {
-      if not (same-content $file.bundle $candidate) {
+      if not (matches-import $file $candidate) {
         error make --unspanned {msg: $"Existing session ($file.name) differs from the bundle"}
       }
       true
@@ -919,7 +927,7 @@ def imported-elsewhere [projects: list<string>, file: record]: nothing -> bool {
   }
 }
 
-export def plan-import [bundle: record]: nothing -> list<record> {
+export def plan-import [bundle: record, --target: string]: nothing -> list<record> {
   let root = (root)
   let project_root = (projects-dir)
   let projects = if ($project_root | path exists) {
@@ -930,8 +938,47 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     []
   }
 
-  let sessions = (
+  let rewritten = if $target == null {
+    []
+  } else {
+    let sources = ($bundle.files | where kind == "projects" | get -o bundle)
+    files-with-path $bundle.old $sources --glob ["*.jsonl" "*.json"]
+  }
+
+  let files = (
     $bundle.files
+    | each {|file|
+      let content = if $file.bundle in $rewritten {
+        open --raw $file.bundle
+      } else {
+        null
+      }
+      let transform = if ($content | describe) == "string" {
+        {|content| rewrite-text $content $bundle.old $target }
+      } else {
+        null
+      }
+      let expected = if $transform == null {
+        null
+      } else {
+        do $transform $content
+      }
+      let project = if $target != null and $file.kind == "projects" {
+        path-map $bundle.old $target $file.project
+      } else {
+        $file.project
+      }
+
+      $file | merge {
+        project: $project
+        expected: $expected
+        transform: $transform
+      }
+    }
+  )
+
+  let sessions = (
+    $files
     | where {|file| ($file | get -o kind) == "projects" }
     | where {|file| not ($file.name | str starts-with "memory/") }
   )
@@ -943,11 +990,11 @@ export def plan-import [bundle: record]: nothing -> list<record> {
 
   mut actions = []
 
-  for file in $bundle.files {
+  for file in $files {
     if ($file | get -o kind) == "file-history" {
       let target = ($root | path join "file-history" $file.session $file.name)
       if ($target | path exists) {
-        if (same-content $file.bundle $target) { continue }
+        if (matches-import $file $target) { continue }
         error make --unspanned {
           msg: $"($target) already exists with content that differs from the bundle's copy"
           help: "Compare the two files. Delete or rename the local file if the bundle's copy should win, then rerun the import."
@@ -976,7 +1023,7 @@ export def plan-import [bundle: record]: nothing -> list<record> {
 
     if not $staged and (imported-elsewhere $projects $file) { continue }
     if ($target | path exists) {
-      if (same-content $file.bundle $target) { continue }
+      if (matches-import $file $target) { continue }
       if $staged {
         error make --unspanned {
           msg: $"($target) already exists with content that differs from the bundle's copy"
@@ -989,7 +1036,9 @@ export def plan-import [bundle: record]: nothing -> list<record> {
       }
     }
     if $staged and (imported-elsewhere $projects $file) { continue }
-    let write = (copy-action "claude" "projects" $file.bundle $target $description)
+    let write = (
+      copy-action "claude" "projects" $file.bundle $target $description --transform $file.transform
+    )
     $actions = ($actions | append $write)
   }
   $actions

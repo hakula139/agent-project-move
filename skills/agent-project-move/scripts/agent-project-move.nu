@@ -266,6 +266,7 @@ def "main retire" [
 def "main import" [
   dir: string # Directory written by export
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to import
+  --target: string # Project path for incoming state, preserving descendant suffixes
   --apply # Write the planned changes
   --no-backup # Skip creating recovery backups
 ]: nothing -> nothing {
@@ -275,6 +276,11 @@ def "main import" [
     | each {|assistant| read-bundle $dir $assistant }
     | compact
   )
+  let target = if $target == null {
+    null
+  } else {
+    normalize-path $target --physical
+  }
   if ($bundles | is-empty) {
     error make --unspanned {
       msg: $"No bundle found under ($dir) for ($selected | str join ', ')"
@@ -287,7 +293,7 @@ def "main import" [
     | each {|bundle|
       {
         assistant: $bundle.assistant
-        actions: (assistant-plan-import $bundle.assistant $bundle)
+        actions: (assistant-plan-import $bundle.assistant $bundle --target $target)
       }
     }
   )

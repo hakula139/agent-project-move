@@ -599,6 +599,21 @@ export def export-bundle [
     }
   ]
 
+  let root_columns = (table-columns $db "project_roots")
+  if ($root_columns | is-not-empty) {
+    let roots = (
+      sqlite-rows $db "SELECT * FROM project_roots"
+      | where {|row| $row.project_id in $project_ids }
+    )
+    $tables = ($tables | append {
+      db: "state"
+      table: "project_roots"
+      columns: $root_columns
+      rows: $roots
+      key: ["project_id" "position"]
+    })
+  }
+
   if (table-columns $db "thread_spawn_edges" | is-not-empty) {
     let ids = ($threads | get -o id)
     let edges = (
@@ -639,9 +654,15 @@ def rollout-content [path: string, compressed: bool]: nothing -> string {
   }
 }
 
-export def plan-import [bundle: record]: nothing -> list<record> {
+export def plan-import [bundle: record, --target: string]: nothing -> list<record> {
+  let rewrite = if $target == null {
+    null
+  } else {
+    {|content| rewrite-text $content $bundle.old $target }
+  }
   let state_db = (state-db)
   let projects = (bundle-table $bundle "projects")
+  let roots = (bundle-table $bundle "project_roots")
   let threads = (bundle-table $bundle "threads")
   let edges = (bundle-table $bundle "thread_spawn_edges")
   if $state_db == null and (($projects.rows | is-not-empty) or ($threads.rows | is-not-empty)) {
@@ -655,6 +676,9 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   }
   if ($threads.rows | is-not-empty) {
     check-columns $state_db "threads" $threads.columns "Codex"
+  }
+  if ($roots.rows | is-not-empty) {
+    check-columns $state_db "project_roots" $roots.columns "Codex"
   }
   if ($edges.rows | is-not-empty) {
     check-columns $state_db "thread_spawn_edges" $edges.columns "Codex"
@@ -678,7 +702,12 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     if $local == null {
       error make --unspanned {msg: $"Existing thread ($file.thread) has no readable rollout"}
     }
-    let source_body = (rollout-content $file.bundle ($file | get -o compress | default false))
+    let content = (rollout-content $file.bundle ($file | get -o compress | default false))
+    let source_body = if $rewrite == null {
+      $content
+    } else {
+      do $rewrite $content
+    }
     let local_body = (rollout-content $local.file $local.compressed)
     if $source_body != $local_body {
       error make --unspanned {msg: $"Existing thread ($file.thread) differs from the bundle"}
@@ -689,17 +718,27 @@ export def plan-import [bundle: record]: nothing -> list<record> {
 
   for file in $bundle.files {
     if ($file | get -o thread | default "") in $imported { continue }
-    let target = (root | path join (rollout-target $file))
+    let source = $file.bundle
+    let to = (root | path join (rollout-target $file))
     let compress = ($file | get -o compress | default false)
-    if ($target | path exists) {
-      let equal = (rollout-content $file.bundle $compress) == (rollout-content $target $compress)
+    if ($to | path exists) {
+      let content = (rollout-content $source $compress)
+      let expected = if $rewrite == null {
+        $content
+      } else {
+        do $rewrite $content
+      }
+      let equal = $expected == (rollout-content $to $compress)
       if $equal { continue }
       error make --unspanned {
-        msg: $"($target) already exists with content that differs from the bundle's copy"
+        msg: $"($to) already exists with content that differs from the bundle's copy"
         help: "Compare the two files. Delete or rename the local file if the bundle's copy should win, then rerun the import."
       }
     }
-    let write = (copy-action "codex" "rollouts" $file.bundle $target "import rollout")
+    let label = "import rollout"
+    let write = (
+      copy-action "codex" "rollouts" $source $to $label --transform $rewrite --compressed=$compress
+    )
     $actions = ($actions | append $write)
   }
 
@@ -716,10 +755,62 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     | each {|row| sqlite-insert-if-new "projects" $projects.columns $row }
   )
 
+  let mapped_roots = (
+    $roots.rows
+    | each {|row|
+      if $target == null {
+        $row
+      } else {
+        $row | upsert path (path-map $bundle.old $target $row.path)
+      }
+    }
+  )
+
+  if $target != null and ($roots.columns | is-not-empty) and ($local_ids | is-not-empty) {
+    check-columns $state_db "project_roots" $roots.columns "Codex"
+    let local_roots = (sqlite-rows $state_db "SELECT * FROM project_roots")
+    for project in ($projects.rows | where {|row| $row.id in $local_ids }) {
+      let expected = (
+        $mapped_roots
+        | where project_id == $project.id
+        | sort-by position
+        | get -o path
+      )
+      let actual = (
+        $local_roots
+        | where project_id == $project.id
+        | sort-by position
+        | get -o path
+      )
+      if $actual != $expected {
+        error make --unspanned {
+          msg: $"Existing project ($project.id) has different roots from the targeted import"
+        }
+      }
+    }
+  }
+
+  let root_statements = (
+    $mapped_roots
+    | where {|row| $row.project_id not-in $local_ids }
+    | each {|row| sqlite-insert-if-new "project_roots" $roots.columns $row }
+  )
+
   let mapped = (
     $threads.rows
     | where {|row| $row.id not-in $imported }
     | each {|row|
+      let row = if $rewrite == null {
+        $row
+      } else {
+        let mapped = ($row | upsert cwd (path-map $bundle.old $target $row.cwd))
+        if ("sandbox_policy" in ($row | columns)) and $row.sandbox_policy != null {
+          $mapped | upsert sandbox_policy (rewrite-text $row.sandbox_policy $bundle.old $target)
+        } else {
+          $mapped
+        }
+      }
+
       let file = (
         $bundle.files
         | where thread == $row.id
@@ -767,7 +858,9 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     | compact
   )
 
-  let statements = ($project_statements ++ $thread_statements ++ $edge_statements)
+  let statements = (
+    $project_statements ++ $root_statements ++ $thread_statements ++ $edge_statements
+  )
   if ($statements | is-not-empty) {
     let load = (sql-action "codex" "state" $state_db $statements "import state")
     $actions = ($actions | append $load)

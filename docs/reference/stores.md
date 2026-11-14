@@ -45,6 +45,8 @@ A prune deletes the rollouts and `threads` rows with foreign keys on, then the r
 
 Selection follows `thread_spawn_edges` and attached parent identities toward descendants. Export carries incoming spawn edges for selected children, preserving an external parent's identity without selecting that parent. Retirement deletes selected edges, threads, rollouts, and history projections, and removes a project row only when no thread still references it.
 
+Export carries `project_roots` when the state database has that table. An import with `--target` maps incoming `threads.cwd`, JSON paths in `sandbox_policy`, and `project_roots.path`. Rollout paths follow the actual copied files. Project metadata and logical `agent_path` identities stay unchanged, and an existing project ID must have the same ordered root paths as the mapped incoming project.
+
 ## OMP
 
 Root: `$PI_CODING_AGENT_DIR`, defaulting to `~/.omp/agent`. Session and archive directories use a home-relative encoding, and memory directories use an absolute encoding. Memory lives under `$XDG_STATE_HOME/omp/memories`, defaulting to `~/.local/state/omp/memories`.

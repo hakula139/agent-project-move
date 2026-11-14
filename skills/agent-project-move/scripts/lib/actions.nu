@@ -43,11 +43,13 @@ export def copy-action [
   target: string
   description: string
   --transform: closure
+  --compressed # Decode and re-encode a transformed zstd copy
 ]: nothing -> record {
   action $assistant $store "copy" $source $description
   | merge {
     to: $target
     transform: $transform
+    compressed: $compressed
   }
 }
 
@@ -343,8 +345,14 @@ def execute-action [action: record]: nothing -> nothing {
       if $transform == null {
         ^cp --preserve=mode,timestamps $action.path $action.to
       } else {
-        let updated = (do $transform (open --raw $action.path))
-        write-file $action.to $updated --reference $action.path
+        let compressed = ($action | get -o compressed | default false)
+        let content = if $compressed {
+          decompress-file $action.path
+        } else {
+          open --raw $action.path
+        }
+        let updated = (do $transform $content)
+        write-file $action.to $updated --compress=$compressed --reference $action.path
       }
     }
     "edit" => {
