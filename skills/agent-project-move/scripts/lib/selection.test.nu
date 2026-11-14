@@ -52,3 +52,21 @@ def "test records without session ids cannot select unrelated roots" [] {
 
   assert equal $selected []
 }
+
+def "test exact root selection leaves absolute child projects unselected" [] {
+  let rows = [
+    {id: "root", cwd: "/", parent: null}
+    {id: "child", cwd: "/work/app", parent: null}
+    {id: "relative", cwd: "work/app", parent: null}
+  ]
+  let cases = [
+    {exact: false, expected: ["root" "child"]}
+    {exact: true, expected: ["root"]}
+  ]
+
+  for case in $cases {
+    let selected = (select-sessions $rows "/" --exact=$case.exact)
+
+    assert equal ($selected | get id) $case.expected
+  }
+}

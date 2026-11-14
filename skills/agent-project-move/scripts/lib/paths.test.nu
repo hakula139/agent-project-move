@@ -108,3 +108,16 @@ def "test a path matches the exact base and its children but not a sibling" [] {
     }
   }
 }
+
+def "test the root prefix matches absolute paths only" [] {
+  let cases = [
+    {path: "/", expected: true}
+    {path: "/work/app", expected: true}
+    {path: "work/app", expected: false}
+    {path: null, expected: false}
+  ]
+
+  for case in $cases {
+    assert equal (path-match "/" $case.path) $case.expected
+  }
+}
