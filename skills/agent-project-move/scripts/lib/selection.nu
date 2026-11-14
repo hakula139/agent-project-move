@@ -13,18 +13,25 @@ export def select-sessions [
   if $exact and ($session_ids | is-not-empty) {
     error make --unspanned {msg: "--exact and --session-ids are mutually exclusive"}
   }
-  let rows = ($rows | where {|row|
-    ($row.id | describe) == "string" and $row.id != ""
-  })
+  let rows = (
+    $rows
+    | where {|row| ($row.id | describe) == "string" and $row.id != "" }
+  )
+
   mut ids = (
     $rows
     | where {|row|
-      let matches = if $exact { $row.cwd == $path } else { path-match $path $row.cwd }
+      let matches = if $exact {
+        $row.cwd == $path
+      } else {
+        path-match $path $row.cwd
+      }
       $matches and (($session_ids | is-empty) or ($row.id in $session_ids))
     }
     | get -o id
     | uniq
   )
+
   loop {
     let descendants = (
       $rows
@@ -35,5 +42,6 @@ export def select-sessions [
     if ($expanded | length) == ($ids | length) { break }
     $ids = $expanded
   }
+
   $rows | where {|row| $row.id in $ids }
 }

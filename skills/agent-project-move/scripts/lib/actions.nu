@@ -26,7 +26,7 @@ export def edit-action [
   transform: closure
   description: string
 ]: nothing -> record {
-  action $assistant $store edit $path $description
+  action $assistant $store "edit" $path $description
   | merge {transform: $transform}
 }
 
@@ -38,7 +38,7 @@ export def copy-action [
   description: string
   --transform: closure
 ]: nothing -> record {
-  action $assistant $store copy $source $description
+  action $assistant $store "copy" $source $description
   | merge {to: $target, transform: $transform}
 }
 
@@ -49,7 +49,7 @@ export def rename-action [
   target: string
   description: string
 ]: nothing -> record {
-  action $assistant $store rename $source $description
+  action $assistant $store "rename" $source $description
   | merge {to: $target}
 }
 
@@ -63,7 +63,7 @@ export def sql-action [
   --rows-first # Delete rows before the files they reference
   --foreign-keys # Delete child rows through the schema's cascades
 ]: nothing -> record {
-  action $assistant $store sql $db $description
+  action $assistant $store "sql" $db $description
   | merge {
     statements: $statements
     phase: (if $derived { "derived" } else { null })
@@ -170,7 +170,11 @@ export def column-actions [
 
 def manifest-view [action: record]: nothing -> record {
   let view = ($action | select assistant store op path description)
-  if $action.op in [rename copy] { $view | upsert to $action.to } else { $view }
+  if $action.op in ["rename" "copy"] {
+    $view | upsert to $action.to
+  } else {
+    $view
+  }
 }
 
 export def same-content [left: string, right: string]: nothing -> bool {
@@ -181,8 +185,19 @@ export def same-content [left: string, right: string]: nothing -> bool {
 export def same-directory [left: string, right: string]: nothing -> bool {
   if $left == $right { return true }
   if not (($left | path exists) and ($right | path exists)) { return false }
-  let left_id = (^stat -L -c '%d:%i' $left | str trim)
-  let right_id = (^stat -L -c '%d:%i' $right | str trim)
+  let left_id = (
+    ^stat $left
+      -L
+      -c "%d:%i"
+    | str trim
+  )
+  let right_id = (
+    ^stat $right
+      -L
+      -c "%d:%i"
+    | str trim
+  )
+
   $left_id == $right_id
 }
 
@@ -202,6 +217,7 @@ export def merge-actions [
     return [(rename-action $assistant $store $source $target $description)]
   }
 
+  let prefer = $prefer_destination
   let source_type = ($source | path type)
   let target_type = ($target | path type)
   if $source_type != $target_type {
@@ -212,11 +228,11 @@ export def merge-actions [
   }
 
   if $source_type != "dir" {
-    if $prefer_destination {
-      return [(action $assistant $store delete $source "destination wins")]
+    if $prefer {
+      return [(action $assistant $store "delete" $source "destination wins")]
     }
     if (same-content $source $target) {
-      return [(action $assistant $store delete $source "duplicate of the destination")]
+      return [(action $assistant $store "delete" $source "duplicate of the destination")]
     }
     error make --unspanned {
       msg: $"Both ($source) and ($target) exist with different content"
@@ -233,12 +249,11 @@ export def merge-actions [
     $actions = (
       $actions
       ++ (
-        merge-actions $assistant $store $from $to $description --skip $skip
-        --prefer-destination=$prefer_destination
+        merge-actions $assistant $store $from $to $description --skip $skip --prefer-destination=$prefer
       )
     )
   }
-  $actions | append (action $assistant $store rmdir $source "remove emptied source directory")
+  $actions | append (action $assistant $store "rmdir" $source "remove emptied source directory")
 }
 
 export def decompress-file [path: string]: nothing -> string {
@@ -253,7 +268,14 @@ export def decompress-file [path: string]: nothing -> string {
 }
 
 def compress-file [content: string, target: string]: nothing -> nothing {
-  let run = ($content | ^zstd -q -f -o $target | complete)
+  let run = (
+    $content
+    | ^zstd
+        -q
+        -f
+        -o $target
+    | complete
+  )
   if $run.exit_code != 0 {
     error make --unspanned {
       msg: $"zstd failed on ($target): ($run.stderr | str trim)"
@@ -264,7 +286,7 @@ def compress-file [content: string, target: string]: nothing -> nothing {
 
 def write-file [path: string, content: any, --compress, --reference: string]: nothing -> nothing {
   let reference = ($reference | default $path)
-  let mode = (^stat -c %a $reference | str trim)
+  let mode = (^stat -c "%a" $reference | str trim)
   let temporary = (^mktemp $"($path).tmp.XXXXXXXXXX" | str trim)
   try {
     if $compress {
@@ -283,7 +305,11 @@ def write-file [path: string, content: any, --compress, --reference: string]: no
 
 def edit-file [path: string, transform: closure]: nothing -> nothing {
   let compress = ($path | str ends-with ".zst")
-  let content = if $compress { decompress-file $path } else { open --raw $path }
+  let content = if $compress {
+    decompress-file $path
+  } else {
+    open --raw $path
+  }
   if ($content | describe) != "string" {
     error make --unspanned {
       msg: $"Refusing to edit the binary file ($path)"
@@ -297,11 +323,11 @@ def edit-file [path: string, transform: closure]: nothing -> nothing {
 
 def execute-action [action: record]: nothing -> nothing {
   match $action.op {
-    'rename' => {
+    "rename" => {
       mkdir ($action.to | path dirname)
       ^mv -T $action.path $action.to
     }
-    'copy' => {
+    "copy" => {
       mkdir ($action.to | path dirname)
       let transform = ($action | get -o transform)
       if $transform == null {
@@ -311,9 +337,15 @@ def execute-action [action: record]: nothing -> nothing {
         write-file $action.to $updated --reference $action.path
       }
     }
-    'edit' => { edit-file $action.path $action.transform }
-    'delete' => { rm --recursive --force $action.path }
-    'rmdir' => { ^rmdir $action.path }
+    "edit" => {
+      edit-file $action.path $action.transform
+    }
+    "delete" => {
+      rm --recursive --force $action.path
+    }
+    "rmdir" => {
+      ^rmdir $action.path
+    }
     _ => {
       error make --unspanned {
         msg: $"Unknown action ($action.op)"
@@ -327,19 +359,29 @@ def backup-path [root: string, path: string]: nothing -> nothing {
   if not ($path | path exists) { return }
   let destination = ($root | path join ($path | str replace --regex '^/' ''))
   mkdir ($destination | path dirname)
-  ^cp --recursive --preserve=mode,timestamps $path $destination
+  (^cp $path $destination
+    --recursive
+    --preserve=mode,timestamps
+  )
 }
 
 def backup-root []: nothing -> string {
   let base = ($env.XDG_STATE_HOME? | default --empty ($env.HOME | path join ".local/state"))
-  $base | path join agent-project-move
+  $base | path join "agent-project-move"
 }
 
 def run-sql-actions [actions: list<record>]: nothing -> nothing {
-  for db in ($actions | where op == sql | get path | uniq) {
+  let databases = (
+    $actions
+    | where op == "sql"
+    | get path
+    | uniq
+  )
+
+  for db in $databases {
     let statements = (
       $actions
-      | where op == sql
+      | where op == "sql"
       | where path == $db
       | get statements
       | flatten
@@ -354,22 +396,36 @@ def run-sql-actions [actions: list<record>]: nothing -> nothing {
 }
 
 def backup-all [actions: list<record>]: nothing -> string {
-  let stamp = (date now | format date '%Y%m%dT%H%M%S')
+  let stamp = (date now | format date "%Y%m%dT%H%M%S")
   let root = (backup-root)
   let backup_dir = ($root | path join $"($stamp)-($nu.pid)")
-  let databases = ($actions | where op == sql | get path | uniq)
+  let databases = (
+    $actions
+    | where op == "sql"
+    | get path
+    | uniq
+  )
+
   mkdir $root
-  ^chmod 700 $root
+  ^chmod "700" $root
   mkdir $backup_dir
-  ^chmod 700 $backup_dir
+  ^chmod "700" $backup_dir
+
   $actions
   | each {|action| manifest-view $action }
   | to json
-  | save --force ($backup_dir | path join manifest.json)
+  | save --force ($backup_dir | path join "manifest.json")
 
-  for path in ($actions | where op in [edit delete] | get path | outermost-paths $in) {
+  let paths = (
+    $actions
+    | where op in ["edit" "delete"]
+    | get path
+    | outermost-paths $in
+  )
+  for path in $paths {
     backup-path $backup_dir $path
   }
+
   for db in $databases {
     let destination = ($backup_dir | path join ($db | str replace --regex '^/' ''))
     mkdir ($destination | path dirname)
@@ -381,6 +437,7 @@ def backup-all [actions: list<record>]: nothing -> string {
       }
     }
   }
+
   print $"Backed up to ($backup_dir)"
   $backup_dir
 }
@@ -403,7 +460,7 @@ export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> n
       let group = ($remaining | where assistant == $assistant)
       let rows = ($group | where {|action| ($action | get -o rows_first) == true })
       let after = ($group | where {|action| ($action | get -o rows_first) != true })
-      $rows ++ ($after | where op != sql) ++ ($after | where op == sql)
+      $rows ++ ($after | where op != "sql") ++ ($after | where op == "sql")
     }
   )
   let tail = ($groups | flatten)
@@ -412,18 +469,24 @@ export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> n
   if not $apply {
     $ordered | each {|action| manifest-view $action | default "" to } | print-table
     let count = ($ordered | length)
-    let backup = if $no_backup { "No backup will be created." } else {
+    let backup = if $no_backup {
+      "No backup will be created."
+    } else {
       $"A backup goes to (backup-root) first."
     }
     print $"Dry run: ($count) (plural $count 'action' 'actions') planned, nothing written. Rerun with --apply to write the plan. ($backup)"
     return
   }
 
-  let backup_dir = if $no_backup { null } else { backup-all $ordered }
+  let backup_dir = if $no_backup {
+    null
+  } else {
+    backup-all $ordered
+  }
 
   run-sql-actions $derived
   for action in $tail {
-    if $action.op == sql {
+    if $action.op == "sql" {
       run-sql-actions [$action]
     } else {
       execute-action $action

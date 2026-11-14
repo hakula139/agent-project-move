@@ -152,7 +152,14 @@ def selection-ids [exact: bool, value: any]: nothing -> list<string> {
     error make --unspanned {msg: "--exact and --session-ids are mutually exclusive"}
   }
   if $value == null { return [] }
-  let ids = ($value | split row "," | each {|id| $id | str trim } | where {|id| $id != "" } | uniq)
+  let ids = (
+    $value
+    | split row ","
+    | str trim
+    | where {|id| $id != "" }
+    | uniq
+  )
+
   if ($ids | is-empty) {
     error make --unspanned {msg: "--session-ids requires at least one session ID"}
   }

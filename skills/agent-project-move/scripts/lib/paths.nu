@@ -12,9 +12,19 @@ export def normalize-path [
   path: string
   --physical # Resolve symlinks, so state records the spelling the working directory reports
 ]: nothing -> string {
-  let expanded = if $physical { $path | path expand } else { $path | path expand --no-symlink }
+  let expanded = if $physical {
+    $path | path expand
+  } else {
+    $path | path expand --no-symlink
+  }
   let trimmed = ($expanded | str replace --regex '/+$' '')
   if $trimmed == "" { "/" } else { $trimmed }
+}
+
+export def path-match [base: string, path: any]: nothing -> bool {
+  if ($path | describe) != "string" { return false }
+  if $base == "/" { return ($path | str starts-with "/") }
+  $path == $base or ($path | str starts-with ($base + "/"))
 }
 
 export def check-destination [old: string, new: string]: nothing -> nothing {
@@ -38,14 +48,12 @@ export def check-destination [old: string, new: string]: nothing -> nothing {
   }
 }
 
-export def path-match [base: string, path: any]: nothing -> bool {
-  if ($path | describe) != "string" { return false }
-  if $base == "/" { return ($path | str starts-with "/") }
-  $path == $base or ($path | str starts-with ($base + "/"))
-}
-
 export def path-map [old: string, new: string, path: string]: nothing -> string {
-  if $path == $old { $new } else { $new + ($path | str substring ($old | str length)..) }
+  if $path == $old {
+    $new
+  } else {
+    $new + ($path | str substring ($old | str length)..)
+  }
 }
 
 export def match-any [bases: list<string>, path: any]: nothing -> bool {
@@ -54,19 +62,25 @@ export def match-any [bases: list<string>, path: any]: nothing -> bool {
 
 export def outermost-paths [paths: list<string>]: nothing -> list<string> {
   let unique = ($paths | uniq)
-  $unique | where {|path|
+  $unique
+  | where {|path|
     not ($unique | any {|other| $other != $path and (path-match $other $path) })
   }
 }
 
 export def parse-paths [value: string]: nothing -> list<string> {
-  $value | split row "," | each {|path| $path | str trim } | where {|path| $path != "" }
+  $value
+  | split row ","
+  | str trim
+  | where {|path| $path != "" }
 }
 
 export def files-under [dir: string]: nothing -> list<string> {
   if not ($dir | path exists) { return [] }
   if ($dir | path type) != "dir" { return [$dir] }
-  (^find $dir -type f | lines | sort)
+  ^find $dir -type "f"
+  | lines
+  | sort
 }
 
 # Whether a path is missing. A path under an unmounted drive root counts as present, so a prune

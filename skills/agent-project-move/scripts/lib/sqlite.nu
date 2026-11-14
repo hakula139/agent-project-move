@@ -18,11 +18,19 @@ export def sql-quote [value: any]: nothing -> string {
 }
 
 export def sql-list [values: list]: nothing -> string {
-  $values | each {|value| sql-quote $value } | str join ", "
+  $values
+  | each {|value| sql-quote $value }
+  | str join ", "
 }
 
 export def sqlite-rows [db: string, query: string]: nothing -> list {
-  let run = ($query | ^sqlite3 -readonly -json $db | complete)
+  let run = (
+    $query
+    | ^sqlite3 $db
+        -readonly
+        -json
+    | complete
+  )
   if $run.exit_code != 0 {
     error make --unspanned {
       msg: $"sqlite3 failed on ($db): ($run.stderr | str trim)"
@@ -30,7 +38,11 @@ export def sqlite-rows [db: string, query: string]: nothing -> list {
     }
   }
   let output = ($run.stdout | str trim)
-  if $output == "" { [] } else { $output | from json }
+  if $output == "" {
+    []
+  } else {
+    $output | from json
+  }
 }
 
 def sqlite-columns [db: string, table: string]: nothing -> list<string> {
@@ -48,7 +60,9 @@ export def latest-db [pattern: string, table: string]: nothing -> any {
     glob $pattern
     | each {|db|
       let version = (
-        ($db | path basename | parse --regex '_(?<n>\d+)\.sqlite$')
+        $db
+        | path basename
+        | parse --regex '_(?<n>\d+)\.sqlite$'
         | get -o 0.n
         | default "0"
         | into int
@@ -58,7 +72,13 @@ export def latest-db [pattern: string, table: string]: nothing -> any {
     | where {|entry| sqlite-has-table $entry.db $table }
     | sort-by version
   )
-  if ($candidates | is-empty) { null } else { $candidates | last | get db }
+  if ($candidates | is-empty) {
+    null
+  } else {
+    $candidates
+    | last
+    | get db
+  }
 }
 
 # SQL for a column equal to a path or under it. `substr` counts characters, so non-ASCII paths,

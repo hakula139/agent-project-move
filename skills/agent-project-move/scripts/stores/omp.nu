@@ -46,14 +46,14 @@ def agent-dir []: nothing -> string {
 
 def state-root []: nothing -> string {
   let base = ($env.XDG_STATE_HOME? | default --empty ($env.HOME | path join ".local/state"))
-  $base | path join omp
+  $base | path join "omp"
 }
 
-def session-root []: nothing -> string { agent-dir | path join sessions }
+def session-root []: nothing -> string { agent-dir | path join "sessions" }
 
 def archive-root []: nothing -> string { agent-dir | path join "archive/sessions" }
 
-def memory-root []: nothing -> string { state-root | path join memories }
+def memory-root []: nothing -> string { state-root | path join "memories" }
 
 # Resolve a path without requiring it to exist.
 def resolved-path [path: string]: nothing -> string {
@@ -110,7 +110,7 @@ def session-cwds [roots: list<string>]: nothing -> list<string> {
   let existing = ($roots | where {|root| $root | path exists })
   if ($existing | is-empty) { return [] }
 
-  rg-lines [-m1 -o --no-filename --no-messages -g '*.jsonl' '"cwd":"[^"]*"' ...$existing]
+  rg-lines ["-m1" "-o" "--no-filename" "--no-messages" "-g" "*.jsonl" '"cwd":"[^"]*"' ...$existing]
   | parse --regex '^"cwd":"(?<cwd>[^"]*)"$'
   | get cwd
   | each {|value| json-value $value }
@@ -120,7 +120,7 @@ export def recorded-paths []: nothing -> list<string> {
   let sessions = (session-cwds [(session-root) (archive-root)])
 
   let agent = (agent-dir)
-  let history_db = ($agent | path join history.db)
+  let history_db = ($agent | path join "history.db")
   let history = if ($history_db | path exists) {
     let rows = (sqlite-rows $history_db "SELECT cwd FROM history WHERE cwd IS NOT NULL")
     let recaps = (sqlite-rows $history_db "SELECT cwd FROM session_recaps WHERE cwd IS NOT NULL")
@@ -129,9 +129,12 @@ export def recorded-paths []: nothing -> list<string> {
     []
   }
 
-  let agent_db = ($agent | path join agent.db)
+  let agent_db = ($agent | path join "agent.db")
   let agent_paths = if ($agent_db | path exists) {
-    let threads = (sqlite-rows $agent_db "SELECT cwd FROM threads WHERE cwd IS NOT NULL" | get cwd)
+    let threads = (
+      sqlite-rows $agent_db "SELECT cwd FROM threads WHERE cwd IS NOT NULL"
+      | get cwd
+    )
     let jobs = (
       sqlite-rows $agent_db "SELECT job_key FROM jobs WHERE job_key LIKE 'global:%'"
       | get job_key
@@ -158,9 +161,11 @@ export def scan []: nothing -> list<record> {
     let last_used = if ($files | is-empty) {
       null
     } else {
-      ls ...$files | get modified | math max
+      ls ...$files
+      | get modified
+      | math max
     }
-    {assistant: omp, path: $path, sessions: ($files | length), last_used: $last_used}
+    {assistant: "omp", path: $path, sessions: ($files | length), last_used: $last_used}
   }
   | sort-by path
 }
@@ -174,29 +179,29 @@ def session-actions [candidates: list<string>, old: string, new: string]: nothin
   let rewrite = {|content| rewrite-text $content $old $new }
   mut actions = (
     $session_files
-    | each {|file| edit-action omp sessions $file $rewrite "rewrite session cwd" }
+    | each {|file| edit-action "omp" "sessions" $file $rewrite "rewrite session cwd" }
   )
 
   for path in $candidates {
     let mapped = (path-map $old $new $path)
     for spec in [
-      {kind: sessions, root: (session-root), from: $path, to: $mapped}
-      {kind: archives, root: (archive-root), from: $path, to: $mapped}
+      {kind: "sessions", root: (session-root), from: $path, to: $mapped}
+      {kind: "archives", root: (archive-root), from: $path, to: $mapped}
     ] {
       let source = ($spec.root | path join (session-encode-here $spec.from))
       let target = ($spec.root | path join (session-encode-here $spec.to))
       $actions = (
         $actions
-        ++ (merge-actions omp $spec.kind $source $target $"merge ($spec.kind) directory")
+        ++ (merge-actions "omp" $spec.kind $source $target $"merge ($spec.kind) directory")
       )
     }
     let memory = (memory-root | path join (memory-encode $path))
     let moved_memory = (memory-root | path join (memory-encode $mapped))
+    let description = "merge memory directory"
     $actions = (
       $actions
       ++ (
-        merge-actions omp memories $memory $moved_memory "merge memory directory"
-        --prefer-destination
+        merge-actions "omp" "memories" $memory $moved_memory $description --prefer-destination
       )
     )
   }
@@ -225,14 +230,16 @@ def rollout-actions [db: string, old: string, new: string]: nothing -> list<reco
         )
         (
           "UPDATE threads SET rollout_path = " + $value
-          + " WHERE " + (path-condition rollout_path [$from])
+          + " WHERE " + (path-condition "rollout_path" [$from])
         )
       }
     }
     | compact
   )
-  if ($statements | is-empty) { [] } else {
-    [(sql-action omp agent $db $statements "rewrite rollout paths")]
+  if ($statements | is-empty) {
+    []
+  } else {
+    [(sql-action "omp" "agent" $db $statements "rewrite rollout paths")]
   }
 }
 
@@ -240,27 +247,38 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
   let recorded = (recorded-paths | where {|path| path-match $old $path })
   let candidates = ($recorded ++ [$old] | uniq)
   let agent = (agent-dir)
-  let history_db = ($agent | path join history.db)
-  let agent_db = ($agent | path join agent.db)
+  let history_db = ($agent | path join "history.db")
+  let agent_db = ($agent | path join "agent.db")
 
   let columns = [
-    {db: $history_db, table: history, column: cwd}
-    {db: $history_db, table: session_recaps, column: cwd}
-    {db: $agent_db, table: threads, column: cwd}
-    {db: $agent_db, table: jobs, column: job_key, prefix: "global:", collide: true}
+    {db: $history_db, table: "history", column: "cwd"}
+    {db: $history_db, table: "session_recaps", column: "cwd"}
+    {db: $agent_db, table: "threads", column: "cwd"}
+    {db: $agent_db, table: "jobs", column: "job_key", prefix: "global:", collide: true}
   ]
 
   (
     (session-actions $candidates $old $new)
-    ++ (column-actions omp $columns $old $new)
+    ++ (column-actions "omp" $columns $old $new)
     ++ (rollout-actions $agent_db $old $new)
   )
 }
 
+# --------------------------------------------------------------------------------------------------
+# Session selection
+# --------------------------------------------------------------------------------------------------
+
 def session-header [file: string]: nothing -> any {
   if not ($file | str ends-with ".jsonl") { return null }
-  open --raw $file | lines
-  | each {|line| try { $line | from json } catch { null } }
+  open --raw $file
+  | lines
+  | each {|line|
+    try {
+      $line | from json
+    } catch {
+      null
+    }
+  }
   | where {|row| ($row | get -o type) == "session" }
   | first
 }
@@ -268,13 +286,18 @@ def session-header [file: string]: nothing -> any {
 def session-records []: nothing -> list<record> {
   mut rows = []
   for spec in [
-    {kind: sessions, root: (session-root)}
-    {kind: archives, root: (archive-root)}
+    {kind: "sessions", root: (session-root)}
+    {kind: "archives", root: (archive-root)}
   ] {
     for file in (files-under $spec.root | where {|file| $file | str ends-with ".jsonl" }) {
       let header = (session-header $file)
       if $header == null { continue }
-      let project = ($file | path relative-to $spec.root | split row "/" | first)
+      let project = (
+        $file
+        | path relative-to $spec.root
+        | split row "/"
+        | first
+      )
       let directory = ($spec.root | path join $project)
       $rows = ($rows | append {
         id: $header.id
@@ -288,22 +311,28 @@ def session-records []: nothing -> list<record> {
   }
   let agent = (agent-dir)
   for spec in [
-    {db: ($agent | path join agent.db), table: threads, key: id}
-    {db: ($agent | path join history.db), table: history, key: session_id}
-    {db: ($agent | path join history.db), table: session_recaps, key: session_id}
+    {db: ($agent | path join "agent.db"), table: "threads", key: "id"}
+    {db: ($agent | path join "history.db"), table: "history", key: "session_id"}
+    {db: ($agent | path join "history.db"), table: "session_recaps", key: "session_id"}
   ] {
     if not ($spec.db | path exists) { continue }
     let records = (sqlite-rows $spec.db $"SELECT * FROM ($spec.table)")
-    $rows = ($rows ++ ($records | each {|row|
-      {id: ($row | get $spec.key), cwd: $row.cwd, parent: ($row | get -o parent_thread_id)}
-    }))
+    let sessions = (
+      $records
+      | each {|row|
+        {id: ($row | get $spec.key), cwd: $row.cwd, parent: ($row | get -o parent_thread_id)}
+      }
+    )
+    $rows = ($rows ++ $sessions)
   }
   let inventory = $rows
-  $inventory | each {|row|
+  $inventory
+  | each {|row|
     let file = ($row | get -o file)
     let parent = ($row | get -o parent)
     let linked = (
-      $inventory | where {|candidate|
+      $inventory
+      | where {|candidate|
         let candidate_file = ($candidate | get -o file)
         (
           ($parent != null and ($candidate.id == $parent or $candidate_file == $parent))
@@ -311,20 +340,39 @@ def session-records []: nothing -> list<record> {
             path-match ($candidate_file | str replace --regex '\.jsonl$' '') $file
           ))
         )
-      } | sort-by {|candidate| $candidate | get -o file | default "" | str length } | last
+      }
+      | sort-by {|candidate|
+        $candidate
+        | get -o file
+        | default ""
+        | str length
+      }
+      | last
     )
-    let owner = if $file == null { $row.cwd } else {
+    let owner = if $file == null {
+      $row.cwd
+    } else {
       let main = (
-        $inventory | where {|candidate|
+        $inventory
+        | where {|candidate|
+          let directory = (
+            $candidate
+            | get -o file
+            | default ""
+            | path dirname
+          )
           (
             ($candidate | get -o directory) == $row.directory
-            and (($candidate | get -o file | default "" | path dirname) == $row.directory)
+            and $directory == $row.directory
           )
-        } | first
+        }
+        | first
       )
       if $main == null { $row.cwd } else { $main.cwd }
     }
-    $row | upsert parent (if $linked == null { null } else { $linked.id }) | upsert owner $owner
+    $row
+    | upsert parent (if $linked == null { null } else { $linked.id })
+    | upsert owner $owner
   }
 }
 
@@ -339,9 +387,9 @@ def directory-prune-actions [
   mut actions = []
   for path in ($paths | uniq) {
     for spec in [
-      {kind: sessions, directory: (session-root | path join (session-encode-here $path))}
-      {kind: archives, directory: (archive-root | path join (session-encode-here $path))}
-      {kind: memories, directory: (memory-root | path join (memory-encode $path))}
+      {kind: "sessions", directory: (session-root | path join (session-encode-here $path))}
+      {kind: "archives", directory: (archive-root | path join (session-encode-here $path))}
+      {kind: "memories", directory: (memory-root | path join (memory-encode $path))}
     ] {
       let directory = $spec.directory
       if not ($directory | path exists) { continue }
@@ -363,7 +411,7 @@ def directory-prune-actions [
         }
       }
 
-      $actions = ($actions | append (action omp $spec.kind delete $directory "project state"))
+      $actions = ($actions | append (action "omp" $spec.kind "delete" $directory "project state"))
     }
   }
   $actions
@@ -375,19 +423,24 @@ def history-deletions [
   --metadata-paths: list<string> = []
 ]: nothing -> list<record> {
   if not ($db | path exists) { return [] }
-  let sessions = if ($ids | is-empty) { "0" } else { $"session_id IN \((sql-list $ids)\)" }
-  let metadata = if ($metadata_paths | is-empty) { "0" } else {
+  let sessions = if ($ids | is-empty) {
+    "0"
+  } else {
+    $"session_id IN \((sql-list $ids)\)"
+  }
+  let metadata = if ($metadata_paths | is-empty) {
+    "0"
+  } else {
     $"session_id IS NULL AND cwd IN \((sql-list $metadata_paths)\)"
   }
   let condition = $"\(($sessions)\) OR \(($metadata)\)"
   let history = $"history WHERE ($condition)"
   let recaps = $"session_recaps WHERE \(($condition)\)"
-  let titles = if ($ids | is-empty) { "0" } else { $"session_id IN \((sql-list $ids)\)" }
   let counts = (
     sqlite-rows $db (
       $"SELECT \(SELECT count\(*\) FROM ($history)\) AS history,"
       + $" \(SELECT count\(*\) FROM ($recaps)\) AS recaps,"
-      + $" \(SELECT count\(*\) FROM session_titles WHERE ($titles)\) AS titles"
+      + $" \(SELECT count\(*\) FROM session_titles WHERE ($sessions)\) AS titles"
     )
     | get 0
   )
@@ -402,27 +455,31 @@ def history-deletions [
       $statements | append $"DELETE FROM session_titles WHERE session_id IN \((sql-list $ids)\)"
     )
   }
+  if ($counts.recaps | into int) > 0 {
+    $statements = ($statements | append $"DELETE FROM session_recaps WHERE \(($condition)\)")
+  }
+
   if ($counts.history | into int) > 0 {
-    let scope = $"SELECT session_id FROM ($history)"
-    $statements = (
-      $statements | append $"DELETE FROM session_recaps WHERE session_id IN \(($scope)\)"
-    )
     $statements = (
       $statements | append $"DELETE FROM history WHERE \(($condition)\)"
     )
     $statements = ($statements | append "INSERT INTO history_fts(history_fts) VALUES('rebuild')")
   }
-  if ($counts.recaps | into int) > 0 {
-    $statements = ($statements | append $"DELETE FROM session_recaps WHERE \(($condition)\)")
-  }
-  [(sql-action omp history $db $statements "delete history" --rows-first)]
+
+  [(sql-action "omp" "history" $db $statements "delete history" --rows-first)]
 }
 
 def agent-deletions [db: string, ids: list<string>, paths: list<string>]: nothing -> list<record> {
   if not ($db | path exists) { return [] }
 
-  let condition = if ($ids | is-empty) { "0" } else { $"id IN \((sql-list $ids)\)" }
-  let global = if ($paths | is-empty) { "0" } else {
+  let condition = if ($ids | is-empty) {
+    "0"
+  } else {
+    $"id IN \((sql-list $ids)\)"
+  }
+  let global = if ($paths | is-empty) {
+    "0"
+  } else {
     let keys = ($paths | each {|path| "global:" + $path })
     $"job_key IN \((sql-list $keys)\)"
   }
@@ -449,7 +506,7 @@ def agent-deletions [db: string, ids: list<string>, paths: list<string>]: nothin
   if $job_count > 0 {
     $statements = ($statements | append $"DELETE FROM jobs WHERE ($global)")
   }
-  [(sql-action omp agent $db $statements "delete threads and jobs" --rows-first)]
+  [(sql-action "omp" "agent" $db $statements "delete threads and jobs" --rows-first)]
 }
 
 export def plan-prune [paths: list<string>]: nothing -> list<record> {
@@ -467,8 +524,8 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
 
   (
     (directory-prune-actions $paths $live_paths)
-    ++ (history-deletions ($agent | path join history.db) $ids --metadata-paths $metadata)
-    ++ (agent-deletions ($agent | path join agent.db) $ids $metadata)
+    ++ (history-deletions ($agent | path join "history.db") $ids --metadata-paths $metadata)
+    ++ (agent-deletions ($agent | path join "agent.db") $ids $metadata)
   )
 }
 
@@ -479,8 +536,14 @@ export def plan-retire [
 ]: nothing -> list<record> {
   let records = (session-records)
   let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
-  let ids = ($selected | get -o id | compact | uniq)
+  let ids = (
+    $selected
+    | get -o id
+    | compact
+    | uniq
+  )
   if ($ids | is-empty) { return [] }
+
   let remaining = ($records | where {|row| $row.id not-in $ids })
   let paths = (
     ($selected | get -o cwd) ++ ($selected | get -o owner)
@@ -502,22 +565,27 @@ export def plan-retire [
   mut actions = (
     $session_files ++ $subtrees
     | outermost-paths $in
-    | each {|file| action omp sessions delete $file "retire session tree" }
+    | each {|file| action "omp" "sessions" "delete" $file "retire session tree" }
   )
   for path in $paths {
     let memory = (memory-root | path join (memory-encode $path))
-    let shared = ($remaining | any {|row|
-      (valid-path $row.cwd) and ((memory-encode $row.cwd) == (memory-encode $path))
-    })
+    let shared = (
+      $remaining
+      | any {|row|
+        (valid-path $row.cwd) and ((memory-encode $row.cwd) == (memory-encode $path))
+      }
+    )
+
     if ($memory | path exists) and not $shared {
-      $actions = ($actions | append (action omp memories delete $memory "unreferenced memory"))
+      let remove = (action "omp" "memories" "delete" $memory "unreferenced memory")
+      $actions = ($actions | append $remove)
     }
   }
   let agent = (agent-dir)
   (
     $actions
-    ++ (history-deletions ($agent | path join history.db) $ids)
-    ++ (agent-deletions ($agent | path join agent.db) $ids $paths)
+    ++ (history-deletions ($agent | path join "history.db") $ids)
+    ++ (agent-deletions ($agent | path join "agent.db") $ids $paths)
   )
 }
 
@@ -543,11 +611,6 @@ def history-tables [
       ($row.session_id in $ids) or ($row.session_id == null and $row.cwd in $metadata_paths)
     }
   )
-  let sessions = (
-    ($history | get -o session_id | compact)
-    ++ ($recaps | get -o session_id | compact)
-  )
-  let ids = ($sessions | uniq)
   let session_titles = if ($ids | is-empty) {
     []
   } else {
@@ -555,32 +618,9 @@ def history-tables [
   }
 
   [
-    {
-      db: history
-      table: history
-      columns: (table-columns $db history)
-      rows: $history
-      key: null
-      natural: [prompt]
-      drop: [id]
-    }
-    {
-      db: history
-      table: session_titles
-      columns: (table-columns $db session_titles)
-      rows: $session_titles
-      key: [session_id]
-      drop: []
-    }
-    {
-      db: history
-      table: session_recaps
-      columns: (table-columns $db session_recaps)
-      rows: $recaps
-      key: null
-      natural: [session_id created_at]
-      drop: [id]
-    }
+    {db: "history", table: "history", columns: (table-columns $db "history"), rows: $history, key: null, natural: ["prompt"], drop: ["id"]}
+    {db: "history", table: "session_titles", columns: (table-columns $db "session_titles"), rows: $session_titles, key: ["session_id"], drop: []}
+    {db: "history", table: "session_recaps", columns: (table-columns $db "session_recaps"), rows: $recaps, key: null, natural: ["session_id" "created_at"], drop: ["id"]}
   ]
 }
 
@@ -597,11 +637,13 @@ def agent-tables [
     }
   )
   let thread_ids = ($threads | get -o id)
+
   let stage1 = if ($thread_ids | is-not-empty) {
     sqlite-rows $db $"SELECT * FROM stage1_outputs WHERE thread_id IN \((sql-list $thread_ids)\)"
   } else {
     []
   }
+
   let jobs = (
     sqlite-rows $db "SELECT * FROM jobs"
     | where {|row|
@@ -610,30 +652,9 @@ def agent-tables [
   )
 
   [
-    {
-      db: agent
-      table: threads
-      columns: (table-columns $db threads)
-      rows: $threads
-      key: [id]
-      drop: []
-    }
-    {
-      db: agent
-      table: stage1_outputs
-      columns: (table-columns $db stage1_outputs)
-      rows: $stage1
-      key: [thread_id]
-      drop: []
-    }
-    {
-      db: agent
-      table: jobs
-      columns: (table-columns $db jobs)
-      rows: $jobs
-      key: [kind job_key]
-      drop: []
-    }
+    {db: "agent", table: "threads", columns: (table-columns $db "threads"), rows: $threads, key: ["id"], drop: []}
+    {db: "agent", table: "stage1_outputs", columns: (table-columns $db "stage1_outputs"), rows: $stage1, key: ["thread_id"], drop: []}
+    {db: "agent", table: "jobs", columns: (table-columns $db "jobs"), rows: $jobs, key: ["kind" "job_key"], drop: []}
   ]
 }
 
@@ -644,24 +665,39 @@ export def export-bundle [
 ]: nothing -> record {
   let records = (session-records)
   let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
-  let ids = ($selected | get -o id | compact | uniq)
+  let ids = (
+    $selected
+    | get -o id
+    | compact
+    | uniq
+  )
   let owned = (
     ($selected | get -o owner) ++ ($selected | get -o cwd)
     | where {|path| valid-path $path }
   )
-  let paths = if ($session_ids | is-not-empty) { $owned | uniq } else {
+  let paths = if ($session_ids | is-not-empty) {
+    $owned | uniq
+  } else {
     let recorded = (
       recorded-paths
-      | where {|path| if $exact { $path == $old } else { path-match $old $path } }
+      | where {|path|
+        if $exact {
+          $path == $old
+        } else {
+          path-match $old $path
+        }
+      }
     )
-    $owned ++ $recorded ++ [$old] | uniq
+    $owned ++ $recorded ++ [$old]
+    | uniq
   }
   let agent = (agent-dir)
   let history_paths = if ($session_ids | is-empty) { $paths } else { [] }
   let history = (
-    history-tables ($agent | path join history.db) $ids --metadata-paths $history_paths
+    history-tables ($agent | path join "history.db") $ids --metadata-paths $history_paths
   )
-  let tables = ($history ++ (agent-tables ($agent | path join agent.db) $ids $paths))
+  let tables = ($history ++ (agent-tables ($agent | path join "agent.db") $ids $paths))
+
   mut files = []
   for row in ($selected | where {|row| ($row | get -o file) != null }) {
     let subtree = ($row.file | str replace --regex '\.jsonl$' '')
@@ -678,22 +714,23 @@ export def export-bundle [
     }
   }
   $files = ($files | uniq)
+
   for path in $paths {
     let memory = (memory-root | path join (memory-encode $path))
     for file in (files-under $memory) {
       $files = ($files | append {
-        kind: memories
+        kind: "memories"
         project: $path
         name: ($file | path relative-to $memory)
         source: $file
       })
     }
   }
-  {assistant: omp, old: $old, files: $files, tables: $tables}
+  {assistant: "omp", old: $old, files: $files, tables: $tables}
 }
 
 def artifact-target [file: record, targets: list<record>]: nothing -> string {
-  if $file.existing or $file.kind not-in [sessions archives] { return $file.target }
+  if $file.existing or $file.kind not-in ["sessions" "archives"] { return $file.target }
   let owner = (
     $targets
     | where {|candidate|
@@ -721,7 +758,9 @@ def mapped-parent [file: record, targets: list<record>]: nothing -> any {
     | where {|entry| $entry.source_path == $parent }
     | first
   )
-  if $target == null or $target.target == $parent { null } else {
+  if $target == null or $target.target == $parent {
+    null
+  } else {
     {old: $parent, new: $target.target}
   }
 }
@@ -730,7 +769,11 @@ def remap-parent [content: string, old: string, new: string]: nothing -> string 
   $content
   | split row "\n"
   | each {|line|
-    let header = (try { $line | from json } catch { null })
+    let header = try {
+      $line | from json
+    } catch {
+      null
+    }
     if ($header | get -o type) != "session" or ($header | get -o parentSession) != $old {
       return $line
     }
@@ -759,61 +802,86 @@ def rollout-target [id: string, value: any, targets: list<record>]: nothing -> a
 
 export def plan-import [bundle: record]: nothing -> list<record> {
   let agent = (agent-dir)
-  let history_db = ($agent | path join history.db)
-  let agent_db = ($agent | path join agent.db)
+  let history_db = ($agent | path join "history.db")
+  let agent_db = ($agent | path join "agent.db")
 
   for spec in $bundle.tables {
     if ($spec.rows | is-empty) { continue }
     let db = match $spec.db {
-      'history' => $history_db
-      'agent' => $agent_db
+      "history" => $history_db
+      "agent" => $agent_db
     }
     let columns = ($spec.columns | where {|column| $column not-in $spec.drop })
     check-columns $db $spec.table $columns "OMP"
   }
 
+  let thread_ids = (
+    (bundle-table $bundle "threads").rows
+    | get -o id
+    | compact
+  )
+  let history_ids = (
+    (bundle-table $bundle "history").rows
+    | get -o session_id
+    | compact
+  )
   let bundle_sessions = (
-    ((bundle-table $bundle threads).rows | get -o id | compact)
-    ++ ((bundle-table $bundle history).rows | get -o session_id | compact)
+    $thread_ids ++ $history_ids
     | uniq
   )
 
   let local_sessions = (
     (if ($agent_db | path exists) {
-      sqlite-rows $agent_db "SELECT id FROM threads" | get -o id
+      sqlite-rows $agent_db "SELECT id FROM threads"
+      | get -o id
     } else {
       []
     })
     ++ (if ($history_db | path exists) {
-      sqlite-rows $history_db "SELECT session_id FROM history" | get -o session_id
+      sqlite-rows $history_db "SELECT session_id FROM history"
+      | get -o session_id
     } else {
       []
     })
   )
 
   let local_inventory = (session-records)
+
   let planned = (
-    $bundle.files | each {|file|
-      let header = if $file.kind in [sessions archives] {
+    $bundle.files
+    | each {|file|
+      let header = if $file.kind in ["sessions" "archives"] {
         session-header $file.bundle
-      } else { null }
-      let local = if $header == null { null } else {
-        $local_inventory | where {|row|
-          $row.id == $header.id and ($row | get -o file) != null
-        } | first
+      } else {
+        null
       }
-      let target = if $local != null { $local.file } else {
+      let local = if $header == null {
+        null
+      } else {
+        $local_inventory
+        | where {|row|
+          $row.id == $header.id and ($row | get -o file) != null
+        }
+        | first
+      }
+      let target = if $local != null {
+        $local.file
+      } else {
         match $file.kind {
-          'sessions' => (session-root | path join (session-encode-here $file.project) $file.name)
-          'archives' => (archive-root | path join (session-encode-here $file.project) $file.name)
-          'memories' => (memory-root | path join (memory-encode $file.project) $file.name)
+          "sessions" => (session-root | path join (session-encode-here $file.project) $file.name)
+          "archives" => (archive-root | path join (session-encode-here $file.project) $file.name)
+          "memories" => (memory-root | path join (memory-encode $file.project) $file.name)
           _ => {
             error make --unspanned {msg: $"Unknown OMP file kind ($file.kind)"}
           }
         }
       }
-      let thread = if $header == null { null } else {
-        (bundle-table $bundle threads).rows | where id == $header.id | first
+      let thread = if $header == null {
+        null
+      } else {
+        (bundle-table $bundle "threads").rows
+        | where id == $header.id
+        | first
       }
       $file | merge {
         header: $header
@@ -824,24 +892,34 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     }
   )
   let targets = ($planned | each {|file| $file | upsert target (artifact-target $file $planned) })
+
   let already_imported = (
     ($bundle_sessions | all {|id| $id in $local_sessions })
-    and ($targets | where {|file| $file.kind in [sessions archives] }
+    and ($targets | where {|file| $file.kind in ["sessions" "archives"] }
       | all {|file| $file.target | path exists })
     and (($bundle_sessions | is-not-empty) or ($targets | any {|file| $file.header != null }))
   )
   mut actions = []
   let memories = (files-under (memory-root))
+
   for file in $targets {
     let parent = (mapped-parent $file $targets)
-    let expected = if $file.header == null { null } else {
+    let expected = if $file.header == null {
+      null
+    } else {
       let content = (open --raw $file.bundle)
-      if $parent == null { $content } else { remap-parent $content $parent.old $parent.new }
+      if $parent == null {
+        $content
+      } else {
+        remap-parent $content $parent.old $parent.new
+      }
     }
     if $file.header != null {
-      let copies = ($local_inventory | where {|row|
-        $row.id == $file.header.id and ($row | get -o file) != null
-      })
+      let copies = (
+        $local_inventory
+        | where {|row| $row.id == $file.header.id and ($row | get -o file) != null }
+      )
+
       for copy in $copies {
         if (open --raw $copy.file) != $expected {
           error make --unspanned {
@@ -857,7 +935,9 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     }
     if $already_imported and $file.kind == "memories" { continue }
     if ($file.target | path exists) {
-      let equal = if $expected == null { same-content $file.bundle $file.target } else {
+      let equal = if $expected == null {
+        same-content $file.bundle $file.target
+      } else {
         (open --raw $file.target) == $expected
       }
       if $equal { continue }
@@ -866,26 +946,34 @@ export def plan-import [bundle: record]: nothing -> list<record> {
         help: "Compare the two files, then reconcile the copies before importing again."
       }
     }
-    if $file.kind == memories {
-      let identical = ($memories | any {|path|
-        (
-          (($path | path basename) == ($file.name | path basename))
-          and (same-content $file.bundle $path)
-        )
-      })
+    if $file.kind == "memories" {
+      let identical = (
+        $memories
+        | any {|path|
+          (
+            (($path | path basename) == ($file.name | path basename))
+            and (same-content $file.bundle $path)
+          )
+        }
+      )
+
       if $identical { continue }
     }
     let copy = if $parent == null {
-      copy-action omp files $file.bundle $file.target "import file"
+      copy-action "omp" "files" $file.bundle $file.target "import file"
     } else {
-      copy-action omp files $file.bundle $file.target "import session" --transform {|content|
+      copy-action "omp" "files" $file.bundle $file.target "import session" --transform {|content|
         remap-parent $content $parent.old $parent.new
       }
     }
     $actions = ($actions | append $copy)
   }
-  let rollout_map = ($targets | where {|file| $file.header != null }
-    | each {|file| {id: $file.header.id, target: $file.target} })
+
+  let rollout_map = (
+    $targets
+    | where {|file| $file.header != null }
+    | each {|file| {id: $file.header.id, target: $file.target} }
+  )
 
   mut history_statements = []
   mut agent_statements = []
@@ -903,9 +991,7 @@ export def plan-import [bundle: record]: nothing -> list<record> {
         }
       }
     )
-    let natural = ($spec
-      | get -o natural
-      | default [])
+    let natural = ($spec | get -o natural | default [])
     let statements = (
       $rows
       | each {|row|
@@ -923,11 +1009,11 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     }
   }
   if ($history_statements | is-not-empty) {
-    let load = (sql-action omp history $history_db $history_statements "import history")
+    let load = (sql-action "omp" "history" $history_db $history_statements "import history")
     $actions = ($actions | append $load)
   }
   if ($agent_statements | is-not-empty) {
-    let load = (sql-action omp agent $agent_db $agent_statements "import agent")
+    let load = (sql-action "omp" "agent" $agent_db $agent_statements "import agent")
     $actions = ($actions | append $load)
   }
   $actions

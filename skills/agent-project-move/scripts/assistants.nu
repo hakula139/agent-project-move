@@ -10,14 +10,14 @@ use ./stores/claude.nu
 use ./stores/codex.nu
 use ./stores/omp.nu
 
-const ASSISTANTS = [claude codex omp]
+const ASSISTANTS = ["claude" "codex" "omp"]
 export const ALL_ASSISTANTS = ($ASSISTANTS | str join ",")
 
 export def parse-assistants [value: string]: nothing -> list<string> {
   let names = (
     $value
     | split row ","
-    | each {|name| $name | str trim }
+    | str trim
     | where {|name| $name != "" }
     | uniq
   )
@@ -40,33 +40,33 @@ export def parse-assistants [value: string]: nothing -> list<string> {
 
 def assistant-scan [assistant: string]: nothing -> list<record> {
   match $assistant {
-    'claude' => { claude scan }
-    'codex' => { codex scan }
-    'omp' => { omp scan }
+    "claude" => { claude scan }
+    "codex" => { codex scan }
+    "omp" => { omp scan }
   }
 }
 
 def assistant-recorded-paths [assistant: string]: nothing -> list<string> {
   match $assistant {
-    'claude' => { claude recorded-paths }
-    'codex' => { codex recorded-paths }
-    'omp' => { omp recorded-paths }
+    "claude" => { claude recorded-paths }
+    "codex" => { codex recorded-paths }
+    "omp" => { omp recorded-paths }
   }
 }
 
 def assistant-plan-move [assistant: string, old: string, new: string]: nothing -> list<record> {
   match $assistant {
-    'claude' => { claude plan-move $old $new }
-    'codex' => { codex plan-move $old $new }
-    'omp' => { omp plan-move $old $new }
+    "claude" => { claude plan-move $old $new }
+    "codex" => { codex plan-move $old $new }
+    "omp" => { omp plan-move $old $new }
   }
 }
 
 def assistant-plan-prune [assistant: string, paths: list<string>]: nothing -> list<record> {
   match $assistant {
-    'claude' => { claude plan-prune $paths }
-    'codex' => { codex plan-prune $paths }
-    'omp' => { omp plan-prune $paths }
+    "claude" => { claude plan-prune $paths }
+    "codex" => { codex plan-prune $paths }
+    "omp" => { omp plan-prune $paths }
   }
 }
 
@@ -77,28 +77,41 @@ export def assistant-export-bundle [
   --session-ids: list<string> = []
 ]: nothing -> record {
   match $assistant {
-    'claude' => { claude export-bundle $old --exact=$exact --session-ids $session_ids }
-    'codex' => { codex export-bundle $old --exact=$exact --session-ids $session_ids }
-    'omp' => { omp export-bundle $old --exact=$exact --session-ids $session_ids }
+    "claude" => { claude export-bundle $old --exact=$exact --session-ids $session_ids }
+    "codex" => { codex export-bundle $old --exact=$exact --session-ids $session_ids }
+    "omp" => { omp export-bundle $old --exact=$exact --session-ids $session_ids }
   }
 }
 
 export def assistant-plan-import [assistant: string, bundle: record]: nothing -> list<record> {
   match $assistant {
-    'claude' => { claude plan-import $bundle }
-    'codex' => { codex plan-import $bundle }
-    'omp' => { omp plan-import $bundle }
+    "claude" => { claude plan-import $bundle }
+    "codex" => { codex plan-import $bundle }
+    "omp" => { omp plan-import $bundle }
   }
 }
 
 export def scan-all [selected: list<string>]: nothing -> list<record> {
-  $selected | each {|assistant| assistant-scan $assistant } | flatten
+  $selected
+  | each {|assistant| assistant-scan $assistant }
+  | flatten
 }
 
 export def all-recorded-paths [selected: list<string>]: nothing -> list<string> {
-  let rows = (scan-all $selected | get -o path | where {|path| valid-path $path })
-  let recorded = ($selected | each {|assistant| assistant-recorded-paths $assistant } | flatten)
-  $rows | append $recorded | uniq
+  let rows = (
+    scan-all $selected
+    | get -o path
+    | where {|path| valid-path $path }
+  )
+  let recorded = (
+    $selected
+    | each {|assistant| assistant-recorded-paths $assistant }
+    | flatten
+  )
+
+  $rows
+  | append $recorded
+  | uniq
 }
 
 export def plan-move [
@@ -106,7 +119,9 @@ export def plan-move [
   old: string
   new: string
 ]: nothing -> list<record> {
-  $selected | each {|assistant| assistant-plan-move $assistant $old $new } | flatten
+  $selected
+  | each {|assistant| assistant-plan-move $assistant $old $new }
+  | flatten
 }
 
 export def prune-missing-paths [selected: list<string>]: nothing -> list<string> {
@@ -115,7 +130,9 @@ export def prune-missing-paths [selected: list<string>]: nothing -> list<string>
 
 export def plan-prune [selected: list<string>, paths: list<string>]: nothing -> list<record> {
   if ($paths | is-empty) { return [] }
-  $selected | each {|assistant| assistant-plan-prune $assistant $paths } | flatten
+  $selected
+  | each {|assistant| assistant-plan-prune $assistant $paths }
+  | flatten
 }
 
 export def plan-retire [
@@ -124,11 +141,13 @@ export def plan-retire [
   --exact
   --session-ids: list<string> = []
 ]: nothing -> list<record> {
-  $selected | each {|assistant|
+  $selected
+  | each {|assistant|
     match $assistant {
-      'claude' => { claude plan-retire $path --exact=$exact --session-ids $session_ids }
-      'codex' => { codex plan-retire $path --exact=$exact --session-ids $session_ids }
-      'omp' => { omp plan-retire $path --exact=$exact --session-ids $session_ids }
+      "claude" => { claude plan-retire $path --exact=$exact --session-ids $session_ids }
+      "codex" => { codex plan-retire $path --exact=$exact --session-ids $session_ids }
+      "omp" => { omp plan-retire $path --exact=$exact --session-ids $session_ids }
     }
-  } | flatten
+  }
+  | flatten
 }

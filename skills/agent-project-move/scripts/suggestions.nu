@@ -28,7 +28,11 @@ def unique-repo [
     $repo_roots
     | where {|root| (($root | path basename) == $name) and (repo-target $root $home $temp_roots) }
   )
-  if ($candidates | length) == 1 { $candidates | get 0 } else { "" }
+  if ($candidates | length) == 1 {
+    $candidates | get 0
+  } else {
+    ""
+  }
 }
 
 # Suggest where state for a missing path belongs, from the path and existing repo roots.
@@ -49,7 +53,11 @@ export def suggested-move [
   }
 
   if ($path | str starts-with ($home + "/.codex/worktrees/")) {
-    let parts = ($path | str replace ($home + "/.codex/worktrees/") "" | split row "/")
+    let parts = (
+      $path
+      | str replace ($home + "/.codex/worktrees/") ""
+      | split row "/"
+    )
     if ($parts | length) >= 2 {
       let name = ($parts | get 1)
       let found = (unique-repo $repo_roots $name $home $temp_roots)
@@ -82,7 +90,7 @@ def repo-ancestors [path: string]: nothing -> list<string> {
 def repo-roots-for [paths: list<string>]: nothing -> list<string> {
   let recorded = (
     $paths
-    | where {|path| (not (path-missing $path)) and ($path | path join .git | path exists) }
+    | where {|path| (not (path-missing $path)) and ($path | path join ".git" | path exists) }
   )
   let ancestors = (
     $paths
@@ -102,7 +110,12 @@ export def scan-suggestions [
   home: string
   temp_roots: list<string>
 ]: nothing -> list<record> {
-  let paths = ($rows | get -o path | where {|path| valid-path $path } | uniq)
+  let paths = (
+    $rows
+    | get -o path
+    | where {|path| valid-path $path }
+    | uniq
+  )
   let roots = (repo-roots-for $paths)
 
   $paths

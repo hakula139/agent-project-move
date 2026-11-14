@@ -10,7 +10,6 @@ use ../lib/actions.nu [
   copy-action
   decompress-file
   edit-action
-  same-content
   sql-action
 ]
 use ../lib/bundle.nu [bundle-table]
@@ -20,7 +19,6 @@ use ../lib/selection.nu [select-sessions]
 use ../lib/sqlite.nu [
   check-columns
   latest-db
-  path-condition
   sql-list
   sqlite-insert-if-new
   sqlite-rows
@@ -28,7 +26,7 @@ use ../lib/sqlite.nu [
 ]
 
 # The projection state goes first, since its AFTER DELETE trigger clears thread_realtime_items.
-const PROJECTION_TABLES = [thread_history_projection_state thread_turns thread_items]
+const PROJECTION_TABLES = ["thread_history_projection_state" "thread_turns" "thread_items"]
 
 # A trust block opens with a `[projects."<path>"]` table header.
 const TRUST_HEADER = '^\[projects\."(?<path>[^"]+)"\]$'
@@ -38,21 +36,21 @@ const TRUST_HEADER = '^\[projects\."(?<path>[^"]+)"\]$'
 # --------------------------------------------------------------------------------------------------
 
 def root []: nothing -> string {
-  $env.CODEX_HOME? | default --empty ($env.HOME | path join .codex)
+  $env.CODEX_HOME? | default --empty ($env.HOME | path join ".codex")
 }
 
 # The state database, or null before Codex has created one.
 def state-db []: nothing -> any {
-  latest-db (root | path join 'state_*.sqlite') threads
+  latest-db (root | path join "state_*.sqlite") "threads"
 }
 
 # The thread history database, or null before Codex has created one.
 def history-db []: nothing -> any {
-  latest-db (root | path join 'thread_history_*.sqlite') thread_items
+  latest-db (root | path join "thread_history_*.sqlite") "thread_items"
 }
 
 def config-path []: nothing -> string {
-  root | path join config.toml
+  root | path join "config.toml"
 }
 
 def plain-rollout-path [path: string]: nothing -> string {
@@ -68,7 +66,11 @@ def rollout-file [path: string]: nothing -> any {
   let plain = (plain-rollout-path $path)
   if ($plain | path exists) { return {file: $plain, compressed: false} }
 
-  let compressed = if $plain == $path { $path + ".zst" } else { $path }
+  let compressed = if $plain == $path {
+    $path + ".zst"
+  } else {
+    $path
+  }
   if ($compressed | path exists) { return {file: $compressed, compressed: true} }
   null
 }
@@ -91,11 +93,15 @@ export def scan []: nothing -> list<record> {
   | where {|row| valid-path $row.cwd }
   | each {|row|
     {
-      assistant: codex
+      assistant: "codex"
       path: $row.cwd
       sessions: ($row.sessions | into int)
       last_used: (
-        if $row.last_used == null { null } else { $row.last_used * 1000000 | into datetime }
+        if $row.last_used == null {
+          null
+        } else {
+          $row.last_used * 1000000 | into datetime
+        }
       )
     }
   }
@@ -125,7 +131,11 @@ def config-sections [content: string]: nothing -> list<record> {
   for line in ($content | lines) {
     if ($line | str starts-with "[") {
       let header = ($line | parse --regex $TRUST_HEADER)
-      let path = (if ($header | is-empty) { null } else { $header | get 0.path })
+      let path = if ($header | is-empty) {
+        null
+      } else {
+        $header | get 0.path
+      }
       if $current != null {
         let split = (split-leading $current.body)
         $current = ($current | upsert body $split.body)
@@ -187,7 +197,11 @@ export def move-trust [content: string, old: string, new: string]: nothing -> st
     }
     | compact
   )
-  let lines = (($kept ++ $moved) | each {|section| section-lines $section } | flatten)
+  let lines = (
+    $kept ++ $moved
+    | each {|section| section-lines $section }
+    | flatten
+  )
   ($lines | str join "\n") + "\n"
 }
 
@@ -195,14 +209,20 @@ export def prune-trust [content: string, paths: list<string>, --exact]: nothing 
   let kept = (
     config-sections $content
     | where {|section|
-      if $exact { $section.path not-in $paths } else {
+      if $exact {
+        $section.path not-in $paths
+      } else {
         not (($section.path != null) and (match-any $paths $section.path))
       }
     }
     | each {|section| section-lines $section }
     | flatten
   )
-  if ($kept | is-empty) { "" } else { ($kept | str join "\n") + "\n" }
+  if ($kept | is-empty) {
+    ""
+  } else {
+    ($kept | str join "\n") + "\n"
+  }
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -213,7 +233,7 @@ def trust-actions [old: string, new: string]: nothing -> list<record> {
   let config = (config-path)
   let match = (trust-blocks | any {|block| path-match $old $block.path })
   if ($config | path exists) and $match {
-    let edit = (edit-action codex config $config {|content|
+    let edit = (edit-action "codex" "config" $config {|content|
       move-trust $content $old $new
     } "rewrite trust blocks")
     [$edit]
@@ -231,13 +251,14 @@ def projection-actions [
   if ($db == null) or ($ids | is-empty) { return [] }
 
   if (offsets-kept $old $new) {
-    column-actions codex [{db: $db, table: thread_items, column: item_json, json: true}] $old $new
+    let columns = [{db: $db, table: "thread_items", column: "item_json", json: true}]
+    column-actions "codex" $columns $old $new
   } else {
     let id_list = (sql-list $ids)
     $PROJECTION_TABLES
     | each {|table|
       let statement = $"DELETE FROM ($table) WHERE thread_id IN \(($id_list)\)"
-      sql-action codex thread-history $db [$statement] $"reset ($table)" --derived
+      sql-action "codex" "thread-history" $db [$statement] $"reset ($table)" --derived
     }
   }
 }
@@ -249,11 +270,11 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
   let home = (root)
   let rewrite = {|content| rewrite-text $content $old $new }
   let rollouts = (files-with-path $old [
-    ($home | path join sessions)
-    ($home | path join archived_sessions)
+    ($home | path join "sessions")
+    ($home | path join "archived_sessions")
   ])
 
-  let desktop = (files-with-path $old [($home | path join .codex-global-state.json)])
+  let desktop = (files-with-path $old [($home | path join ".codex-global-state.json")])
 
   let threads = (sqlite-rows $state "SELECT * FROM threads")
   let edited_ids = (
@@ -269,17 +290,17 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
   )
 
   mut actions = (
-    column-actions codex [
-      {db: $state, table: threads, column: cwd}
-      {db: $state, table: threads, column: sandbox_policy, json: true}
+    column-actions "codex" [
+      {db: $state, table: "threads", column: "cwd"}
+      {db: $state, table: "threads", column: "sandbox_policy", json: true}
     ] $old $new
   )
   for file in $rollouts {
-    $actions = ($actions | append (edit-action codex rollouts $file $rewrite "rewrite cwd"))
+    $actions = ($actions | append (edit-action "codex" "rollouts" $file $rewrite "rewrite cwd"))
   }
   for file in $desktop {
     $actions = (
-      $actions | append (edit-action codex desktop-state $file $rewrite "rewrite desktop state")
+      $actions | append (edit-action "codex" "desktop-state" $file $rewrite "rewrite desktop state")
     )
   }
   $actions = ($actions ++ (projection-actions (history-db) $edited_ids $old $new))
@@ -287,32 +308,44 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
   $actions
 }
 
+# --------------------------------------------------------------------------------------------------
+# Session selection
+# --------------------------------------------------------------------------------------------------
+
 def selected-threads [
+  state: string
+  rows: list<record>
   old: string
   --exact
   --session-ids: list<string> = []
 ]: nothing -> list<record> {
-  let state = (state-db)
-  if $state == null { return [] }
-  let rows = (sqlite-rows $state "SELECT * FROM threads")
-  let edges = if (table-columns $state thread_spawn_edges | is-not-empty) {
+  let edges = if (table-columns $state "thread_spawn_edges" | is-not-empty) {
     sqlite-rows $state "SELECT * FROM thread_spawn_edges"
-  } else { [] }
+  } else {
+    []
+  }
   let linked = (
-    $rows | each {|row|
-      let edge = ($edges
+    $rows
+    | each {|row|
+      let edge = (
+        $edges
         | where child_thread_id == $row.id
-        | first)
-      let parent = if $edge != null { $edge.parent_thread_id } else {
+        | first
+      )
+      let parent = if $edge != null {
+        $edge.parent_thread_id
+      } else {
         $row
-          | get -o attached_thread_parent_id
-          | default ($row
-          | get -o parent_thread_id)
+        | get -o attached_thread_parent_id
+        | default ($row | get -o parent_thread_id)
       }
       $row | upsert parent $parent
     }
   )
-  let ids = (select-sessions $linked $old --exact=$exact --session-ids $session_ids | get -o id)
+  let ids = (
+    select-sessions $linked $old --exact=$exact --session-ids $session_ids
+    | get -o id
+  )
   $rows | where {|row| $row.id in $ids }
 }
 
@@ -320,10 +353,12 @@ def selected-threads [
 # Prune
 # --------------------------------------------------------------------------------------------------
 
-def delete-threads [threads: list<record>, paths: list<string>, --exact]: nothing -> list<record> {
-  let state = (state-db)
-  if $state == null { return [] }
-
+def delete-threads [
+  state: string
+  threads: list<record>
+  paths: list<string>
+  --exact
+]: nothing -> list<record> {
   let ids = ($threads | get -o id)
   mut actions = []
 
@@ -332,7 +367,7 @@ def delete-threads [threads: list<record>, paths: list<string>, --exact]: nothin
     if ($rollout | describe) == "string" {
       let resolved = (rollout-file $rollout)
       if $resolved != null {
-        $actions = ($actions | append (action codex rollouts delete $resolved.file "rollout"))
+        $actions = ($actions | append (action "codex" "rollouts" "delete" $resolved.file "rollout"))
       }
     }
   }
@@ -340,11 +375,14 @@ def delete-threads [threads: list<record>, paths: list<string>, --exact]: nothin
   if ($ids | is-not-empty) {
     let condition = $"id IN \((sql-list $ids)\)"
     let delete = $"DELETE FROM threads WHERE ($condition)"
-    let edges = if (table-columns $state thread_spawn_edges | is-not-empty) {
+    let edges = if (table-columns $state "thread_spawn_edges" | is-not-empty) {
       [$"DELETE FROM thread_spawn_edges WHERE child_thread_id IN \((sql-list $ids)\) OR parent_thread_id IN \((sql-list $ids)\)"]
-    } else { [] }
+    } else {
+      []
+    }
+    let statements = ($edges ++ [$delete])
     let remove = (
-      sql-action codex threads $state ($edges ++ [$delete]) "delete threads" --rows-first --foreign-keys
+      sql-action "codex" "threads" $state $statements "delete threads" --rows-first --foreign-keys
     )
     $actions = ($actions | append $remove)
 
@@ -354,7 +392,7 @@ def delete-threads [threads: list<record>, paths: list<string>, --exact]: nothin
       for table in $PROJECTION_TABLES {
         let statement = $"DELETE FROM ($table) WHERE thread_id IN \(($id_list)\)"
         let remove = (
-          sql-action codex thread-history $history [$statement] $"delete ($table)" --derived
+          sql-action "codex" "thread-history" $history [$statement] $"delete ($table)" --derived
         )
         $actions = ($actions | append $remove)
       }
@@ -363,10 +401,14 @@ def delete-threads [threads: list<record>, paths: list<string>, --exact]: nothin
 
   let config = (config-path)
   let trust_match = (trust-blocks | any {|block|
-    if $exact { $block.path in $paths } else { match-any $paths $block.path }
+    if $exact {
+      $block.path in $paths
+    } else {
+      match-any $paths $block.path
+    }
   })
   if ($config | path exists) and $trust_match {
-    $actions = ($actions | append (edit-action codex config $config {|content|
+    $actions = ($actions | append (edit-action "codex" "config" $config {|content|
       prune-trust $content $paths --exact=$exact
     } "remove trust blocks"))
   }
@@ -380,7 +422,7 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
     sqlite-rows $state "SELECT * FROM threads"
     | where {|row| match-any $paths $row.cwd }
   )
-  delete-threads $threads $paths
+  delete-threads $state $threads $paths
 }
 
 export def plan-retire [
@@ -390,30 +432,34 @@ export def plan-retire [
 ]: nothing -> list<record> {
   let state = (state-db)
   if $state == null { return [] }
-  let threads = (selected-threads $old --exact=$exact --session-ids $session_ids)
+  let inventory = (sqlite-rows $state "SELECT * FROM threads")
+  let threads = (selected-threads $state $inventory $old --exact=$exact --session-ids $session_ids)
   let ids = ($threads | get -o id)
   let remaining = (
-    sqlite-rows $state "SELECT * FROM threads" | where {|row| $row.id not-in $ids }
+    $inventory
+    | where {|row| $row.id not-in $ids }
   )
   let unused = (
     $threads
-      | get -o cwd
-      | uniq
-    | where {|cwd| not ($remaining
-    | any {|row| $cwd == $row.cwd }) }
+    | get -o cwd
+    | uniq
+    | where {|cwd| not ($remaining | any {|row| $cwd == $row.cwd }) }
   )
-  mut actions = (delete-threads $threads $unused --exact)
-  let projects = ($threads
+  mut actions = (delete-threads $state $threads $unused --exact)
+  let projects = (
+    $threads
     | get -o project_id
     | compact
-    | uniq)
+    | uniq
+  )
   if ($projects | is-not-empty) {
     let statement = (
       $"DELETE FROM projects WHERE id IN \((sql-list $projects)\)"
       + " AND NOT EXISTS (SELECT 1 FROM threads WHERE threads.project_id = projects.id)"
     )
+    let description = "remove unreferenced projects"
     $actions = ($actions | append (
-      sql-action codex projects $state [$statement] "remove unreferenced projects" --rows-first --foreign-keys
+      sql-action "codex" "projects" $state [$statement] $description --rows-first --foreign-keys
     ))
   }
   $actions
@@ -430,10 +476,11 @@ export def export-bundle [
 ]: nothing -> record {
   let db = (state-db)
   if $db == null {
-    return {assistant: codex, old: $old, files: [], tables: []}
+    return {assistant: "codex", old: $old, files: [], tables: []}
   }
 
-  let threads = (selected-threads $old --exact=$exact --session-ids $session_ids)
+  let inventory = (sqlite-rows $db "SELECT * FROM threads")
+  let threads = (selected-threads $db $inventory $old --exact=$exact --session-ids $session_ids)
 
   mut files = []
   for row in $threads {
@@ -443,7 +490,7 @@ export def export-bundle [
     if $resolved == null { continue }
     let name = ($resolved.file | path relative-to (root))
     $files = ($files | append {
-      kind: rollouts
+      kind: "rollouts"
       project: $row.cwd
       name: $name
       source: $resolved.file
@@ -452,48 +499,39 @@ export def export-bundle [
     })
   }
 
-  let project_ids = ($threads
+  let project_ids = (
+    $threads
     | get -o project_id
     | compact
-    | uniq)
+    | uniq
+  )
   let projects = if ($project_ids | is-not-empty) {
-    sqlite-rows $db "SELECT * FROM projects" | where {|row| $row.id in $project_ids }
+    sqlite-rows $db "SELECT * FROM projects"
+    | where {|row| $row.id in $project_ids }
   } else {
     []
   }
 
   mut tables = [
-    {
-      db: state
-      table: projects
-      columns: (table-columns $db projects)
-      rows: $projects
-      key: [id]
-    }
-    {
-      db: state
-      table: threads
-      columns: (table-columns $db threads)
-      rows: $threads
-      key: [id]
-    }
+    {db: "state", table: "projects", columns: (table-columns $db "projects"), rows: $projects, key: ["id"]}
+    {db: "state", table: "threads", columns: (table-columns $db "threads"), rows: $threads, key: ["id"]}
   ]
-  if (table-columns $db thread_spawn_edges | is-not-empty) {
+  if (table-columns $db "thread_spawn_edges" | is-not-empty) {
     let ids = ($threads | get -o id)
     let edges = (
       sqlite-rows $db "SELECT * FROM thread_spawn_edges"
       | where {|row| $row.child_thread_id in $ids }
     )
     $tables = ($tables | append {
-      db: state
-      table: thread_spawn_edges
-      columns: (table-columns $db thread_spawn_edges)
+      db: "state"
+      table: "thread_spawn_edges"
+      columns: (table-columns $db "thread_spawn_edges")
       rows: $edges
-      key: [child_thread_id]
+      key: ["child_thread_id"]
     })
   }
 
-  {assistant: codex, old: $old, files: $files, tables: $tables}
+  {assistant: "codex", old: $old, files: $files, tables: $tables}
 }
 
 def rollout-target [file: record]: nothing -> string {
@@ -505,27 +543,33 @@ def rollout-target [file: record]: nothing -> string {
   }
 }
 
+def rollout-content [path: string, compressed: bool]: nothing -> string {
+  if $compressed {
+    decompress-file $path
+  } else {
+    open --raw $path
+  }
+}
+
 export def plan-import [bundle: record]: nothing -> list<record> {
   let state_db = (state-db)
-  let projects = (bundle-table $bundle projects)
-  let threads = (bundle-table $bundle threads)
-  let edges = (bundle-table $bundle thread_spawn_edges)
-  if $state_db == null and (($projects.rows
-    | is-not-empty) or ($threads.rows
-    | is-not-empty)) {
+  let projects = (bundle-table $bundle "projects")
+  let threads = (bundle-table $bundle "threads")
+  let edges = (bundle-table $bundle "thread_spawn_edges")
+  if $state_db == null and (($projects.rows | is-not-empty) or ($threads.rows | is-not-empty)) {
     error make --unspanned {
       msg: "Codex import found no state database"
       help: "Start Codex once on this host, then rerun the import."
     }
   }
   if ($projects.rows | is-not-empty) {
-    check-columns $state_db projects $projects.columns "Codex"
+    check-columns $state_db "projects" $projects.columns "Codex"
   }
   if ($threads.rows | is-not-empty) {
-    check-columns $state_db threads $threads.columns "Codex"
+    check-columns $state_db "threads" $threads.columns "Codex"
   }
   if ($edges.rows | is-not-empty) {
-    check-columns $state_db thread_spawn_edges $edges.columns "Codex"
+    check-columns $state_db "thread_spawn_edges" $edges.columns "Codex"
   }
   let local_threads = if $state_db == null {
     []
@@ -534,26 +578,18 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   }
   let imported = ($local_threads | get -o id)
   for file in $bundle.files {
-    if (($file
-      | get -o thread
-      | default "") not-in $imported) { continue }
+    if ($file | get -o thread | default "") not-in $imported { continue }
     let row = (
       $local_threads
-        | where id == $file.thread
-        | first
+      | where id == $file.thread
+      | first
     )
     let local = (rollout-file $row.rollout_path)
     if $local == null {
       error make --unspanned {msg: $"Existing thread ($file.thread) has no readable rollout"}
     }
-    let source_body = if ($file
-      | get -o compress
-      | default false) {
-      decompress-file $file.bundle
-    } else { open --raw $file.bundle }
-    let local_body = if $local.compressed {
-      decompress-file $local.file
-    } else { open --raw $local.file }
+    let source_body = (rollout-content $file.bundle ($file | get -o compress | default false))
+    let local_body = (rollout-content $local.file $local.compressed)
     if $source_body != $local_body {
       error make --unspanned {msg: $"Existing thread ($file.thread) differs from the bundle"}
     }
@@ -561,74 +597,81 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   mut actions = []
 
   for file in $bundle.files {
-    if (($file
-      | get -o thread
-      | default "") in $imported) { continue }
+    if ($file | get -o thread | default "") in $imported { continue }
     let target = (root | path join (rollout-target $file))
-    let compress = ($file
-      | get -o compress
-      | default false)
+    let compress = ($file | get -o compress | default false)
     if ($target | path exists) {
-      let equal = if $compress {
-        (decompress-file $file.bundle) == (decompress-file $target)
-      } else {
-        same-content $file.bundle $target
-      }
+      let equal = (rollout-content $file.bundle $compress) == (rollout-content $target $compress)
       if $equal { continue }
       error make --unspanned {
         msg: $"($target) already exists with content that differs from the bundle's copy"
         help: "Compare the two files. Delete or rename the local file if the bundle's copy should win, then rerun the import."
       }
     }
-    let write = (copy-action codex rollouts $file.bundle $target "import rollout")
+    let write = (copy-action "codex" "rollouts" $file.bundle $target "import rollout")
     $actions = ($actions | append $write)
   }
 
-  let local_ids = if $state_db == null or ($projects.rows | is-empty) { [] } else {
-    sqlite-rows $state_db "SELECT id FROM projects" | get -o id
+  let local_ids = if $state_db == null or ($projects.rows | is-empty) {
+    []
+  } else {
+    sqlite-rows $state_db "SELECT id FROM projects"
+    | get -o id
   }
   let project_statements = (
-    $projects.rows | where {|row| $row.id not-in $local_ids }
-    | each {|row| sqlite-insert-if-new projects $projects.columns $row }
+    $projects.rows
+    | where {|row| $row.id not-in $local_ids }
+    | each {|row| sqlite-insert-if-new "projects" $projects.columns $row }
   )
   let mapped = (
     $threads.rows
     | where {|row| $row.id not-in $imported }
     | each {|row|
-      let file = ($bundle.files
+      let file = (
+        $bundle.files
         | where thread == $row.id
-        | get -o 0)
+        | get -o 0
+      )
       if $file != null {
         let name = (plain-rollout-path (rollout-target $file))
-        $row
-          | upsert rollout_path (root
-          | path join $name)
+        $row | upsert rollout_path (root | path join $name)
       } else {
         $row
       }
     }
   )
   let thread_statements = (
-    $mapped | each {|row| sqlite-insert-if-new threads $threads.columns $row }
+    $mapped
+    | each {|row| sqlite-insert-if-new "threads" $threads.columns $row }
   )
-  let local_edges = if ($edges.rows | is-empty) { [] } else {
+  let local_edges = if ($edges.rows | is-empty) {
+    []
+  } else {
     sqlite-rows $state_db "SELECT * FROM thread_spawn_edges"
   }
   let edge_statements = (
-    $edges.rows | each {|row|
-      let local = ($local_edges
+    $edges.rows
+    | each {|row|
+      let local = (
+        $local_edges
         | where child_thread_id == $row.child_thread_id
-        | first)
+        | first
+      )
       if $local == null {
-        sqlite-insert-if-new thread_spawn_edges $edges.columns $row
+        sqlite-insert-if-new "thread_spawn_edges" $edges.columns $row
       } else if $local.parent_thread_id != $row.parent_thread_id {
-        error make --unspanned {msg: $"Existing thread ($row.child_thread_id) has a different parent"}
-      } else { null }
-    } | compact
+        error make --unspanned {
+          msg: $"Existing thread ($row.child_thread_id) has a different parent"
+        }
+      } else {
+        null
+      }
+    }
+    | compact
   )
   let statements = ($project_statements ++ $thread_statements ++ $edge_statements)
   if ($statements | is-not-empty) {
-    let load = (sql-action codex state $state_db $statements "import state")
+    let load = (sql-action "codex" "state" $state_db $statements "import state")
     $actions = ($actions | append $load)
   }
   $actions

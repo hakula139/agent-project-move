@@ -47,7 +47,9 @@ export def rg-lines [args: list<string>]: nothing -> list<string> {
       help: "Check that ripgrep can read the searched directories."
     }
   }
-  $run.stdout | lines | where {|line| $line != "" }
+  $run.stdout
+  | lines
+  | where {|line| $line != "" }
 }
 
 # The path a matched `"key":"<value>"` token holds, decoded from its JSON escapes.
@@ -64,8 +66,12 @@ export def files-with-path [
   let existing = ($roots | where {|root| $root | path exists })
   if ($existing | is-empty) { return [] }
 
-  let globs = ($glob | each {|pattern| ["-g" $pattern] } | flatten)
-  rg-lines [-z -P -l --hidden --no-ignore ...$globs -e (path-pattern $old) -- ...$existing]
+  let globs = (
+    $glob
+    | each {|pattern| ["-g" $pattern] }
+    | flatten
+  )
+  rg-lines ["-z" "-P" "-l" "--hidden" "--no-ignore" ...$globs "-e" (path-pattern $old) "--" ...$existing]
   | sort
 }
 
