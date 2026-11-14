@@ -46,7 +46,8 @@ def make-codex [root: string, project: string]: nothing -> record {
     + "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, rollout_path TEXT, "
     + "project_id TEXT REFERENCES projects(id), attached_thread_parent_id TEXT, "
     + "updated_at INTEGER, updated_at_ms INTEGER); "
-    + "CREATE TABLE thread_spawn_edges (parent_thread_id TEXT, child_thread_id TEXT, status TEXT); "
+    + "CREATE TABLE thread_spawn_edges (parent_thread_id TEXT NOT NULL, "
+    + "child_thread_id TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL); "
     + "CREATE TABLE dependent (thread_id TEXT REFERENCES threads(id) ON DELETE CASCADE); "
     + $"INSERT INTO projects VALUES \('shared', (sql-quote $project)\); "
   )
@@ -110,7 +111,7 @@ def "test Codex export scopes roots and carries compressed descendants" [] {
     {name: "exact", flags: ["--exact"], expected: ["child" "other-child" "parent" "retained"]}
     {name: "parent", flags: ["--session-ids" "parent"], expected: ["child" "other-child" "parent"]}
     {name: "retained", flags: ["--session-ids" "retained"], expected: ["retained"]}
-    {name: "child", flags: ["--session-ids" "child"], expected: ["child" "other-child" "parent"]}
+    {name: "child", flags: ["--session-ids" "child"], expected: ["child"]}
   ]
 
   with-env (fixture-env $root) {
@@ -243,6 +244,7 @@ def "test live Codex retirement preserves peers and removes dependent rows with 
 
 def "test selective CLI rejects ambiguous retirement and backup bypass elsewhere" [] {
   let root = (mktemp -d)
+  make-codex $root "/home/u/src/app" | ignore
   let cases = [
     ["retire" "/home/u/src/app"]
     ["retire" "/home/u/src/app" "--exact" "--session-ids" "one"]
@@ -313,7 +315,7 @@ def "test Claude selected parents carry subagents and preserve shared project st
   let directory = ($root | path join "bundle")
 
   with-env (fixture-env $root) {
-    let export = (run-cli export "/other" $directory --assistant claude --session-ids child)
+    let export = (run-cli export $project $directory --assistant claude --session-ids parent)
     assert equal $export.exit_code 0 $export.stderr
 
     let entries = (open ($directory | path join "claude/entries.json"))
@@ -328,7 +330,7 @@ def "test Claude selected parents carry subagents and preserve shared project st
     ]
 
     let apply = (
-      run-cli retire "/other" --assistant claude --session-ids child --apply --no-backup
+      run-cli retire $project --assistant claude --session-ids parent --apply --no-backup
     )
     assert equal $apply.exit_code 0 $apply.stderr
 
@@ -370,7 +372,8 @@ def make-omp [root: string, project: string]: nothing -> record {
   for row in [
     {id: "parent", cwd: $project, parentSession: null, file: $parent_file}
     {id: "child", cwd: $project, parentSession: "parent", file: ($child_root | path join "implementer/worker.jsonl")}
-    {id: "grandchild", cwd: "/other/deeper", parentSession: ($child_root | path join "implementer/worker.jsonl"), file: ($child_root | path join "reviewer/review.jsonl")}
+    {id: "grandchild", cwd: "/other/deeper", parentSession: ($child_root | path join "implementer/worker.jsonl"), file: ($child_root | path join "reviewer/worker.jsonl")}
+    {id: "sibling", cwd: $project, parentSession: "parent", file: ($child_root | path join "auditor/agent.jsonl")}
     {id: "retained", cwd: $project, parentSession: null, file: ($dir | path join "retained.jsonl")}
   ] {
     write-jsonl $row.file [
@@ -380,6 +383,10 @@ def make-omp [root: string, project: string]: nothing -> record {
     ]
   }
   "worker log" | save ($child_root | path join "implementer/worker.log")
+  mkdir ($child_root | path join "implementer/worker")
+  "child log" | save ($child_root | path join "implementer/worker/run.log")
+  mkdir ($child_root | path join "reviewer/worker")
+  {result: "child review"} | to json | save ($child_root | path join "reviewer/worker/result.json")
   {result: "review"} | to json | save ($child_root | path join "reviewer/result.json")
   "task notes" | save ($child_root | path join "notes.md")
   mkdir $memory
@@ -394,7 +401,7 @@ def "test OMP file-only sessions preserve peers and shared memories until last r
   let directory = ($root | path join "bundle")
 
   with-env (fixture-env $root) {
-    let export = (run-cli export $project $directory --assistant omp --session-ids child)
+    let export = (run-cli export $project $directory --assistant omp --session-ids parent)
     assert equal $export.exit_code 0 $export.stderr
 
     assert equal (
@@ -405,15 +412,18 @@ def "test OMP file-only sessions preserve peers and shared memories until last r
       | sort
     ) [
       "2026-01-01T00-00-00_parent.jsonl"
+      "2026-01-01T00-00-00_parent/auditor/agent.jsonl"
       "2026-01-01T00-00-00_parent/implementer/worker.jsonl"
       "2026-01-01T00-00-00_parent/implementer/worker.log"
+      "2026-01-01T00-00-00_parent/implementer/worker/run.log"
       "2026-01-01T00-00-00_parent/notes.md"
       "2026-01-01T00-00-00_parent/reviewer/result.json"
-      "2026-01-01T00-00-00_parent/reviewer/review.jsonl"
+      "2026-01-01T00-00-00_parent/reviewer/worker.jsonl"
+      "2026-01-01T00-00-00_parent/reviewer/worker/result.json"
     ]
 
     let apply = (
-      run-cli retire $project --assistant omp --session-ids child --apply --no-backup
+      run-cli retire $project --assistant omp --session-ids parent --apply --no-backup
     )
     assert equal $apply.exit_code 0 $apply.stderr
 
@@ -439,9 +449,28 @@ def "test an imported Codex id with different rollout content is rejected" [] {
     let export = (run-cli export $project $directory --assistant codex --session-ids parent)
     assert equal $export.exit_code 0 $export.stderr
 
+    "DELETE FROM thread_spawn_edges;" | ^sqlite3 $fixture.db
+
+    let restore = (run-cli import $directory --assistant codex --apply)
+    assert equal $restore.exit_code 0 $restore.stderr
+
+    assert equal (sqlite-rows $fixture.db "SELECT * FROM thread_spawn_edges") [
+      {parent_thread_id: "parent", child_thread_id: "child", status: "completed"}
+    ]
+
     let same = (run-cli import $directory --assistant codex)
     assert equal $same.exit_code 0 $same.stderr
     assert str contains $same.stdout "Skipped"
+
+    "UPDATE thread_spawn_edges SET parent_thread_id = 'retained';" | ^sqlite3 $fixture.db
+
+    let relation_conflict = (run-cli import $directory --assistant codex --apply)
+
+    assert ($relation_conflict.exit_code != 0) $relation_conflict.stdout
+    assert equal (sqlite-rows $fixture.db "SELECT * FROM thread_spawn_edges") [
+      {parent_thread_id: "retained", child_thread_id: "child", status: "completed"}
+    ]
+    "UPDATE thread_spawn_edges SET parent_thread_id = 'parent';" | ^sqlite3 $fixture.db
 
     let entry = (
       open ($directory | path join "codex/entries.json")
@@ -465,6 +494,99 @@ def "test an imported Codex id with different rollout content is rejected" [] {
   }
 }
 
+def "test identical Claude sessions still import and validate their file history" [] {
+  let root = (mktemp -d)
+  let project = "/home/u/src/app"
+  let fixture = (make-claude $root $project)
+  let directory = ($root | path join "bundle")
+
+  with-env (fixture-env $root) {
+    let export = (run-cli export $project $directory --assistant claude --session-ids parent)
+    assert equal $export.exit_code 0 $export.stderr
+    rm --recursive ($fixture.config | path join "file-history")
+
+    let import = (run-cli import $directory --assistant claude --apply)
+    assert equal $import.exit_code 0 $import.stderr
+
+    assert equal (
+      open --raw ($fixture.config | path join "file-history/parent/file@v1")
+    ) "original artifact"
+    assert equal (
+      open --raw ($fixture.config | path join "file-history/child/child@v1")
+    ) "child artifact"
+
+    "different artifact" | save --force ($fixture.config | path join "file-history/child/child@v1")
+
+    let conflict = (run-cli import $directory --assistant claude --apply)
+
+    assert ($conflict.exit_code != 0) $conflict.stdout
+    assert equal (
+      open --raw ($fixture.config | path join "file-history/child/child@v1")
+    ) "different artifact"
+  }
+}
+
+def "test OMP imports compare session header ids when filenames change" [] {
+  let root = (mktemp -d)
+  let project = "/home/u/src/app"
+  let fixture = (make-omp $root $project)
+  let directory = ($root | path join "bundle")
+  let renamed = ($fixture.dir | path join "renamed.jsonl")
+
+  with-env (fixture-env $root) {
+    let export = (run-cli export $project $directory --assistant omp --session-ids parent)
+    assert equal $export.exit_code 0 $export.stderr
+    mv $fixture.parent $renamed
+
+    let same = (run-cli import $directory --assistant omp --apply)
+    assert equal $same.exit_code 0 $same.stderr
+
+    assert not ($fixture.parent | path exists)
+    assert ($renamed | path exists)
+
+    let changed = (
+      open --raw $renamed | lines | each {|line| $line | from json }
+      | each {|row|
+        if $row.type == "message" {
+          $row | update message.content "different body"
+        } else { $row }
+      }
+    )
+    rm $renamed
+    write-jsonl $renamed $changed
+
+    let conflict = (run-cli import $directory --assistant omp --apply)
+
+    assert ($conflict.exit_code != 0) $conflict.stdout
+    assert not ($fixture.parent | path exists)
+  }
+}
+
+def "test nested OMP retirement backs up artifacts at their original relative paths" [] {
+  let root = (mktemp -d)
+  let project = "/home/u/src/app"
+  let fixture = (make-omp $root $project)
+  let artifacts = [
+    {name: "implementer/worker.log", body: "worker log"}
+    {name: "notes.md", body: "task notes"}
+    {name: "reviewer/result.json", body: ({result: "review"} | to json)}
+  ]
+
+  with-env (fixture-env $root) {
+    let apply = (run-cli retire $project --assistant omp --session-ids parent --apply)
+    assert equal $apply.exit_code 0 $apply.stderr
+
+    let backup = (ls ($root | path join "state/agent-project-move") | get name | first)
+    let subtree = ($backup | path join ($fixture.children | str trim --left --char "/"))
+    for artifact in $artifacts {
+      assert equal (open --raw ($subtree | path join $artifact.name)) $artifact.body
+    }
+    assert (($subtree | path join "implementer/worker.jsonl") | path exists)
+    assert (($subtree | path join "reviewer/worker.jsonl") | path exists)
+    assert (($fixture.dir | path join "retained.jsonl") | path exists)
+  }
+}
+
 def make-omp-dbs [root: string, project: string, --empty]: nothing -> record {
   let agent = ($root | path join "omp/agent.db")
   let history = ($root | path join "omp/history.db")
@@ -483,14 +605,18 @@ def make-omp-dbs [root: string, project: string, --empty]: nothing -> record {
   ) | ^sqlite3 $history
   if not $empty {
     for row in [
-      {id: "parent", cwd: $project}
-      {id: "grandchild", cwd: "/other/deeper"}
-      {id: "retained", cwd: $project}
+      {id: "parent", cwd: $project, name: "2026-01-01T00-00-00_parent.jsonl"}
+      {id: "child", cwd: $project, name: "2026-01-01T00-00-00_parent/implementer/worker.jsonl"}
+      {id: "grandchild", cwd: "/other/deeper", name: "2026-01-01T00-00-00_parent/reviewer/worker.jsonl"}
+      {id: "retained", cwd: $project, name: "retained.jsonl"}
     ] {
       let id = (sql-quote $row.id)
       let cwd = (sql-quote $row.cwd)
+      let rollout = (
+        $root | path join "omp/sessions" (session-encode-here $project) $row.name | sql-quote $in
+      )
       (
-        $"INSERT INTO threads VALUES \(($id), ($cwd), NULL\); "
+        $"INSERT INTO threads VALUES \(($id), ($cwd), ($rollout)\); "
         + $"INSERT INTO stage1_outputs VALUES \(($id), ($id)\); "
         + $"INSERT INTO jobs VALUES \('summary', ($id), ($id)\);"
       ) | ^sqlite3 $agent
@@ -515,7 +641,7 @@ def "test OMP selection transfers disjoint cwd rows and their associated records
   let directory = ($root | path join "bundle")
 
   with-env (fixture-env $source) {
-    let export = (run-cli export $project $directory --assistant omp --session-ids child)
+    let export = (run-cli export $project $directory --assistant omp --session-ids parent)
     assert equal $export.exit_code 0 $export.stderr
   }
   with-env (fixture-env $target) {
@@ -533,12 +659,22 @@ def "test OMP selection transfers disjoint cwd rows and their associated records
   ] {
     let rows = (sqlite-rows $spec.db $"SELECT ($spec.key) AS id FROM ($spec.table) ORDER BY id")
 
-    assert equal $rows [{id: "grandchild"} {id: "parent"}] $spec.table
+    assert equal $rows [{id: "child"} {id: "grandchild"} {id: "parent"}] $spec.table
+  }
+
+  let threads = (sqlite-rows $target_dbs.agent "SELECT id, rollout_path FROM threads ORDER BY id")
+  for thread in $threads {
+    assert str contains $thread.rollout_path ($target | path join "omp/sessions")
+    let id = (
+      open --raw $thread.rollout_path | lines | each {|line| $line | from json }
+      | where type == "session" | first | get id
+    )
+    assert equal $id $thread.id
   }
 
   with-env (fixture-env $source) {
     let apply = (
-      run-cli retire $project --assistant omp --session-ids child --apply --no-backup
+      run-cli retire $project --assistant omp --session-ids parent --apply --no-backup
     )
     assert equal $apply.exit_code 0 $apply.stderr
   }
@@ -547,5 +683,190 @@ def "test OMP selection transfers disjoint cwd rows and their associated records
   assert equal (sqlite-rows $source_dbs.agent "SELECT job_key FROM jobs") [{job_key: "retained"}]
   assert equal (sqlite-rows $source_dbs.history "SELECT session_id FROM history") [
     {session_id: "retained"}
+  ]
+}
+
+def "test selecting a Codex child preserves its parent and sibling sessions" [] {
+  let root = (mktemp -d)
+  let project = "/home/u/src/app"
+  let fixture = (make-codex $root $project)
+  let directory = ($root | path join "bundle")
+
+  with-env (fixture-env $root) {
+    let export = (run-cli export "/other" $directory --assistant codex --session-ids child)
+    assert equal $export.exit_code 0 $export.stderr
+
+    assert equal (bundle-ids $directory "codex" "threads") ["child"]
+    let edge = (
+      open ($directory | path join "codex/entries.json")
+      | get tables | where table == "thread_spawn_edges" | get 0.rows
+    )
+    assert equal $edge [
+      {parent_thread_id: "parent", child_thread_id: "child", status: "completed"}
+    ]
+
+    let apply = (
+      run-cli retire "/other" --assistant codex --session-ids child --apply --no-backup
+    )
+    assert equal $apply.exit_code 0 $apply.stderr
+
+    assert equal (sqlite-rows $fixture.db "SELECT id FROM threads ORDER BY id") [
+      {id: "nested"}
+      {id: "other-child"}
+      {id: "parent"}
+      {id: "retained"}
+    ]
+    assert ($fixture.compressed | path exists)
+  }
+
+  let target = ($root | path join "target")
+  let target_fixture = (make-codex $target $project)
+  "DELETE FROM dependent; DELETE FROM thread_spawn_edges; DELETE FROM threads; DELETE FROM projects;"
+  | ^sqlite3 $target_fixture.db
+  rm --recursive ($target | path join "codex/sessions")
+
+  with-env (fixture-env $target) {
+    let import = (run-cli import $directory --assistant codex --apply)
+    assert equal $import.exit_code 0 $import.stderr
+
+    assert equal (sqlite-rows $target_fixture.db "SELECT id FROM threads") [{id: "child"}]
+    assert equal (sqlite-rows $target_fixture.db "SELECT * FROM thread_spawn_edges") [
+      {parent_thread_id: "parent", child_thread_id: "child", status: "completed"}
+    ]
+  }
+}
+
+def "test selecting a Claude subagent preserves its parent and other project files" [] {
+  let root = (mktemp -d)
+  let project = "/home/u/src/app"
+  let fixture = (make-claude $root $project)
+  let directory = ($root | path join "bundle")
+
+  with-env (fixture-env $root) {
+    let export = (run-cli export "/other" $directory --assistant claude --session-ids child)
+    assert equal $export.exit_code 0 $export.stderr
+
+    let entries = (open ($directory | path join "claude/entries.json"))
+    assert equal ($entries.files | where kind == "projects" | get name | sort) [
+      "memory/MEMORY.md"
+      "parent/subagents/agent-child.jsonl"
+    ]
+    assert equal ($entries.files | where kind == "file-history" | get name) ["child@v1"]
+
+    let apply = (
+      run-cli retire "/other" --assistant claude --session-ids child --apply --no-backup
+    )
+    assert equal $apply.exit_code 0 $apply.stderr
+
+    assert not ($fixture.child | path exists)
+    assert (($fixture.dir | path join "parent.jsonl") | path exists)
+    assert (($fixture.dir | path join "retained.jsonl") | path exists)
+    assert (($fixture.nested | path join "nested.jsonl") | path exists)
+    assert (($fixture.config | path join "file-history/parent/file@v1") | path exists)
+    assert equal (open --raw ($fixture.dir | path join "memory/MEMORY.md")) "shared memory"
+  }
+}
+
+def "test selecting an OMP child carries only its descendants and own artifact subtree" [] {
+  let root = (mktemp -d)
+  let project = "/home/u/src/app"
+  let fixture = (make-omp $root $project)
+  let directory = ($root | path join "bundle")
+
+  with-env (fixture-env $root) {
+    let export = (run-cli export $project $directory --assistant omp --session-ids child)
+    assert equal $export.exit_code 0 $export.stderr
+
+    assert equal (
+      open ($directory | path join "omp/entries.json")
+      | get files | where kind == "sessions" | get name | sort
+    ) [
+      "2026-01-01T00-00-00_parent/implementer/worker.jsonl"
+      "2026-01-01T00-00-00_parent/implementer/worker/run.log"
+      "2026-01-01T00-00-00_parent/reviewer/worker.jsonl"
+      "2026-01-01T00-00-00_parent/reviewer/worker/result.json"
+    ]
+
+    let apply = (
+      run-cli retire $project --assistant omp --session-ids child --apply --no-backup
+    )
+    assert equal $apply.exit_code 0 $apply.stderr
+
+    assert ($fixture.parent | path exists)
+    assert (($fixture.children | path join "notes.md") | path exists)
+    assert (($fixture.children | path join "auditor/agent.jsonl") | path exists)
+    assert (($fixture.children | path join "implementer/worker.log") | path exists)
+    assert (($fixture.children | path join "reviewer/result.json") | path exists)
+    assert not (($fixture.children | path join "implementer/worker.jsonl") | path exists)
+    assert not (($fixture.children | path join "implementer/worker") | path exists)
+    assert not (($fixture.children | path join "reviewer/worker.jsonl") | path exists)
+    assert not (($fixture.children | path join "reviewer/worker") | path exists)
+    assert (($fixture.dir | path join "retained.jsonl") | path exists)
+    assert equal (open --raw ($fixture.memory | path join "MEMORY.md")) "shared memory"
+  }
+}
+
+def "test OMP rows without session ids cannot widen exact selection to protected sessions" [] {
+  let root = (mktemp -d)
+  let project = "/home/u/src/app"
+  make-omp $root $project | ignore
+  let dbs = (make-omp-dbs $root $project)
+  let protected = (
+    $root | path join "omp/sessions" (session-encode-here "/safe/project") "protected.jsonl"
+  )
+  write-jsonl $protected [{type: "session", id: "protected", cwd: "/safe/project"}]
+  let original = (open --raw $protected)
+  (
+    "INSERT INTO history(session_id, cwd, prompt) VALUES (NULL, " + (sql-quote $project)
+    + ", 'selected metadata'), (NULL, '/safe/project', 'protected metadata');"
+  ) | ^sqlite3 $dbs.history
+  let directory = ($root | path join "bundle")
+
+  with-env (fixture-env $root) {
+    let export = (run-cli export $project $directory --assistant omp --exact)
+    assert equal $export.exit_code 0 $export.stderr
+
+    let entries = (open ($directory | path join "omp/entries.json"))
+    assert not ("protected.jsonl" in ($entries.files | get name))
+
+    let apply = (run-cli retire $project --assistant omp --exact --apply --no-backup)
+    assert equal $apply.exit_code 0 $apply.stderr
+
+    assert equal (open --raw $protected) $original
+    assert equal (
+      sqlite-rows $dbs.history "SELECT prompt FROM history WHERE cwd = '/safe/project'"
+    ) [{prompt: "protected metadata"}]
+  }
+}
+
+def "test default OMP export preserves path metadata without session ids" [] {
+  let root = (mktemp -d)
+  let source = ($root | path join "source")
+  let target = ($root | path join "target")
+  let project = "/home/u/src/app"
+  let source_dbs = (make-omp-dbs $source $project --empty)
+  let target_dbs = (make-omp-dbs $target $project --empty)
+  let directory = ($root | path join "bundle")
+  let key = (sql-quote ("global:" + $project))
+  $"INSERT INTO jobs VALUES \('summary', ($key), 'global memory'\);" | ^sqlite3 $source_dbs.agent
+  (
+    "INSERT INTO history(session_id, cwd, prompt) VALUES (NULL, "
+    + (sql-quote $project) + ", 'path prompt');"
+  ) | ^sqlite3 $source_dbs.history
+
+  with-env (fixture-env $source) {
+    let export = (run-cli export $project $directory --assistant omp)
+    assert equal $export.exit_code 0 $export.stderr
+  }
+  with-env (fixture-env $target) {
+    let import = (run-cli import $directory --assistant omp --apply)
+    assert equal $import.exit_code 0 $import.stderr
+  }
+
+  assert equal (sqlite-rows $target_dbs.agent "SELECT * FROM jobs") [
+    {kind: "summary", job_key: ("global:" + $project), result: "global memory"}
+  ]
+  assert equal (sqlite-rows $target_dbs.history "SELECT session_id, cwd, prompt FROM history") [
+    {session_id: null, cwd: $project, prompt: "path prompt"}
   ]
 }

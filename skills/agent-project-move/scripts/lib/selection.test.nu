@@ -8,7 +8,7 @@ use std/assert
 
 use ./selection.nu *
 
-def "test selection scopes matches and carries complete parent trees" [] {
+def "test selection scopes roots and follows only their descendants" [] {
   let rows = [
     {id: "parent", cwd: "/work/app", parent: null}
     {id: "child", cwd: "/other/agent", parent: "parent"}
@@ -37,5 +37,18 @@ def "test selection scopes matches and carries complete parent trees" [] {
 
   let selected_child = (select-sessions $rows "/other" --session-ids ["child"])
 
-  assert equal ($selected_child | get id) ["parent" "child" "grandchild" "other-child"]
+  assert equal ($selected_child | get id) ["child" "grandchild"]
+}
+
+def "test records without session ids cannot select unrelated roots" [] {
+  let rows = [
+    {id: null, cwd: "/work/app", parent: null}
+    {id: "", cwd: "/work/app", parent: null}
+    {id: 7, cwd: "/work/app", parent: null}
+    {id: "retained", cwd: "/work/other", parent: null}
+  ]
+
+  let selected = (select-sessions $rows "/work/app" --exact)
+
+  assert equal $selected []
 }
