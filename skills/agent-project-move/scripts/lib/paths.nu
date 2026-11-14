@@ -87,13 +87,19 @@ export def files-under [dir: string]: nothing -> list<string> {
 # does not delete state for a disk that is merely detached.
 export def path-missing [path: string]: nothing -> bool {
   if ($path | path exists) { return false }
+
   let parts = (
     $path
     | str replace --regex "^/" ""
     | split row "/"
   )
   if ($parts | length) < 2 { return true }
-  let root = if ($parts | length) >= 4 and ($parts | first 2 | str join "/") == "run/media" {
+
+  let root = if ($parts | length) >= 4 and (
+    $parts
+    | first 2
+    | str join "/"
+  ) == "run/media" {
     "/" + (
       $parts
       | take 4
@@ -112,6 +118,7 @@ export def path-missing [path: string]: nothing -> bool {
       | str join "/"
     )
   }
+
   if (
     ($root | str starts-with "/Volumes/")
     or ($root | str starts-with "/mnt/")

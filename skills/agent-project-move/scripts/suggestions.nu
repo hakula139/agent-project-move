@@ -9,7 +9,11 @@ use ./lib/paths.nu [match-any path-match path-missing valid-path]
 def is-worktree-path [path: string]: nothing -> bool {
   let claude = ($path | str contains "/.claude/worktrees/")
   let codex = ($path | str contains "/.codex/worktrees/")
-  let sibling = ($path | split row "/" | any {|part| $part | str ends-with "__worktrees" })
+  let sibling = (
+    $path
+    | split row "/"
+    | any {|part| $part | str ends-with "__worktrees" }
+  )
   $claude or $codex or $sibling
 }
 

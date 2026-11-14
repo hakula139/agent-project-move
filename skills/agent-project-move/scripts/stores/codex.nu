@@ -145,8 +145,10 @@ def config-sections [content: string]: nothing -> list<record> {
       } else {
         $current = {header: $line, path: $path, leading: [], body: []}
       }
+
     } else if $current == null {
       $current = {header: null, path: null, leading: [], body: [$line]}
+
     } else {
       $current = ($current | update body { $in | append $line })
     }
@@ -412,13 +414,16 @@ def delete-threads [
   }
 
   let config = (config-path)
-  let trust_match = (trust-blocks | any {|block|
-    if $exact {
-      $block.path in $paths
-    } else {
-      match-any $paths $block.path
+  let trust_match = (
+    trust-blocks
+    | any {|block|
+      if $exact {
+        $block.path in $paths
+      } else {
+        match-any $paths $block.path
+      }
     }
-  })
+  )
 
   if ($config | path exists) and $trust_match {
     $actions = ($actions | append (edit-action "codex" "config" $config {|content|

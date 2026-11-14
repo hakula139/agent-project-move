@@ -573,6 +573,7 @@ export def plan-retire [
     | where {|cwd| valid-path $cwd }
     | where {|cwd| not ($remaining | any {|row| $row.cwd == $cwd or $row.owner == $cwd }) }
   )
+
   let session_files = (
     $selected
     | where {|row| ($row | get -o file) != null }
@@ -591,6 +592,7 @@ export def plan-retire [
     | outermost-paths $in
     | each {|file| action "omp" "sessions" "delete" $file "retire session tree" }
   )
+
   for path in $paths {
     let memory = (memory-root | path join (memory-encode $path))
     let shared = (
@@ -789,8 +791,8 @@ def mapped-parent [file: record, targets: list<record>]: nothing -> any {
     $targets
     | where {|entry| $entry.source_path == $parent }
     | first
-
   )
+
   if $target == null or $target.target == $parent {
     null
   } else {

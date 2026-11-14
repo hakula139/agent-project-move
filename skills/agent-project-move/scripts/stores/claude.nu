@@ -141,7 +141,7 @@ def sanitize [text: string]: nothing -> string {
   $text
   | split chars
   | each {|ch|
-    if ($ch =~ '^[a-zA-Z0-9]$') {
+    if ($ch =~ "^[a-zA-Z0-9]$") {
       $ch
     } else {
       "-" | fill --character "-" --width (utf16-units $ch | length)
@@ -304,6 +304,7 @@ export def scan []: nothing -> list<record> {
         | get file
         | uniq
       )
+
       let timestamps = (
         $stamps
         | where {|stamp| $stamp.file in $files }
@@ -404,6 +405,7 @@ def project-merge [source: string, target: string]: nothing -> list<record> {
     } else {
       [(rename-action "claude" "memory" $memory $staging "stage memory for review")]
     }
+
     $actions = ($actions ++ $stage)
     $skip = ($skip | append $memory)
   }
@@ -423,6 +425,7 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
     files-with-path $old [(projects-dir)] --glob ["*.jsonl" "*.json"]
     | where {|file| ($file | path basename) != "sessions-index.json" }
   )
+
   for file in $project_files {
     $actions = ($actions | append (edit-action "claude" "projects" $file $rewrite "rewrite paths"))
   }
@@ -563,8 +566,8 @@ def project-path [line: string]: nothing -> any {
     $line
     | parse --regex '"project":"(?<project>[^"]*)"'
     | get -o 0
-
   )
+
   if $found == null {
     null
   } else {
@@ -701,11 +704,13 @@ export def plan-retire [
     | get -o file
     | uniq
   )
+
   let ids = (
     $selected
     | get -o id
     | uniq
   )
+
   let directories = (
     $selected
     | get -o directory
@@ -731,6 +736,7 @@ export def plan-retire [
           } catch {
             {}
           }
+
           ($row | get -o sessionId) not-in $ids
         }
         | str join "\n"
@@ -920,7 +926,7 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     let staged = (($file.name | str starts-with "memory/") and ($memory_dir | path exists))
     let direct = ($project_dir | path join $file.name)
     let target = if $staged {
-      let relative = ($file.name | str replace --regex '^memory/' '')
+      let relative = ($file.name | str replace --regex "^memory/" "")
       $memory_dir | path join "incoming" (encode-path $file.project) $relative
     } else {
       $direct

@@ -141,13 +141,18 @@ def "main prune" [
   let targets = ($missing | where {|path| not (match-any $keep $path) })
   if ($excluded | is-not-empty) {
     print "Excluded by --keep:"
-    $excluded | wrap path | print-table
+    $excluded
+    | wrap path
+    | print-table
   }
+
   if not $apply and ($targets | is-not-empty) {
     let rows = (scan-all $selected | where {|row| $row.path in $targets })
     let count = ($targets | length)
     print $"Prune deletes state for ($count) (plural $count 'missing path' 'missing paths'):"
-    $rows | select assistant path sessions last_used | print-table
+    $rows
+    | select assistant path sessions last_used
+    | print-table
   }
 
   apply-all (plan-prune $selected $targets) --apply=$apply

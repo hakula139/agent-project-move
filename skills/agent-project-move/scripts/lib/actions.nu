@@ -491,6 +491,7 @@ export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> n
     $ordered
     | each {|action| manifest-view $action | default "" to }
     | print-table
+
     let count = ($ordered | length)
     let backup = if $no_backup {
       "No backup will be created."

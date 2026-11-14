@@ -24,7 +24,9 @@ export def file-uri [path: string]: nothing -> string {
 }
 
 export def json-escape [text: string]: nothing -> string {
-  ($text | to json) | str substring 1..<(-1)
+  $text
+  | to json
+  | str substring 1..<(-1)
 }
 
 def escape-replacement [text: string]: nothing -> string {
