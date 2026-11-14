@@ -37,10 +37,11 @@ Codex asks for project trust when needed after a move or import.
 | `threads.cwd`                        | A path column                                                                                 |
 | `threads.sandbox_policy`             | Path values inside the JSON                                                                   |
 | `sessions/` and `archived_sessions/` | Every path value in a rollout, including compressed `<rollout>.zst` files read through `zstd` |
-| `.codex-global-state.json`           | Every path value                                                                              |
-| `thread_history_<N>.sqlite`          | Projections of edited threads, rewritten or deleted by the rule below                         |
+| `thread_history_<N>.sqlite`          | Deletes projections of threads whose rollouts are rewritten                                   |
 
-A history projection is exact or absent. When both spellings of the path keep the byte length of their JSON-escaped form, the thread's rows stay and their `item_json` paths are rewritten. Otherwise the thread's projection rows are deleted, with `thread_history_projection_state` first so its trigger clears `thread_realtime_items`. Codex rebuilds the projection on the thread's first resume, after `codex unarchive` for an archived thread, so reads and the transcript preview show nothing until then. Threads without a rollout keep their rows.
+A move deletes each rewritten rollout's history projection, with `thread_history_projection_state` first so its trigger clears `thread_realtime_items`. Codex rebuilds it on resume, after `codex unarchive` for an archived thread. Reading a thread or running `codex unarchive` does not rebuild it, so the transcript preview stays empty until resume. Threads without a rewritten rollout keep their rows.
+
+Desktop workspace state in `.codex-global-state.json` stays unchanged. Update its paths separately when needed.
 
 A prune deletes the rollouts and `threads` rows with foreign keys on, then the removed threads' history projection rows explicitly, because that database has no cascades.
 

@@ -6,7 +6,7 @@
 
 use std/assert
 
-use ./rewrite.nu [offsets-kept rewrite-text]
+use ./rewrite.nu [rewrite-text]
 
 def "test path rewrites cover JSON string tokens" [] {
   let cases = [
@@ -169,56 +169,5 @@ def "test path and file URI rewrites preserve suffixes" [] {
     let expected = '{"p":"' + $case.expected + '"}'
 
     assert equal (rewrite-text $content $case.old $case.new) $expected $case.name
-  }
-}
-
-def "test offsets survive only same-length moves" [] {
-  let cases = [
-    {
-      name: "a same-length move"
-      old: "/work/src"
-      new: "/work/new"
-      kept: true
-    }
-    {
-      name: "a non-ASCII path"
-      old: "/work/café"
-      new: "/work/cafe"
-      kept: false
-    }
-    {
-      name: "a space the URI spelling escapes"
-      old: "/work/a b"
-      new: "/work/a-b"
-      kept: false
-    }
-    {
-      name: "a space on both sides"
-      old: "/work/a b"
-      new: "/work/c d"
-      kept: true
-    }
-    {
-      name: "a quote the JSON escapes"
-      old: '/work/a"b'
-      new: "/work/a b"
-      kept: false
-    }
-    {
-      name: "a backslash the JSON escapes"
-      old: '/work/a\b'
-      new: "/work/a b"
-      kept: false
-    }
-    {
-      name: "a tab the JSON escapes"
-      old: "/work/a\tb"
-      new: "/work/a b"
-      kept: false
-    }
-  ]
-
-  for case in $cases {
-    assert equal (offsets-kept $case.old $case.new) $case.kept $case.name
   }
 }

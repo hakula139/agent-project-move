@@ -14,7 +14,7 @@ use ../lib/actions.nu [
 ]
 use ../lib/bundle.nu [bundle-table]
 use ../lib/paths.nu [match-any path-map valid-path]
-use ../lib/rewrite.nu [files-with-path offsets-kept rewrite-text]
+use ../lib/rewrite.nu [files-with-path rewrite-text]
 use ../lib/selection.nu [select-sessions]
 use ../lib/sqlite.nu [
   check-columns
@@ -114,33 +114,14 @@ export def scan []: nothing -> list<record> {
 # Move
 # --------------------------------------------------------------------------------------------------
 
-def projection-actions [
-  db: any
-  ids: list<string>
-  old: string
-  new: string
-]: nothing -> list<record> {
+def projection-actions [db: any, ids: list<string>]: nothing -> list<record> {
   if ($db == null) or ($ids | is-empty) { return [] }
 
-  if (offsets-kept $old $new) {
-    let columns = [
-      {
-        db: $db
-        table: "thread_items"
-        column: "item_json"
-        json: true
-      }
-    ]
-
-    column-actions "codex" $columns $old $new
-
-  } else {
-    let id_list = (sql-list $ids)
-    $PROJECTION_TABLES
-    | each {|table|
-      let statement = $"DELETE FROM ($table) WHERE thread_id IN \(($id_list)\)"
-      sql-action "codex" "thread-history" $db [$statement] $"reset ($table)" --derived
-    }
+  let id_list = (sql-list $ids)
+  $PROJECTION_TABLES
+  | each {|table|
+    let statement = $"DELETE FROM ($table) WHERE thread_id IN \(($id_list)\)"
+    sql-action "codex" "thread-history" $db [$statement] $"reset ($table)" --derived
   }
 }
 
@@ -154,8 +135,6 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
     ($home | path join "sessions")
     ($home | path join "archived_sessions")
   ])
-
-  let desktop = (files-with-path $old [($home | path join ".codex-global-state.json")])
 
   let threads = (sqlite-rows $state "SELECT * FROM threads")
   let edited_ids = (
@@ -189,14 +168,8 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
   for file in $rollouts {
     $actions = ($actions | append (edit-action "codex" "rollouts" $file $rewrite "rewrite cwd"))
   }
-  for file in $desktop {
-    $actions = (
-      $actions | append (edit-action "codex" "desktop-state" $file $rewrite "rewrite desktop state")
-    )
-  }
 
-  $actions = ($actions ++ (projection-actions (history-db) $edited_ids $old $new))
-  $actions
+  $actions ++ (projection-actions (history-db) $edited_ids)
 }
 
 # --------------------------------------------------------------------------------------------------
