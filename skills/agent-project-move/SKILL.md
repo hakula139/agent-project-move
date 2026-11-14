@@ -48,7 +48,7 @@ If the run aborts, read the error and close the session working in that path. A 
 
 ## Project merges
 
-When a Claude project directory lands on an existing one, the unique transcripts from both sides are kept, and `sessions-index.json` is deleted as stale derived data. If the destination already has a `memory/` directory, the source's whole memory directory is staged under `memory/incoming/<source-encoded-name>/`, listed as a rename, and left for the user to consolidate by hand. Otherwise the source memory moves in directly, with identical duplicates dropped. OMP memory collisions keep the destination file and delete the source copy. Memory content is never merged by the script.
+When a Claude project directory lands on an existing one, the unique transcripts from both sides are kept, and `sessions-index.json` is deleted as stale derived data. If the destination already has a `memory/` directory, the source's whole memory directory is staged under `memory/incoming/<source-encoded-name>/`, listed as a rename, and left for the user to consolidate by hand. Otherwise the source memory moves in directly, with identical duplicates dropped. Memory content is never merged by the script.
 
 ## Move
 
@@ -75,7 +75,7 @@ When a Claude project directory lands on an existing one, the unique transcripts
 
    By default the export includes child paths. Use `--exact` to select sessions whose recorded cwd equals the path, or `--session-ids <id,id>` to select specific sessions under the path. The options are mutually exclusive. Linked descendants and each selected session's own artifact subtree travel with it. Selecting a child does not select its parent or siblings.
 
-2. Copy the bundle to the target host over ssh, for example with `rsync -a ~/agent-project-move-bundle <target>:~/`, then run the import there. Add `--target` when the project path differs. It maps the exported root and its descendants, preserving suffixes, and leaves carried outside-root paths unchanged. Only incoming state is mapped, so existing local sessions stay unchanged. Omit the option to keep the original project paths. Existing session IDs require identical transcript content after mapping. Changed content aborts before writing, so reconcile or re-export those sessions before importing again. Missing dependent records still import, while shared memory for an already imported session set stays in place. Codex rebuilds a thread's history projection on its first resume, after `codex unarchive` for an archived thread, so an imported Codex transcript preview stays empty until then.
+2. Copy the bundle to the target host over ssh, for example with `rsync -a ~/agent-project-move-bundle <target>:~/`, then run the import there. Add `--target` when the project path differs. It maps the exported root and its descendants, preserving suffixes, and leaves carried outside-root paths unchanged. Only incoming state is mapped, so existing local sessions stay unchanged. Omit the option to keep the original project paths. Existing session IDs require identical transcript content after mapping. Changed content aborts before writing, so reconcile or re-export those sessions before importing again. Missing dependent records still import. Codex rebuilds a thread's history projection on its first resume, after `codex unarchive` for an archived thread, so an imported Codex transcript preview stays empty until then.
 
    ```bash
    agent-project-move import ~/agent-project-move-bundle --target ~/work/app

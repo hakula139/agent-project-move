@@ -112,20 +112,11 @@ export def column-statements [
   column: string
   old: string
   new: string
-  --prefix: string = ""
-  --collide
 ]: nothing -> list<string> {
-  let condition = (path-condition $column [$old] --prefix $prefix)
+  let condition = (path-condition $column [$old])
   let offset = if $new == "/" { 2 } else { 1 }
-  let value = $"(sql-quote $prefix) || (sql-quote $new) || substr\(($column), length\((sql-quote ($prefix + $old))\) + ($offset)\)"
-  let update = $"UPDATE ($table) SET ($column) = ($value) WHERE ($condition)"
-
-  if $collide {
-    let insert = ($update | str replace --regex "^UPDATE " "UPDATE OR IGNORE ")
-    [$insert $"DELETE FROM ($table) WHERE ($condition)"]
-  } else {
-    [$update]
-  }
+  let value = $"(sql-quote $new) || substr\(($column), length\((sql-quote $old)\) + ($offset)\)"
+  [$"UPDATE ($table) SET ($column) = ($value) WHERE ($condition)"]
 }
 
 # One action per path column, so a plain column is set-based and covers rows written before
@@ -144,8 +135,7 @@ export def column-actions [
 
     let table = $spec.table
     let column = $spec.column
-    let prefix = ($spec | get -o prefix | default "")
-    let condition = (path-condition $column [$old] --prefix $prefix)
+    let condition = (path-condition $column [$old])
     let statements = if ($spec | get -o json | default false) {
       json-column-statements $db $table $column $old $new
     } else {
@@ -157,8 +147,7 @@ export def column-actions [
       if $exists == 0 {
         []
       } else {
-        let collide = ($spec | get -o collide | default false)
-        column-statements $table $column $old $new --prefix $prefix --collide=$collide
+        column-statements $table $column $old $new
       }
     }
 
@@ -212,7 +201,6 @@ export def merge-actions [
   target: string
   description: string
   --skip (-s): list<string> = []
-  --prefer-destination (-d) # Delete a colliding source file
 ]: nothing -> list<record> {
   if not ($source | path exists) { return [] }
   if (same-directory $source $target) { return [] }
@@ -221,7 +209,6 @@ export def merge-actions [
     return [(rename-action $assistant $store $source $target $description)]
   }
 
-  let prefer = $prefer_destination
   let source_type = ($source | path type)
   let target_type = ($target | path type)
   if $source_type != $target_type {
@@ -232,9 +219,6 @@ export def merge-actions [
   }
 
   if $source_type != "dir" {
-    if $prefer {
-      return [(action $assistant $store "delete" $source "destination wins")]
-    }
     if (same-content $source $target) {
       return [(action $assistant $store "delete" $source "duplicate of the destination")]
     }
@@ -256,9 +240,7 @@ export def merge-actions [
     let to = ($target | path join $entry)
     $actions = (
       $actions
-      ++ (
-        merge-actions $assistant $store $from $to $description --skip $skip --prefer-destination=$prefer
-      )
+      ++ (merge-actions $assistant $store $from $to $description --skip $skip)
     )
   }
 

@@ -8,7 +8,7 @@ use std/assert
 
 use ./lib/sqlite.nu [sql-quote sqlite-rows]
 use ./stores/claude.nu [encode-path]
-use ./stores/omp.nu [memory-encode session-encode-here]
+use ./stores/omp.nu [scan session-encode-here]
 
 const SCRIPT = path self "agent-project-move.nu"
 
@@ -1196,7 +1196,6 @@ def "test targeted Claude imports preserve local sessions and opaque file histor
 
 def make-omp [root: string, project: string]: nothing -> record {
   let dir = ($root | path join "omp/sessions" (session-encode-here $project))
-  let memory = ($root | path join "state/omp/memories" (memory-encode $project))
   let parent_file = ($dir | path join "2026-01-01T00-00-00_parent.jsonl")
   let child_root = ($dir | path join "2026-01-01T00-00-00_parent")
 
@@ -1271,81 +1270,10 @@ def make-omp [root: string, project: string]: nothing -> record {
 
   "task notes" | save ($child_root | path join "notes.md")
 
-  mkdir $memory
-  "shared memory" | save ($memory | path join "MEMORY.md")
-
   {
     dir: $dir
-    memory: $memory
     parent: $parent_file
     children: $child_root
-  }
-}
-
-def make-omp-dbs [root: string, project: string, --empty]: nothing -> record {
-  let agent = ($root | path join "omp/agent.db")
-  let history = ($root | path join "omp/history.db")
-  mkdir ($agent | path dirname)
-  (
-    "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, rollout_path TEXT); "
-    + "CREATE TABLE stage1_outputs (thread_id TEXT PRIMARY KEY, summary TEXT); "
-    + "CREATE TABLE jobs (kind TEXT, job_key TEXT, result TEXT, PRIMARY KEY(kind, job_key));"
-  ) | ^sqlite3 $agent
-  (
-    "CREATE TABLE history (id INTEGER PRIMARY KEY, session_id TEXT, cwd TEXT, prompt TEXT); "
-    + "CREATE TABLE session_titles (session_id TEXT PRIMARY KEY, title TEXT); "
-    + "CREATE TABLE session_recaps (id INTEGER PRIMARY KEY, session_id TEXT, cwd TEXT, "
-    + "created_at INTEGER, recap TEXT); "
-    + "CREATE VIRTUAL TABLE history_fts USING fts5(prompt, content='history', content_rowid='id');"
-  ) | ^sqlite3 $history
-
-  if not $empty {
-    for row in [
-      {
-        id: "parent"
-        cwd: $project
-        name: "2026-01-01T00-00-00_parent.jsonl"
-      }
-      {
-        id: "child"
-        cwd: $project
-        name: "2026-01-01T00-00-00_parent/implementer/worker.jsonl"
-      }
-      {
-        id: "grandchild"
-        cwd: "/other/deeper"
-        name: "2026-01-01T00-00-00_parent/reviewer/worker.jsonl"
-      }
-      {
-        id: "retained"
-        cwd: $project
-        name: "retained.jsonl"
-      }
-    ] {
-      let id = (sql-quote $row.id)
-      let cwd = (sql-quote $row.cwd)
-      let rollout = (
-        $root
-        | path join "omp/sessions" (session-encode-here $project) $row.name
-        | sql-quote $in
-      )
-
-      (
-        $"INSERT INTO threads VALUES \(($id), ($cwd), ($rollout)\); "
-        + $"INSERT INTO stage1_outputs VALUES \(($id), ($id)\); "
-        + $"INSERT INTO jobs VALUES \('summary', ($id), ($id)\);"
-      ) | ^sqlite3 $agent
-      (
-        $"INSERT INTO history\(session_id, cwd, prompt\) VALUES \(($id), ($cwd), ($id)\); "
-        + $"INSERT INTO session_titles VALUES \(($id), ($id)\); "
-        + $"INSERT INTO session_recaps\(session_id, cwd, created_at, recap\) VALUES \(($id), ($cwd), 1, ($id)\);"
-      ) | ^sqlite3 $history
-    }
-  }
-
-  {
-    agent: $agent
-    history: $history
   }
 }
 
@@ -1383,7 +1311,6 @@ def "test OMP file-only retirement preserves peers and backs up nested artifacts
     assert not ($fixture.parent | path exists)
     assert not ($fixture.children | path exists)
     assert (($fixture.dir | path join "retained.jsonl") | path exists)
-    assert equal (open --raw ($fixture.memory | path join "MEMORY.md")) "shared memory"
 
     let backup = (
       ls ($root | path join "state/agent-project-move")
@@ -1404,7 +1331,7 @@ def "test OMP file-only retirement preserves peers and backs up nested artifacts
     let final = (run-cli retire $project --assistant "omp" --exact --apply --no-backup)
     assert equal $final.exit_code 0 $final.stderr
 
-    assert not ($fixture.memory | path exists)
+    assert not (($fixture.dir | path join "retained.jsonl") | path exists)
   }
 }
 
@@ -1446,170 +1373,109 @@ def "test selecting an OMP child carries only its descendants and own artifact s
     assert not (($fixture.children | path join "reviewer/worker.jsonl") | path exists)
     assert not (($fixture.children | path join "reviewer/worker") | path exists)
     assert (($fixture.dir | path join "retained.jsonl") | path exists)
-    assert equal (open --raw ($fixture.memory | path join "MEMORY.md")) "shared memory"
   }
 }
 
-def "test OMP rows without session ids cannot widen exact selection to protected sessions" [] {
-  let root = (mktemp -d)
+def "test OMP scans and transfers session files without touching auxiliary state" [] {
+  let root = (mktemp -d | path expand)
+  let source = ($root | path join "source")
+  let target = ($root | path join "target")
+  let moved = ($root | path join "moved")
   let project = "/home/u/src/app"
-  make-omp $root $project | ignore
-  let dbs = (make-omp-dbs $root $project)
-  let protected = (
-    $root | path join "omp/sessions" (session-encode-here "/safe/project") "protected.jsonl"
+  let fixture = (make-omp $source $project)
+  let archive = (
+    $source | path join "omp/archive/sessions" (session-encode-here $project) "archived.jsonl"
   )
-  write-jsonl $protected [
-    {
-      type: "session"
-      id: "protected"
-      cwd: "/safe/project"
-    }
-  ]
-  let original = (open --raw $protected)
-  $"INSERT INTO history\(session_id, cwd, prompt\) VALUES \(NULL, (sql-quote $project), 'selected metadata'\), \(NULL, '/safe/project', 'protected metadata'\);"
-  | ^sqlite3 $dbs.history
-  let directory = ($root | path join "bundle")
-
-  with-env (fixture-env $root) {
-    let export = (run-cli export $project $directory --assistant "omp" --exact)
-    assert equal $export.exit_code 0 $export.stderr
-
-    let entries = (open ($directory | path join "omp/entries.json"))
-    assert not ("protected.jsonl" in ($entries.files | get name))
-
-    let apply = (run-cli retire $project --assistant "omp" --exact --apply --no-backup)
-    assert equal $apply.exit_code 0 $apply.stderr
-
-    assert equal (open --raw $protected) $original
-    assert equal (
-      sqlite-rows $dbs.history "SELECT prompt FROM history WHERE cwd = '/safe/project'"
-    ) [{prompt: "protected metadata"}]
+  for file in (glob ($fixture.dir | path join "**/*.jsonl")) {
+    ^touch -d "2026-01-01T00:00:00Z" $file
   }
-}
+  write-jsonl $archive [
+    {type: "session", id: "archived", cwd: "/other/deeper", parentSession: "parent"}
+  ]
+  ^touch -d "2026-01-02T00:00:00Z" $archive
+  mkdir $moved
 
-def "test OMP selection transfers disjoint cwd rows and their associated records" [] {
-  let root = (mktemp -d)
-  let source = ($root | path join "source")
-  let target = ($root | path join "target")
-  let project = "/home/u/src/app"
-  make-omp $source $project | ignore
-  let source_dbs = (make-omp-dbs $source $project)
-  let target_dbs = (make-omp-dbs $target $project --empty)
+  let databases = ["agent.db" "history.db"]
+  for name in $databases {
+    let db = ($source | path join "omp" $name)
+    $"CREATE TABLE kept \(cwd TEXT\); INSERT INTO kept VALUES \((sql-quote $project)\);"
+    | ^sqlite3 $db
+  }
+  let memory = ($source | path join "state/omp/memories/--home-u-src-app--/MEMORY.md")
+  mkdir ($memory | path dirname)
+  [$project] | to json | save $memory
+  let untouched = (
+    ($databases | each {|name| $source | path join "omp" $name })
+    | append $memory
+    | each {|file| {file: $file, hash: (open --raw $file | hash sha256)} }
+  )
   let directory = ($root | path join "bundle")
 
   with-env (fixture-env $source) {
-    let export = (run-cli export $project $directory --assistant "omp" --session-ids "parent")
-    assert equal $export.exit_code 0 $export.stderr
+    let created = ("2026-01-01T00:00:00Z" | into datetime)
+    let archived = ("2026-01-02T00:00:00Z" | into datetime)
+
+    assert equal (scan) [
+      {assistant: "omp", path: $project, sessions: 4, last_used: $created}
+      {assistant: "omp", path: "/other/deeper", sessions: 2, last_used: $archived}
+    ]
+
+    for args in [
+      ["export" $project $directory "--session-ids" "parent"]
+      ["move" $project $moved "--apply" "--no-backup"]
+      ["retire" $moved "--session-ids" "parent" "--apply" "--no-backup"]
+    ] {
+      let run = (run-cli ...$args --assistant "omp")
+      assert equal $run.exit_code 0 $run.stderr
+
+      for original in $untouched {
+        assert equal (open --raw $original.file | hash sha256) $original.hash $original.file
+      }
+    }
   }
+
+  let entries = ($directory | path join "omp/entries.json")
+  let bundle = (open $entries)
+  assert equal $bundle.tables []
+  assert ($bundle.files | all {|file| $file.kind in ["sessions" "archives"] })
+  $bundle
+  | upsert tables [{table: "kept", columns: ["cwd"], rows: [{cwd: $project}]}]
+  | to json
+  | save --force $entries
 
   with-env (fixture-env $target) {
-    let import = (run-cli import $directory --assistant "omp" --apply)
+    let import = (run-cli import $directory --assistant "omp" --apply --no-backup)
     assert equal $import.exit_code 0 $import.stderr
-  }
 
-  for spec in [
-    {
-      db: $target_dbs.agent
-      table: "threads"
-      key: "id"
-    }
-    {
-      db: $target_dbs.agent
-      table: "stage1_outputs"
-      key: "thread_id"
-    }
-    {
-      db: $target_dbs.agent
-      table: "jobs"
-      key: "job_key"
-    }
-    {
-      db: $target_dbs.history
-      table: "history"
-      key: "session_id"
-    }
-    {
-      db: $target_dbs.history
-      table: "session_titles"
-      key: "session_id"
-    }
-    {
-      db: $target_dbs.history
-      table: "session_recaps"
-      key: "session_id"
-    }
-  ] {
-    let rows = (sqlite-rows $spec.db $"SELECT ($spec.key) AS id FROM ($spec.table) ORDER BY id")
-
-    assert equal $rows [{id: "child"} {id: "grandchild"} {id: "parent"}] $spec.table
-  }
-
-  let threads = (sqlite-rows $target_dbs.agent "SELECT id, rollout_path FROM threads ORDER BY id")
-  for thread in $threads {
-    let id = (
-      open --raw $thread.rollout_path
-      | lines
-      | each {|line| $line | from json }
-      | where type == "session"
-      | first
-      | get id
+    let parent = (
+      $target
+      | path join "omp/sessions" (session-encode-here $project) "2026-01-01T00-00-00_parent.jsonl"
     )
-
-    assert str contains $thread.rollout_path ($target | path join "omp/sessions")
-    assert equal $id $thread.id
-  }
-
-  with-env (fixture-env $source) {
-    let apply = (
-      run-cli retire $project --assistant "omp" --session-ids "parent" --apply --no-backup
+    assert ($parent | path exists)
+    let subtree = ($parent | str replace --regex '\.jsonl$' "")
+    for child in [
+      {name: "implementer/worker.jsonl", id: "child"}
+      {name: "reviewer/worker.jsonl", id: "grandchild"}
+    ] {
+      let id = (
+        open --raw ($subtree | path join $child.name)
+        | lines
+        | each {|line| $line | from json }
+        | where type == "session"
+        | first
+        | get id
+      )
+      assert equal $id $child.id $child.name
+    }
+    let archived = (
+      $target
+      | path join "omp/archive/sessions" (session-encode-here "/other/deeper") "archived.jsonl"
     )
-    assert equal $apply.exit_code 0 $apply.stderr
-  }
-
-  assert equal (sqlite-rows $source_dbs.agent "SELECT id FROM threads") [{id: "retained"}]
-  assert equal (sqlite-rows $source_dbs.agent "SELECT job_key FROM jobs") [{job_key: "retained"}]
-  assert equal (sqlite-rows $source_dbs.history "SELECT session_id FROM history") [
-    {session_id: "retained"}
-  ]
-}
-
-def "test default OMP export preserves path metadata without session ids" [] {
-  let root = (mktemp -d)
-  let source = ($root | path join "source")
-  let target = ($root | path join "target")
-  let project = "/home/u/src/app"
-  let source_dbs = (make-omp-dbs $source $project --empty)
-  let target_dbs = (make-omp-dbs $target $project --empty)
-  let directory = ($root | path join "bundle")
-  let key = (sql-quote ("global:" + $project))
-  $"INSERT INTO jobs VALUES \('summary', ($key), 'global memory'\);" | ^sqlite3 $source_dbs.agent
-  $"INSERT INTO history\(session_id, cwd, prompt\) VALUES \(NULL, (sql-quote $project), 'path prompt'\);"
-  | ^sqlite3 $source_dbs.history
-
-  with-env (fixture-env $source) {
-    let export = (run-cli export $project $directory --assistant "omp")
-    assert equal $export.exit_code 0 $export.stderr
-  }
-
-  with-env (fixture-env $target) {
-    let import = (run-cli import $directory --assistant "omp" --apply)
-    assert equal $import.exit_code 0 $import.stderr
-  }
-
-  assert equal (sqlite-rows $target_dbs.agent "SELECT * FROM jobs") [
-    {
-      kind: "summary"
-      job_key: ("global:" + $project)
-      result: "global memory"
+    assert ($archived | path exists)
+    for path in ["omp/agent.db" "omp/history.db" "state/omp"] {
+      assert not ($target | path join $path | path exists) $path
     }
-  ]
-  assert equal (sqlite-rows $target_dbs.history "SELECT session_id, cwd, prompt FROM history") [
-    {
-      session_id: null
-      cwd: $project
-      prompt: "path prompt"
-    }
-  ]
+  }
 }
 
 def "test bundle file origins describe source files without directing imports" [] {
@@ -1880,7 +1746,6 @@ def "test targeted OMP imports restore native parent links after path rewrites" 
     let external = (
       $source | path join "omp/sessions" (session-encode-here $outside) "external.jsonl"
     )
-    let source_dbs = (make-omp-dbs $source $project --empty)
     write-jsonl $parent [
       {
         type: "session"
@@ -1924,8 +1789,6 @@ def "test targeted OMP imports restore native parent links after path rewrites" 
     0x[00 ff 80 0a] | save $artifact
     ^touch -d "2026-01-01T00:00:00.987654321Z" $fork
     let timestamp = (with-env {TZ: "UTC"} { ^stat -c "%y" $fork })
-    "INSERT INTO history VALUES (1, 'parent', NULL, 'incoming'); INSERT INTO session_recaps VALUES (1, 'parent', NULL, 1234, 'recap');"
-    | ^sqlite3 $source_dbs.history
     let directory = ($root | path join "bundle")
 
     with-env (fixture-env $source) {
@@ -1940,7 +1803,7 @@ def "test targeted OMP imports restore native parent links after path rewrites" 
       ) $outside $label
     }
 
-    let dbs = if $same_store {
+    if $same_store {
       rm $fork
       rm $external
       rm --recursive ($source_dir | path join "000-parent")
@@ -1954,18 +1817,15 @@ def "test targeted OMP imports restore native parent links after path rewrites" 
         }
       ]
       mv --force ($source_dir | path join "mapped-parent.jsonl") $parent
-
-      "DELETE FROM history; DELETE FROM session_recaps;" | ^sqlite3 $source_dbs.history
-
-      $source_dbs
-
-    } else {
-      make-omp-dbs $local $project --empty
     }
-    let prompt = (sql-quote $project)
-    $"INSERT INTO history VALUES \(9, 'local', '/other/live', ($prompt)\);"
-    | ^sqlite3 $dbs.history
-    let retained = (sqlite-rows $dbs.history "SELECT * FROM history")
+    let retained = (
+      $local | path join "omp/sessions" (session-encode-here "/other/live") "retained.jsonl"
+    )
+    write-jsonl $retained [
+      {type: "session", id: "local", cwd: "/other/live"}
+      {type: "message", message: {content: $project}}
+    ]
+    let retained_bytes = (open --raw $retained)
     let destination = ($local | path join "omp/sessions" (session-encode-here $target))
     let native_parent = if $same_store {
       $parent
@@ -1983,13 +1843,11 @@ def "test targeted OMP imports restore native parent links after path rewrites" 
     )
 
     with-env (fixture-env $local) {
-      let before = (open --raw $dbs.history | hash sha256)
-
       let preview = (run-cli import $directory --assistant "omp" --target $target --no-backup)
       assert equal $preview.exit_code 0 $"($label): ($preview.stderr)"
 
-      assert equal (open --raw $dbs.history | hash sha256) $before $label
       assert not (($destination | path join "fork.jsonl") | path exists) $label
+      assert equal (open --raw $retained) $retained_bytes $label
 
       let import = (
         run-cli import $directory --assistant "omp" --target $target --no-backup --apply
@@ -2001,11 +1859,6 @@ def "test targeted OMP imports restore native parent links after path rewrites" 
         | lines
         | each {|line| $line | from json }
       )
-      let history_query = "SELECT session_id, cwd, prompt FROM history WHERE session_id = 'parent'"
-      let incoming_history = (sqlite-rows $dbs.history $history_query)
-      let recap_query = "SELECT session_id, cwd, created_at, recap FROM session_recaps"
-      let incoming_recaps = (sqlite-rows $dbs.history $recap_query)
-
       assert equal ($body | get 0) {
         type: "session"
         id: "fork"
@@ -2043,115 +1896,16 @@ def "test targeted OMP imports restore native parent links after path rewrites" 
         }
       ] $label
       assert equal (^stat -c "%y" ($destination | path join "fork.jsonl")) $timestamp $label
-      assert equal (
-        sqlite-rows $dbs.history "SELECT * FROM history WHERE session_id = 'local'"
-      ) $retained $label
-      assert equal $incoming_history [
-        {
-          session_id: "parent"
-          cwd: null
-          prompt: "incoming"
-        }
-      ] $label
-      assert equal $incoming_recaps [
-        {
-          session_id: "parent"
-          cwd: null
-          created_at: 1234
-          recap: "recap"
-        }
-      ] $label
-
-      let history_rows = (sqlite-rows $dbs.history "SELECT * FROM history ORDER BY id")
-      let recap_rows = (sqlite-rows $dbs.history "SELECT * FROM session_recaps ORDER BY id")
+      assert equal (open --raw $retained) $retained_bytes $label
       let fork_bytes = (open --raw ($destination | path join "fork.jsonl"))
 
       let repeated = (
         run-cli import $directory --assistant "omp" --target $target --no-backup --apply
       )
       assert equal $repeated.exit_code 0 $"($label): ($repeated.stderr)"
-      assert equal (
-        sqlite-rows $dbs.history "SELECT * FROM history ORDER BY id"
-      ) $history_rows $label
-      assert equal (
-        sqlite-rows $dbs.history "SELECT * FROM session_recaps ORDER BY id"
-      ) $recap_rows $label
       assert equal (open --raw ($destination | path join "fork.jsonl")) $fork_bytes $label
       assert equal (^stat -c "%y" ($destination | path join "fork.jsonl")) $timestamp $label
-    }
-  }
-}
-
-def "test OMP selected titles transfer and retire without requiring history rows" [] {
-  for with_recap in [true false] {
-    let root = (mktemp -d)
-    let project = "/home/u/src/app"
-    let dbs = (make-omp-dbs $root $project --empty)
-    for id in ["selected" "retained"] {
-      let value = (sql-quote $id)
-      $"INSERT INTO session_titles VALUES \(($value), ($value)\);" | ^sqlite3 $dbs.history
-      if $with_recap {
-        $"INSERT INTO session_recaps\(session_id, cwd, created_at, recap\) VALUES \(($value), (sql-quote $project), 1, ($value)\);"
-        | ^sqlite3 $dbs.history
-      } else {
-        let file = ($root | path join "omp/sessions" (session-encode-here $project) $"($id).jsonl")
-        write-jsonl $file [
-          {
-            type: "session"
-            id: $id
-            cwd: $project
-          }
-        ]
-      }
-    }
-
-    let directory = ($root | path join "bundle")
-    let target = ($root | path join "target")
-    let target_dbs = (make-omp-dbs $target $project --empty)
-
-    with-env (fixture-env $root) {
-      let export = (run-cli export $project $directory --assistant "omp" --session-ids "selected")
-      assert equal $export.exit_code 0 $export.stderr
-    }
-
-    with-env (fixture-env $target) {
-      let import = (run-cli import $directory --assistant "omp" --apply)
-      assert equal $import.exit_code 0 $import.stderr
-    }
-
-    assert equal (sqlite-rows $target_dbs.history "SELECT session_id, title FROM session_titles") [
-      {
-        session_id: "selected"
-        title: "selected"
-      }
-    ] $"recap metadata: ($with_recap)"
-
-    with-env (fixture-env $root) {
-      let apply = (
-        run-cli retire $project --assistant "omp" --session-ids "selected" --apply --no-backup
-      )
-      assert equal $apply.exit_code 0 $apply.stderr
-
-      let expected = if $with_recap {
-        [
-          {
-            session_id: "retained"
-            recap: "retained"
-          }
-        ]
-      } else {
-        []
-      }
-
-      assert equal (sqlite-rows $dbs.history "SELECT session_id, title FROM session_titles") [
-        {
-          session_id: "retained"
-          title: "retained"
-        }
-      ]
-      assert equal (
-        sqlite-rows $dbs.history "SELECT session_id, recap FROM session_recaps"
-      ) $expected
+      assert equal (open --raw $retained) $retained_bytes $label
     }
   }
 }
