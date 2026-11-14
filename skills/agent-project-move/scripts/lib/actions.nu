@@ -200,11 +200,9 @@ export def merge-actions [
   source: string
   target: string
   description: string
-  --skip (-s): list<string> = []
 ]: nothing -> list<record> {
   if not ($source | path exists) { return [] }
   if (same-directory $source $target) { return [] }
-  if $source in $skip { return [] }
   if not ($target | path exists) {
     return [(rename-action $assistant $store $source $target $description)]
   }
@@ -236,11 +234,10 @@ export def merge-actions [
   )
   for entry in $entries {
     let from = ($source | path join $entry)
-    if $from in $skip { continue }
     let to = ($target | path join $entry)
     $actions = (
       $actions
-      ++ (merge-actions $assistant $store $from $to $description --skip $skip)
+      ++ (merge-actions $assistant $store $from $to $description)
     )
   }
 

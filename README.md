@@ -12,13 +12,13 @@ Coding assistants key their sessions, memory, and history by absolute directory 
 - After you move or rename a project, `/resume` and `codex resume` no longer list its sessions under the new path, Claude memory is orphaned, and Codex's thread previews point at dead paths.
 - Removing a worktree leaves its sessions stranded under the worktree's path, where the project no longer lists them.
 - State for directories you deleted keeps piling up in every assistant's store.
-- Moving work to another machine loses the sessions, because they do not travel with the repository.
+- Moving work to another machine loses the sessions because they do not travel with the repository.
 
 `agent-project-move` reads the state each assistant stores, plans the changes a move needs, and applies them in place:
 
 - **`scan`** lists every recorded path with its session count, last use, and whether the directory exists.
 - **`move`** rewrites and relocates the state under an old path so the sessions belong to the new one, and a merge into an existing project keeps the unique transcripts from both sides.
-- **`export`** and **`import`** carry selected sessions in a bundle between hosts. Import can map incoming state to the target project's path.
+- **`export`** and **`import`** carry selected sessions and their artifacts in a bundle between hosts. Import can map incoming state to the target project's path.
 
 `move`, `retire`, and `import` print a plan and change assistant state only with `--apply`. `scan` and `export` never change assistant state, and `export` writes only the bundle directory you name.
 
@@ -149,7 +149,7 @@ agent-project-move import ~/agent-project-move-bundle --target ~/work/app
 agent-project-move import ~/agent-project-move-bundle --target ~/work/app --apply
 ```
 
-`export` copies the files and rows recorded for the path and its child paths, unchanged, and needs no `--apply`. Add `--exact` to select only sessions recorded at that cwd, or `--session-ids <id,id>` to select specific sessions under the path. These options are mutually exclusive. Each selection also carries linked descendants and each selected session's own artifact subtree. Selecting a child leaves its parent and siblings alone.
+`export` copies the selected sessions and their associated files and rows, unchanged, and needs no `--apply`. Add `--exact` to select only sessions recorded at that cwd, or `--session-ids <id,id>` to select specific sessions under the path. These options are mutually exclusive. Each selection also carries linked descendants and each selected session's own artifact subtree. Selecting a child leaves its parent and siblings alone.
 
 `import` keeps the original project path by default. `--target` maps the exported root and its descendants to a new project path, preserving each suffix. Carried sessions and owners outside that root keep their paths. The mapping affects incoming files and rows, so existing local sessions stay unchanged. A reused session ID requires an identical transcript after mapping, and a different body aborts before writing. Import also aborts when a target table lacks a column the bundle contains. The bundle holds transcripts, so keep it in a private directory, transfer it over a trusted channel, and delete it on both hosts once the import is done. Selection follows the project path, so the assistants' credential files and tables, such as `auth.json` and `.credentials.json`, stay out of a bundle.
 

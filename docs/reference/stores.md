@@ -6,23 +6,21 @@ These formats are the ones the modules read, and a release of any assistant can 
 
 ## Claude Code
 
-Root: `$CLAUDE_CONFIG_DIR`, defaulting to `~/.claude`. The global document is `$CLAUDE_CONFIG_DIR/.claude.json`, or `~/.claude.json` when the variable is unset.
+Root: `$CLAUDE_CONFIG_DIR`, defaulting to `~/.claude`. The explicit source path and project keys in `$CLAUDE_CONFIG_DIR/.claude.json`, or `~/.claude.json` when the variable is unset, help locate a transcript's physical owner when its recorded cwd differs. These keys are only read.
 
-| State                             | A move rewrites                                                                     |
-| --------------------------------- | ----------------------------------------------------------------------------------- |
-| `projects/<encoded-cwd>/`         | Renames or merges the directory when its name encodes `<old>` or a path under it    |
-| Top-level `*.jsonl`               | Every `cwd` a transcript records, as a JSON string token                            |
-| `history.jsonl`                   | `project`                                                                           |
-| `$CLAUDE_CONFIG_DIR/.claude.json` | `projects` keys and `githubRepoPaths`, where an existing entry for the new key wins |
-| `file-history/<session>/`         | Nothing, because it is keyed by session id and travels with an export instead       |
+| State                     | A move rewrites                                                                  |
+| ------------------------- | -------------------------------------------------------------------------------- |
+| `projects/<encoded-cwd>/` | Renames or merges the directory when its name encodes `<old>` or a path under it |
+| Top-level `*.jsonl`       | Every `cwd` a transcript records, as a JSON string token                         |
+| `file-history/<session>/` | Nothing, because it is keyed by session id and travels with an export instead    |
 
 A directory name encodes a path by replacing each UTF-16 code unit outside `[a-zA-Z0-9]` with one `-`, truncating to 200 characters, and appending `-` plus a base36 hash of the whole path when it overflows. A surrogate pair becomes two dashes.
 
-A session that changed directories is attributed to every `cwd` its transcript records.
+Scan and selection consider every `cwd` a transcript records, even when its physical owner cannot be recovered from those paths.
 
-Selective exports and retirements use session filenames as identities and follow subagent transcripts under the owning session's directory. A child-only selection keeps the parent transcript and its other files. The selected IDs also carry their `file-history/` directories. Retirement invalidates `sessions-index.json` and keeps project configuration and memory while another transcript still owns the physical project directory.
+Selective exports and retirements use session filenames as identities and follow subagent transcripts under the owning session's directory. A child-only selection keeps the parent transcript and its other files. The selected IDs also carry their `file-history/` directories. Default prefix exports use the same session selection as exact and ID-selected exports. Only selected transcripts, their same-stem artifact subtrees, and their file history travel. Path rewrites affect top-level session transcripts and `<parent>/subagents/agent-*.jsonl` transcripts. Other artifact bytes stay unchanged. Retirement leaves project memory, global configuration, prompt history, and project directories in place.
 
-Merges, including memory staging, follow [Design](design.md#merges-and-memory-staging).
+Directory merges follow [Design](design.md#directory-merges).
 
 ## Codex
 

@@ -896,12 +896,22 @@ def make-claude [root: string, project: string]: nothing -> record {
       type: "assistant"
       sessionId: "child"
       cwd: "/other/worker"
-      message: {content: "child"}
+      message: {
+        content: [{type: "tool_use", id: "read-child", name: "Read", input: {file_path: $project}}]
+      }
     }
   ]
 
+  $'{ "path": "($project)" }' | save ($dir | path join "sessions-index.json")
   mkdir ($dir | path join "memory")
   "shared memory" | save ($dir | path join "memory/MEMORY.md")
+  write-jsonl ($dir | path join "memory/notes.jsonl") [
+    {sessionId: "notes", cwd: $project, message: {content: "shared notes"}}
+  ]
+  for name in ["output.json" "output.jsonl"] {
+    $'{ "cwd": "($project)", "sessionId": "artifact" }'
+    | save ($dir | path join "parent" $name)
+  }
 
   mkdir ($config | path join "file-history/parent")
   "original artifact" | save ($config | path join "file-history/parent/file@v1")
@@ -909,6 +919,8 @@ def make-claude [root: string, project: string]: nothing -> record {
   "child artifact" | save ($config | path join "file-history/child/child@v1")
   mkdir ($config | path join "file-history/retained")
   "retained artifact" | save ($config | path join "file-history/retained/file@v1")
+  mkdir ($config | path join "file-history/nested")
+  "nested artifact" | save ($config | path join "file-history/nested/file@v1")
 
   write-jsonl ($config | path join "history.jsonl") [
     {
@@ -946,11 +958,89 @@ def make-claude [root: string, project: string]: nothing -> record {
   }
 }
 
+def "test Claude project moves preserve opaque files and reject memory conflicts" [] {
+  for conflict in [false true] {
+    let root = (mktemp -d)
+    let project = "/home/u/src/app"
+    let target = "/home/u/destination"
+    let fixture = (make-claude $root $project)
+    let destination = ($fixture.config | path join "projects" (encode-path $target))
+    let state = ["history.jsonl" ".claude.json" "teams/example/config.json"]
+    mkdir ($fixture.config | path join "teams/example")
+    $project | save ($fixture.config | path join "teams/example/config.json")
+    let originals = ($state | each {|name| open --raw ($fixture.config | path join $name) })
+    let opaque = [
+      "sessions-index.json" "memory/MEMORY.md" "memory/notes.jsonl"
+      "parent/output.json" "parent/output.jsonl"
+    ]
+    let contents = ($opaque | each {|name| open --raw ($fixture.dir | path join $name) })
+    let session = (open --raw ($fixture.dir | path join "parent.jsonl"))
+    if $conflict {
+      mkdir ($destination | path join "memory")
+      "other memory" | save ($destination | path join "memory/MEMORY.md")
+    }
+
+    let result = (with-env (fixture-env $root) {
+      run-cli move $project $target --assistant "claude" --apply --no-backup
+    })
+
+    if $conflict {
+      assert ($result.exit_code != 0) $result.stdout
+      assert equal (open --raw ($fixture.dir | path join "parent.jsonl")) $session
+      assert equal (open --raw ($destination | path join "memory/MEMORY.md")) "other memory"
+    } else {
+      assert equal $result.exit_code 0 $result.stderr
+      assert not ($fixture.dir | path exists)
+      assert equal ($opaque | each {|name| open --raw ($destination | path join $name) }) $contents
+      assert equal (
+        open --raw ($destination | path join "parent.jsonl")
+        | lines
+        | each {|line| $line | from json | get cwd }
+      ) [$target "/other/visited"]
+      assert equal (
+        open --raw ($destination | path join "parent/subagents/agent-child.jsonl")
+        | from json
+        | get cwd
+      ) "/other/worker"
+      assert equal (
+        open --raw ($destination | path join "parent/subagents/agent-child.jsonl")
+        | from json
+        | get message.content.0.input.file_path
+      ) $target
+    }
+    assert equal ($state | each {|name| open --raw ($fixture.config | path join $name) }) $originals
+  }
+}
+
+def "test an explicit Claude move locates a project with only outside cwd records" [] {
+  let root = (mktemp -d)
+  let project = "/home/u/src/app"
+  let target = "/home/u/destination"
+  let source = ($root | path join "claude/projects" (encode-path $project))
+  let destination = ($root | path join "claude/projects" (encode-path $target))
+  write-jsonl ($source | path join "parent.jsonl") [
+    {type: "user", sessionId: "parent", cwd: "/other/visited", message: {content: "parent"}}
+  ]
+  let original = (open --raw ($source | path join "parent.jsonl"))
+
+  let moved = (with-env (fixture-env $root) {
+    run-cli move $project $target --assistant "claude" --apply --no-backup
+  })
+  assert equal $moved.exit_code 0 $moved.stderr
+
+  assert not ($source | path exists)
+  assert equal (open --raw ($destination | path join "parent.jsonl")) $original
+}
+
 def "test Claude selected parents carry subagents and preserve shared project state" [] {
   let root = (mktemp -d)
   let project = "/home/u/src/app"
   let fixture = (make-claude $root $project)
   let directory = ($root | path join "bundle")
+  let state = ["history.jsonl" ".claude.json"]
+  let originals = ($state | each {|name| open --raw ($fixture.config | path join $name) })
+  let shared = ["memory/MEMORY.md" "memory/notes.jsonl" "sessions-index.json"]
+  let shared_contents = ($shared | each {|name| open --raw ($fixture.dir | path join $name) })
 
   with-env (fixture-env $root) {
     let complete = ($root | path join "complete")
@@ -964,7 +1054,7 @@ def "test Claude selected parents carry subagents and preserve shared project st
       | get session
       | uniq
       | sort
-    ) ["child" "parent" "retained"]
+    ) ["child" "nested" "parent"]
 
     let export = (run-cli export $project $directory --assistant "claude" --session-ids "parent")
     assert equal $export.exit_code 0 $export.stderr
@@ -976,8 +1066,9 @@ def "test Claude selected parents carry subagents and preserve shared project st
       | get name
       | sort
     ) [
-      "memory/MEMORY.md"
       "parent.jsonl"
+      "parent/output.json"
+      "parent/output.jsonl"
       "parent/subagents/agent-child.jsonl"
     ]
     assert equal (
@@ -1006,36 +1097,21 @@ def "test Claude selected parents carry subagents and preserve shared project st
     assert not (($fixture.config | path join "file-history/child") | path exists)
     assert (($fixture.dir | path join "retained.jsonl") | path exists)
     assert (($fixture.nested | path join "nested.jsonl") | path exists)
-    assert equal (open --raw ($fixture.dir | path join "memory/MEMORY.md")) "shared memory"
-    assert equal (
-      open --raw ($fixture.config | path join "history.jsonl")
-      | lines
-      | each {|line|
-        $line
-        | from json
-        | get sessionId
-      }
-    ) ["retained" "nested"]
-    assert equal (
-      open ($fixture.config | path join ".claude.json")
-      | get projects
-      | columns
-    ) [$project ($project | path join "sub")]
+    assert equal ($shared | each {|name| open --raw ($fixture.dir | path join $name) }) $shared_contents
+    assert equal ($state | each {|name| open --raw ($fixture.config | path join $name) }) $originals
 
     let final = (run-cli retire "/other/retained" --assistant "claude" --exact --apply --no-backup)
     assert equal $final.exit_code 0 $final.stderr
 
-    assert not ($fixture.dir | path exists)
+    assert not (($fixture.dir | path join "retained.jsonl") | path exists)
     assert (($fixture.nested | path join "nested.jsonl") | path exists)
-    assert equal (
-      open ($fixture.config | path join ".claude.json")
-      | get projects
-      | columns
-    ) [($project | path join "sub")]
-    assert equal (
-      open ($fixture.config | path join ".claude.json")
-      | get githubRepoPaths
-    ) {"example/app": [($project | path join "sub")]}
+    assert equal ($shared | each {|name| open --raw ($fixture.dir | path join $name) }) $shared_contents
+    assert equal ($state | each {|name| open --raw ($fixture.config | path join $name) }) $originals
+
+    let excluded = (
+      run-cli export $project ($root | path join "notes") --assistant "claude" --session-ids "notes"
+    )
+    assert ($excluded.exit_code != 0) $excluded.stdout
   }
 }
 
@@ -1055,15 +1131,41 @@ def "test selecting a Claude subagent preserves its parent and other project fil
       | where kind == "projects"
       | get name
       | sort
-    ) [
-      "memory/MEMORY.md"
-      "parent/subagents/agent-child.jsonl"
-    ]
+    ) ["parent/subagents/agent-child.jsonl"]
     assert equal (
       $entries.files
       | where kind == "file-history"
       | get name
     ) ["child@v1"]
+
+    let local = ($root | path join "local")
+    let target = "/home/u/destination"
+    let local_dir = ($local | path join "claude/projects" (encode-path $project))
+    mkdir ($local_dir | path join "memory")
+    "local memory" | save ($local_dir | path join "memory/MEMORY.md")
+    let settings = ($local | path join "claude/.claude.json")
+    '{"opaque":"unchanged"}' | save $settings
+    with-env (fixture-env $local) {
+      let import = (
+        run-cli import $directory --assistant "claude" --target $target --apply --no-backup
+      )
+      assert equal $import.exit_code 0 $import.stderr
+
+      let imported = ($local_dir | path join "parent/subagents/agent-child.jsonl")
+      assert equal (open --raw $imported | from json | get cwd) ($target + "/worker")
+      let scan = (run-cli scan --assistant "claude")
+      assert equal $scan.exit_code 0 $scan.stderr
+      assert str contains $scan.stdout ($target + "/worker")
+
+      let retired = (
+        run-cli retire $target --assistant "claude" --session-ids "child" --apply --no-backup
+      )
+      assert equal $retired.exit_code 0 $retired.stderr
+
+      assert not ($imported | path exists)
+      assert equal (open --raw ($local_dir | path join "memory/MEMORY.md")) "local memory"
+      assert equal (open --raw $settings) '{"opaque":"unchanged"}'
+    }
 
     let apply = (
       run-cli retire "/other" --assistant "claude" --session-ids "child" --apply --no-backup
@@ -1108,6 +1210,62 @@ def "test identical Claude sessions still import and validate their file history
     assert equal (
       open --raw ($fixture.config | path join "file-history/child/child@v1")
     ) "different artifact"
+
+    "child artifact" | save --force ($fixture.config | path join "file-history/child/child@v1")
+    let session = ($fixture.dir | path join "parent.jsonl")
+    "changed transcript" | save --append $session
+    let changed = (open --raw $session)
+
+    let session_conflict = (run-cli import $directory --assistant "claude" --apply)
+
+    assert ($session_conflict.exit_code != 0) $session_conflict.stdout
+    assert equal (open --raw $session) $changed
+  }
+}
+
+def "test Claude imports keep missing artifacts with their physical session owner" [] {
+  let project = "/home/u/src/app"
+  for case in [
+    {name: "same owner", owner: $project, artifact: true, succeeds: true}
+    {name: "other owner", owner: "/home/u/other", artifact: true, succeeds: false}
+    {name: "already imported", owner: "/home/u/other", artifact: false, succeeds: true}
+  ] {
+    let root = (mktemp -d)
+    let source = ($root | path join "source")
+    let local = ($root | path join "local")
+    let source_dir = ($source | path join "claude/projects" (encode-path $project))
+    let local_root = ($local | path join "claude/projects")
+    let local_dir = ($local_root | path join (encode-path $case.owner))
+    let directory = ($root | path join "bundle")
+    write-jsonl ($source_dir | path join "parent.jsonl") [
+      {type: "user", sessionId: "parent", cwd: $project, message: {content: "parent"}}
+    ]
+    if $case.artifact {
+      mkdir ($source_dir | path join "parent")
+      "owned note" | save ($source_dir | path join "parent/notes.md")
+    }
+    mkdir $local_dir
+    ^cp ($source_dir | path join "parent.jsonl") ($local_dir | path join "parent.jsonl")
+    let before = (open --raw ($local_dir | path join "parent.jsonl"))
+    let export = (with-env (fixture-env $source) {
+      run-cli export $project $directory --assistant "claude" --session-ids "parent"
+    })
+    assert equal $export.exit_code 0 $export.stderr
+
+    let import = (with-env (fixture-env $local) {
+      run-cli import $directory --assistant "claude" --apply --no-backup
+    })
+
+    assert equal ($import.exit_code == 0) $case.succeeds $case.name
+    assert equal (open --raw ($local_dir | path join "parent.jsonl")) $before $case.name
+    if $case.artifact and $case.succeeds {
+      assert equal (open --raw ($local_dir | path join "parent/notes.md")) "owned note"
+    } else if $case.succeeds {
+      assert str contains $import.stdout "No changes" $case.name
+    } else {
+      assert not (($local_root | path join (encode-path $project)) | path exists) $case.name
+      assert not (($local_dir | path join "parent") | path exists) $case.name
+    }
   }
 }
 
@@ -1146,6 +1304,20 @@ def "test targeted Claude imports preserve local sessions and opaque file histor
     assert equal $export.exit_code 0 $export.stderr
   }
 
+  let entries = ($directory | path join "claude/entries.json")
+  ^cp ($fixture.dir | path join "memory/notes.jsonl") ($directory | path join "claude/files/notes")
+  open $entries
+  | update files {
+    $in | append {
+      kind: "projects"
+      project: $project
+      name: "memory/notes.jsonl"
+      bundle: "files/notes"
+    }
+  }
+  | to json
+  | save --force $entries
+
   with-env (fixture-env $local) {
     let preview = (run-cli import $directory --assistant "claude" --target $target --no-backup)
     assert equal $preview.exit_code 0 $preview.stderr
@@ -1180,8 +1352,19 @@ def "test targeted Claude imports preserve local sessions and opaque file histor
       | from json
       | get cwd
     ) "/other/worker"
+    assert equal (
+      open --raw $child
+      | from json
+      | get message.content.0.input.file_path
+    ) $target
     assert equal (open --raw ($config | path join "file-history/parent/file@v1")) $project
     assert equal (open --raw ($config | path join "file-history/child/child@v1")) "child artifact"
+    for name in ["output.json" "output.jsonl"] {
+      assert equal (
+        open --raw ($owner | path join "parent" $name)
+      ) (open --raw ($fixture.dir | path join "parent" $name)) $name
+    }
+    assert not (($owner | path join "memory") | path exists)
     assert equal (open --raw $retained) $bytes
     assert equal $settings.opaque $project
     assert equal ($settings.projects | get "/other/live") {note: $project}
