@@ -520,10 +520,7 @@ export def plan-retire [
   )
 
   if ($projects | is-not-empty) {
-    let statement = (
-      $"DELETE FROM projects WHERE id IN \((sql-list $projects)\)"
-      + " AND NOT EXISTS (SELECT 1 FROM threads WHERE threads.project_id = projects.id)"
-    )
+    let statement = $"DELETE FROM projects WHERE id IN \((sql-list $projects)\) AND NOT EXISTS \(SELECT 1 FROM threads WHERE threads.project_id = projects.id\)"
     let description = "remove unreferenced projects"
     $actions = ($actions | append (
       sql-action "codex" "projects" $state [$statement] $description --rows-first --foreign-keys

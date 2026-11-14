@@ -90,11 +90,7 @@ def json-column-statements [
 ]: nothing -> list<string> {
   let plain = (sql-quote (json-escape $old))
   let uri = (sql-quote (json-escape (file-uri $old)))
-  let query = (
-    "SELECT rowid AS rid, " + $column + " AS value FROM " + $table
-    + " WHERE instr(" + $column + ", " + $plain + ") > 0"
-    + " OR instr(" + $column + ", " + $uri + ") > 0"
-  )
+  let query = $"SELECT rowid AS rid, ($column) AS value FROM ($table) WHERE instr\(($column), ($plain)\) > 0 OR instr\(($column), ($uri)\) > 0"
 
   sqlite-rows $db $query
   | each {|row|
@@ -103,11 +99,7 @@ def json-column-statements [
     if $updated == $value {
       null
     } else {
-      (
-        "UPDATE " + $table + " SET " + $column + " = " + (sql-quote $updated)
-        + " WHERE rowid = " + ($row.rid | into string)
-        + " AND " + $column + " = " + (sql-quote $value)
-      )
+      $"UPDATE ($table) SET ($column) = (sql-quote $updated) WHERE rowid = ($row.rid | into string) AND ($column) = (sql-quote $value)"
     }
   }
   | compact
@@ -122,13 +114,8 @@ export def column-statements [
   --collide
 ]: nothing -> list<string> {
   let condition = (path-condition $column [$old] --prefix $prefix)
-  let value = (
-    (sql-quote $prefix) + " || " + (sql-quote $new)
-    + " || substr(" + $column + ", length(" + (sql-quote ($prefix + $old)) + ") + 1)"
-  )
-  let update = (
-    "UPDATE " + $table + " SET " + $column + " = " + $value + " WHERE " + $condition
-  )
+  let value = $"(sql-quote $prefix) || (sql-quote $new) || substr\(($column), length\((sql-quote ($prefix + $old))\) + 1\)"
+  let update = $"UPDATE ($table) SET ($column) = ($value) WHERE ($condition)"
 
   if $collide {
     let insert = ($update | str replace --regex "^UPDATE " "UPDATE OR IGNORE ")
@@ -160,9 +147,7 @@ export def column-actions [
       json-column-statements $db $table $column $old $new
     } else {
       let exists = (
-        sqlite-rows $db (
-          "SELECT EXISTS (SELECT 1 FROM " + $table + " WHERE " + $condition + ") AS found"
-        )
+        sqlite-rows $db $"SELECT EXISTS \(SELECT 1 FROM ($table) WHERE ($condition)\) AS found"
         | get 0.found
         | into int
       )
@@ -435,9 +420,9 @@ def backup-all [actions: list<record>]: nothing -> string {
   )
 
   mkdir $root
-  ^chmod "700" $root
+  ^chmod 700 $root
   mkdir $backup_dir
-  ^chmod "700" $backup_dir
+  ^chmod 700 $backup_dir
 
   $actions
   | each {|action| manifest-view $action }

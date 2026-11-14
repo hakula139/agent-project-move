@@ -24,7 +24,7 @@ export def bundle-table [bundle: record, table: string]: nothing -> record {
 export def write-bundle [directory: string, bundle: record]: nothing -> nothing {
   let base = ($directory | path join $bundle.assistant)
   mkdir $base
-  ^chmod "700" $base
+  ^chmod 700 $base
   if ($bundle.files | is-not-empty) {
     mkdir ($base | path join "files")
   }
@@ -33,12 +33,12 @@ export def write-bundle [directory: string, bundle: record]: nothing -> nothing 
     $bundle.files
     | each {|file|
       let key = $"($file.kind)|($file.project)|($file.name)"
-      let name = (sha1-hex $key) + "-" + ($file.name | path basename)
+      let name = $"(sha1-hex $key)-($file.name | path basename)"
       let relative = ("files" | path join $name)
       let target = ($base | path join $relative)
 
       ^cp --preserve=timestamps $file.source $target
-      ^chmod "600" $target
+      ^chmod 600 $target
 
       $file
       | reject source
@@ -51,7 +51,7 @@ export def write-bundle [directory: string, bundle: record]: nothing -> nothing 
   | upsert files $files
   | to json
   | save --force ($base | path join "entries.json")
-  ^chmod "600" ($base | path join "entries.json")
+  ^chmod 600 ($base | path join "entries.json")
 }
 
 export def read-bundle [directory: string, assistant: string]: nothing -> any {

@@ -18,7 +18,7 @@ export def sql-quote [value: any]: nothing -> string {
       | into string
       | str replace --all "'" "''"
     )
-    "'" + $escaped + "'"
+    $"'($escaped)'"
   }
 }
 
@@ -104,13 +104,10 @@ export def path-condition [
     if $path == "/" {
       $"substr\(($column), 1, length\(($value)\)\) = ($value)"
     } else {
-      (
-        $column + " = " + $value
-        + " OR substr(" + $column + ", 1, length(" + $value + ") + 1) = " + $value + " || '/'"
-      )
+      $"($column) = ($value) OR substr\(($column), 1, length\(($value)\) + 1\) = ($value) || '/'"
     }
   }
-  | each {|clause| "(" + $clause + ")" }
+  | each {|clause| $"\(($clause)\)" }
   | str join " OR "
 }
 

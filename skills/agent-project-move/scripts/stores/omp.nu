@@ -87,7 +87,7 @@ def session-encode [path: string, home: string, tmp: string]: nothing -> string 
     "-tmp-" + ($relative | str replace --all --regex '[/\\:]' "-")
   } else {
     let stripped = ($real | str replace --regex "^/" "")
-    "--" + ($stripped | str replace --all --regex '[/\\:]' "-") + "--"
+    $"--($stripped | str replace --all --regex '[/\\:]' '-')--"
   }
 }
 
@@ -98,7 +98,7 @@ export def session-encode-here [path: string]: nothing -> string {
 
 export def memory-encode [path: string]: nothing -> string {
   let stripped = (normalize-path $path | str replace --regex "^/" "")
-  "--" + ($stripped | str replace --all --regex '[/\\:]' "-") + "--"
+  $"--($stripped | str replace --all --regex '[/\\:]' '-')--"
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -244,14 +244,8 @@ def rollout-actions [db: string, old: string, new: string]: nothing -> list<reco
       if $from == $to {
         null
       } else {
-        let value = (
-          (sql-quote $to)
-          + " || substr(rollout_path, length(" + (sql-quote $from) + ") + 1)"
-        )
-        (
-          "UPDATE threads SET rollout_path = " + $value
-          + " WHERE " + (path-condition "rollout_path" [$from])
-        )
+        let value = $"(sql-quote $to) || substr\(rollout_path, length\((sql-quote $from)\) + 1\)"
+        $"UPDATE threads SET rollout_path = ($value) WHERE (path-condition 'rollout_path' [$from])"
       }
     }
     | compact
@@ -517,11 +511,7 @@ def history-deletions [
   let history = $"history WHERE ($condition)"
   let recaps = $"session_recaps WHERE \(($condition)\)"
   let counts = (
-    sqlite-rows $db (
-      $"SELECT \(SELECT count\(*\) FROM ($history)\) AS history,"
-      + $" \(SELECT count\(*\) FROM ($recaps)\) AS recaps,"
-      + $" \(SELECT count\(*\) FROM session_titles WHERE ($sessions)\) AS titles"
-    )
+    sqlite-rows $db $"SELECT \(SELECT count\(*\) FROM ($history)\) AS history, \(SELECT count\(*\) FROM ($recaps)\) AS recaps, \(SELECT count\(*\) FROM session_titles WHERE ($sessions)\) AS titles"
     | get 0
   )
 
@@ -569,10 +559,7 @@ def agent-deletions [db: string, ids: list<string>, paths: list<string>]: nothin
   }
 
   let counts = (
-    sqlite-rows $db (
-      $"SELECT \(SELECT count\(*\) FROM threads WHERE ($condition)\) AS threads,"
-      + $" \(SELECT count\(*\) FROM jobs WHERE ($global)\) AS jobs"
-    )
+    sqlite-rows $db $"SELECT \(SELECT count\(*\) FROM threads WHERE ($condition)\) AS threads, \(SELECT count\(*\) FROM jobs WHERE ($global)\) AS jobs"
     | get 0
   )
 
