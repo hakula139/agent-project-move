@@ -17,6 +17,7 @@ def fixture-env [root: string]: nothing -> record {
     CLAUDE_CONFIG_DIR: ($root | path join "claude")
     CODEX_HOME: ($root | path join "codex")
     PI_CODING_AGENT_DIR: ($root | path join "omp")
+    TZ: "UTC"
     XDG_STATE_HOME: ($root | path join "state")
   }
 }
