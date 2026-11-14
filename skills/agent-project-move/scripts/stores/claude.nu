@@ -14,8 +14,8 @@ use ../lib/actions.nu [
   same-directory
 ]
 use ../lib/paths.nu [files-under match-any outermost-paths path-map path-match valid-path]
-use ../lib/selection.nu [select-sessions]
 use ../lib/rewrite.nu [files-with-path json-value rewrite-text rg-lines]
+use ../lib/selection.nu [select-sessions]
 
 const ENCODED_MAX = 200
 
@@ -431,7 +431,11 @@ def session-records []: nothing -> list<record> {
   $rows
 }
 
-def selected-transcripts [old: string, --exact, --session-ids: list<string> = []]: nothing -> list<record> {
+def selected-transcripts [
+  old: string
+  --exact
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
   select-sessions (session-records) $old --exact=$exact --session-ids $session_ids
 }
 
@@ -562,28 +566,40 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
   $actions
 }
 
-# --------------------------------------------------------------------------------------------------
-# Transfer
-# --------------------------------------------------------------------------------------------------
-
-
-export def plan-retire [old: string, --exact, --session-ids: list<string> = []]: nothing -> list<record> {
+export def plan-retire [
+  old: string
+  --exact
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
   let selected = (selected-transcripts $old --exact=$exact --session-ids $session_ids)
-  let files = ($selected | get -o file | uniq)
-  let ids = ($selected | get -o id | uniq)
+  let files = ($selected
+    | get -o file
+    | uniq)
+  let ids = ($selected
+    | get -o id
+    | uniq)
   let inventory = (session-records)
   let directories = (
-    $selected | get -o directory | uniq | where {|dir|
-      $inventory | where directory == $dir | all {|row| $row.file in $files }
+    $selected
+      | get -o directory
+      | uniq
+      | where {|dir|
+      $inventory
+        | where directory == $dir
+        | all {|row| $row.file in $files }
     }
   )
   mut actions = (session-deletions $selected $directories)
   let history = (root | path join history.jsonl)
-  if ($history | path exists) and ($ids | is-not-empty) {
+  if ($history
+    | path exists) and ($ids
+    | is-not-empty) {
     $actions = ($actions | append (edit-action claude history $history {|content|
       let trailing = ($content | str ends-with "\n")
       let body = (
-        $content | lines | where {|line|
+        $content
+          | lines
+          | where {|line|
           let row = (try { $line | from json } catch { {} })
           ($row | get -o sessionId) not-in $ids
         } | str join "\n"
@@ -592,29 +608,48 @@ export def plan-retire [old: string, --exact, --session-ids: list<string> = []]:
     } "retire session history"))
   }
   let unused = (
-    $selected | get -o owner | uniq
+    $selected
+      | get -o owner
+      | uniq
     | where {|cwd|
       let dir = (projects-dir | path join (encode-path $cwd))
       top-files $dir | all {|file| $file in $files }
     }
   )
   let config = (global-config)
-  if ($config | path exists) and ($unused | is-not-empty) {
+  if ($config
+    | path exists) and ($unused
+    | is-not-empty) {
     $actions = ($actions | append (edit-action claude global-config $config {|content|
-      $content | from json | prune-config $in $unused --exact | to json
+      $content
+        | from json
+        | prune-config $in $unused --exact
+        | to json
     } "remove unreferenced projects"))
   }
   $actions
 }
 
-export def export-bundle [old: string, --exact, --session-ids: list<string> = []]: nothing -> record {
+# --------------------------------------------------------------------------------------------------
+# Transfer
+# --------------------------------------------------------------------------------------------------
+
+
+export def export-bundle [
+  old: string
+  --exact
+  --session-ids: list<string> = []
+]: nothing -> record {
   let selected_sessions = (selected-transcripts $old --exact=$exact --session-ids $session_ids)
   let selected = if $exact or ($session_ids | is-not-empty) {
     $selected_sessions
-    | each {|row| {dir: $row.directory, owner: $row.owner} } | uniq
+    | each {|row| {dir: $row.directory, owner: $row.owner} }
+    | uniq
   } else { selected-dirs $old }
   let selected_files = (
-    $selected_sessions | get -o file | uniq
+    $selected_sessions
+      | get -o file
+      | uniq
   )
   mut files = []
 
@@ -640,7 +675,10 @@ export def export-bundle [old: string, --exact, --session-ids: list<string> = []
   }
 
   let directories = ($selected | get -o dir)
-  let sessions = ($selected_sessions | where {|row| $row.directory in $directories } | get -o id | uniq)
+  let sessions = ($selected_sessions
+    | where {|row| $row.directory in $directories }
+    | get -o id
+    | uniq)
   for session in $sessions {
     let history = (root | path join file-history $session)
     for file in (files-under $history) {

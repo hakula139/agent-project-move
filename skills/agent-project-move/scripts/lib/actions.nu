@@ -36,9 +36,10 @@ export def copy-action [
   source: string
   target: string
   description: string
+  --transform: closure
 ]: nothing -> record {
   action $assistant $store copy $source $description
-  | merge {to: $target}
+  | merge {to: $target, transform: $transform}
 }
 
 export def rename-action [
@@ -261,8 +262,9 @@ def compress-file [content: string, target: string]: nothing -> nothing {
   }
 }
 
-def write-file [path: string, content: any, --compress]: nothing -> nothing {
-  let mode = (^stat -c %a $path | str trim)
+def write-file [path: string, content: any, --compress, --reference: string]: nothing -> nothing {
+  let reference = ($reference | default $path)
+  let mode = (^stat -c %a $reference | str trim)
   let temporary = (^mktemp $"($path).tmp.XXXXXXXXXX" | str trim)
   try {
     if $compress {
@@ -271,7 +273,7 @@ def write-file [path: string, content: any, --compress]: nothing -> nothing {
       $content | save --force $temporary
     }
     ^chmod $mode $temporary
-    ^touch -r $path $temporary
+    ^touch -r $reference $temporary
     mv --force $temporary $path
   } catch {|error|
     rm --force $temporary
@@ -301,7 +303,13 @@ def execute-action [action: record]: nothing -> nothing {
     }
     'copy' => {
       mkdir ($action.to | path dirname)
-      ^cp --preserve=mode,timestamps $action.path $action.to
+      let transform = ($action | get -o transform)
+      if $transform == null {
+        ^cp --preserve=mode,timestamps $action.path $action.to
+      } else {
+        let updated = (do $transform (open --raw $action.path))
+        write-file $action.to $updated --reference $action.path
+      }
     }
     'edit' => { edit-file $action.path $action.transform }
     'delete' => { rm --recursive --force $action.path }

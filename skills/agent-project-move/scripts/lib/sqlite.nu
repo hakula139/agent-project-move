@@ -71,10 +71,14 @@ export def path-condition [
   $paths
   | each {|path|
     let value = (sql-quote ($prefix + $path))
-    (
-      $column + " = " + $value
-      + " OR substr(" + $column + ", 1, length(" + $value + ") + 1) = " + $value + " || '/'"
-    )
+    if $path == "/" {
+      $"substr\(($column), 1, length\(($value)\)\) = ($value)"
+    } else {
+      (
+        $column + " = " + $value
+        + " OR substr(" + $column + ", 1, length(" + $value + ") + 1) = " + $value + " || '/'"
+      )
+    }
   }
   | each {|clause| "(" + $clause + ")" }
   | str join " OR "

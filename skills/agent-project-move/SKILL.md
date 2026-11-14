@@ -10,7 +10,7 @@ description: >-
 
 # Agent project move
 
-`agent-project-move` rewrites the project paths stored by the three assistants. Planning is read-only and prints every action, while `--apply` backs state up under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, then rewrites state in place.
+`agent-project-move` rewrites the project paths stored by the three assistants. Planning is read-only and prints every action, while `--apply` backs state up under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, then rewrites state in place. Only the explicit `retire --no-backup` option skips that backup.
 
 ## Requirements
 
@@ -40,7 +40,7 @@ When the user names both paths, check that `scan` lists `<old>`, show the move p
 
 ## Concurrent sessions
 
-Moves and prunes rewrite state in place. Close sessions working in the moved or pruned paths before applying.
+Moves, prunes, and retirements rewrite state in place. Close sessions working in the affected paths before applying.
 
 Your own session counts. When your working directory is under `<old>` or `<new>`, or the plan edits a shared document such as `~/.claude.json`, give the user the exact `--apply` command to run in a terminal after they exit the assistant.
 
@@ -82,7 +82,9 @@ When a Claude project directory lands on an existing one, the unique transcripts
    agent-project-move export ~/src/app ~/agent-project-move-bundle
    ```
 
-2. Copy the bundle to the target host over ssh, for example with `rsync -a ~/agent-project-move-bundle <target>:~/`, then run the import there. It copies the files and rows to where the target's assistant keeps `<old>`, unchanged, so conversations arrive with their sessions and still name the old path. A store whose sessions the target already holds is left alone, memory included, so rerunning an import after the move changes nothing. Codex trust settings are not carried, so the target asks for trust once on the first resume. Codex rebuilds a thread's history projection on its first resume, after `codex unarchive` for an archived thread, so an imported Codex transcript preview stays empty until then.
+   By default the export includes child paths. Use `--exact` to select sessions whose recorded cwd equals the path, or `--session-ids <id,id>` to select specific sessions under the path. The options are mutually exclusive. Linked descendants and each selected session's own artifact subtree travel with it. Selecting a child does not select its parent or siblings.
+
+2. Copy the bundle to the target host over ssh, for example with `rsync -a ~/agent-project-move-bundle <target>:~/`, then run the import there. It copies the files and rows to where the target's assistant keeps `<old>`, so conversations arrive with their sessions and still name the old project path. Existing session IDs require identical transcript content after explicit file mapping. Changed content, including paths rewritten by a later move, aborts before writing, so reconcile or re-export those sessions before importing again. Missing dependent records still import, while shared memory for an already imported session set stays in place. Codex trust settings are not carried, so the target asks for trust once on the first resume. Codex rebuilds a thread's history projection on its first resume, after `codex unarchive` for an archived thread, so an imported Codex transcript preview stays empty until then.
 
    ```bash
    agent-project-move import ~/agent-project-move-bundle
@@ -95,7 +97,19 @@ When a Claude project directory lands on an existing one, the unique transcripts
 
 5. Delete the bundle on both hosts. The bundle holds transcripts, so it should not stay in a shared directory.
 
-If you are retiring the source copy, delete its directory there once the target lists the sessions, then prune the source host.
+After verifying the destination sessions and their artifacts, use [Retire](#retire) to remove the selected source state. Use the same path, assistant list, and selection as the export.
+
+## Retire
+
+`retire` removes selected session state even when the project directory still exists. It requires either `--exact` or `--session-ids`, and follows the export's selection rules. Shared project metadata stays while another session references it.
+
+```bash
+agent-project-move retire ~/src/app --exact
+agent-project-move retire ~/src/app --session-ids <id,id>
+agent-project-move retire ~/src/app --session-ids <id,id> --apply
+```
+
+Review the dry run and confirm the selected sessions before applying. `--apply` creates the normal backup. Add `--no-backup` only with explicit authorization to permanently discard these source copies after destination verification. No backup is created in that mode, so [Restore](#restore) cannot recover the retirement.
 
 ## Prune
 

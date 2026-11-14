@@ -154,6 +154,7 @@
           tests = dk.nuTests {
             src = ./.;
             runtimeInputs = [
+              pkgs.ripgrep
               pkgs.sqlite
               pkgs.zstd
             ];

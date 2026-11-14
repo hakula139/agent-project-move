@@ -83,21 +83,6 @@ export def assistant-export-bundle [
   }
 }
 
-export def plan-retire [
-  selected: list<string>
-  path: string
-  --exact
-  --session-ids: list<string> = []
-]: nothing -> list<record> {
-  $selected | each {|assistant|
-    match $assistant {
-      'claude' => { claude plan-retire $path --exact=$exact --session-ids $session_ids }
-      'codex' => { codex plan-retire $path --exact=$exact --session-ids $session_ids }
-      'omp' => { omp plan-retire $path --exact=$exact --session-ids $session_ids }
-    }
-  } | flatten
-}
-
 export def assistant-plan-import [assistant: string, bundle: record]: nothing -> list<record> {
   match $assistant {
     'claude' => { claude plan-import $bundle }
@@ -131,4 +116,19 @@ export def prune-missing-paths [selected: list<string>]: nothing -> list<string>
 export def plan-prune [selected: list<string>, paths: list<string>]: nothing -> list<record> {
   if ($paths | is-empty) { return [] }
   $selected | each {|assistant| assistant-plan-prune $assistant $paths } | flatten
+}
+
+export def plan-retire [
+  selected: list<string>
+  path: string
+  --exact
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
+  $selected | each {|assistant|
+    match $assistant {
+      'claude' => { claude plan-retire $path --exact=$exact --session-ids $session_ids }
+      'codex' => { codex plan-retire $path --exact=$exact --session-ids $session_ids }
+      'omp' => { omp plan-retire $path --exact=$exact --session-ids $session_ids }
+    }
+  } | flatten
 }

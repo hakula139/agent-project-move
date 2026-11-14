@@ -1,6 +1,6 @@
 # Design
 
-`agent-project-move` treats an assistant store as a set of records keyed by absolute paths. A move rewrites those keys in place, a prune deletes the records of paths that no longer exist, and a transfer copies them to another host. This page explains the invariants behind those three operations and the shape every action takes.
+`agent-project-move` treats an assistant store as a set of records keyed by absolute paths. A move rewrites those keys in place, a prune deletes the records of paths that no longer exist, a retirement removes selected session copies, and a transfer copies them to another host. This page explains their invariants and the shape every action takes.
 
 ## Invariants
 
@@ -14,7 +14,13 @@ The final state after a `move <old> <new>` is that no structured path field refe
 - **Derive destinations from where files land.** An import sets `rollout_path` and similar fields to the path it writes the file to on the target, without mapping the source host's roots.
 - **Missing means gone.** A path under a mount root (`/Volumes/<name>`, `/mnt/<name>`, `/media/<user>/<name>`, `/run/media/<user>/<name>`) counts as missing only when that root is mounted. A missing subpath or worktree of a repository that still exists is a move target, because its sessions belong to the repository's history.
 
-A backup makes a mistake restorable. An applied run copies everything it edits or deletes, backs up every database, and writes a manifest of every action in order.
+A backup makes a mistake restorable. An applied run copies everything it edits or deletes, backs up every database, and writes a manifest of every action in order. Only an explicit `retire --no-backup` skips this recovery material.
+
+## Session selection
+
+Export selects sessions whose recorded cwd equals the path or lies under it. `--exact` limits the initial selection to equality, while `--session-ids` limits it to the given IDs under the path. The options are mutually exclusive, and retirement requires one of them. Every mode follows dependent descendants, even when their cwd differs. It never adds ancestors or siblings.
+
+Each store normalizes its session identities, recorded cwds, parent relationships, physical files, and project ownership before selection. Missing or invalid IDs never participate in the relationship graph. Physical project ownership stays separate from a visited cwd. A selected session owns its transcript and its same-stem artifact subtree. Shared project metadata is removed only after its remaining references are accounted for, using exact owners during retirement. Prune retains its missing-path semantics and shares session deletion helpers with retirement.
 
 ## Actions
 
@@ -62,14 +68,15 @@ An applied run creates `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/` a
 
 ## Transfer
 
-`export <old> <dir>` writes one subdirectory per assistant that records state for `<old>`, with the files and rows it holds unchanged, plus `entries.json` listing rows with their column names. It only reads state, so it needs no `--apply`.
+`export <old> <dir>` writes one subdirectory per assistant that records selected state for `<old>`, with the files and rows it holds unchanged, plus `entries.json` listing rows with their column names. It only reads state, so it needs no `--apply`.
 
 `import <dir>` plans the merge:
 
 - Directories are encoded with the target's own rules and `HOME`, and carried `rollout_path` values point at the copied files.
-- A row is inserted unless its unique key already exists, so a rerun after the move plans nothing. Every other constraint stays fatal, and a failing row aborts that database's whole load.
-- A store whose sessions the target already holds is skipped, memory included. The identity set is rows plus, for OMP, session files by relative path, and it counts only when non-empty, so a bundle holding only memory still imports.
-- A session file the target holds is skipped wherever it lives, while a memory file at the same path with different content aborts.
+- A row is inserted unless its unique key already exists. Every other constraint stays fatal, and a failing row aborts that database's whole load.
+- Existing session IDs are checked against their transcripts before skipping copies, including decoded compressed Codex rollouts and OMP IDs from session headers. A differing transcript aborts before writing. Dependent file history and Codex parent edges are reconciled even when the session already exists.
+- A repeated import requires identical transcript content after the import's explicit file mapping. Rewritten paths count as a content difference, so reconcile or re-export moved sessions before importing them again.
+- OMP rollout rows map to imported files by header ID, so identical nested filenames stay distinct. Shared memory for an already imported session set stays in place, while a memory-only bundle still imports.
 - An existing target file with identical content counts as done.
 - Each carried table is checked at plan time: the import aborts before writing when the target lacks a carried column, or requires a not-null column without a default that the bundle does not fill.
 

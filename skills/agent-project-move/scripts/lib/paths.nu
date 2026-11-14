@@ -40,6 +40,7 @@ export def check-destination [old: string, new: string]: nothing -> nothing {
 
 export def path-match [base: string, path: any]: nothing -> bool {
   if ($path | describe) != "string" { return false }
+  if $base == "/" { return ($path | str starts-with "/") }
   $path == $base or ($path | str starts-with ($base + "/"))
 }
 

@@ -14,7 +14,6 @@ use ../lib/actions.nu [
   sql-action
 ]
 use ../lib/bundle.nu [bundle-table]
-use ../lib/selection.nu [select-sessions]
 use ../lib/paths.nu [
   files-under
   match-any
@@ -25,6 +24,7 @@ use ../lib/paths.nu [
   valid-path
 ]
 use ../lib/rewrite.nu [files-with-path json-value rewrite-text rg-lines]
+use ../lib/selection.nu [select-sessions]
 use ../lib/sqlite.nu [
   check-columns
   path-condition
@@ -327,7 +327,6 @@ def session-records []: nothing -> list<record> {
   }
 }
 
-
 # --------------------------------------------------------------------------------------------------
 # Prune
 # --------------------------------------------------------------------------------------------------
@@ -389,15 +388,17 @@ def history-deletions [
     )
     | get 0
   )
-  let removed = (($counts.history | into int) + ($counts.recaps | into int))
+  let removed = (($counts.history
+    | into int) + ($counts.recaps
+    | into int))
   if $removed == 0 { return [] }
 
   mut statements = []
+  if ($ids | is-not-empty) {
+    $statements = ($statements | append $"DELETE FROM session_titles WHERE session_id IN \((sql-list $ids)\)")
+  }
   if ($counts.history | into int) > 0 {
     let scope = $"SELECT session_id FROM ($history)"
-    $statements = (
-      $statements | append $"DELETE FROM session_titles WHERE session_id IN \(($scope)\)"
-    )
     $statements = (
       $statements | append $"DELETE FROM session_recaps WHERE session_id IN \(($scope)\)"
     )
@@ -460,22 +461,40 @@ export def plan-prune [paths: list<string>]: nothing -> list<record> {
   )
 }
 
-export def plan-retire [old: string, --exact, --session-ids: list<string> = []]: nothing -> list<record> {
+export def plan-retire [
+  old: string
+  --exact
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
   let records = (session-records)
   let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
-  let ids = ($selected | get -o id | compact | uniq)
+  let ids = ($selected
+    | get -o id
+    | compact
+    | uniq)
   if ($ids | is-empty) { return [] }
   let remaining = ($records | where {|row| $row.id not-in $ids })
   let paths = (
-    ($selected | get -o cwd) ++ ($selected | get -o owner) | uniq
+    ($selected
+      | get -o cwd) ++ ($selected
+      | get -o owner)
+      | uniq
     | where {|cwd| valid-path $cwd }
-    | where {|cwd| not ($remaining | any {|row| $row.cwd == $cwd or $row.owner == $cwd }) }
+    | where {|cwd| not ($remaining
+    | any {|row| $row.cwd == $cwd or $row.owner == $cwd }) }
   )
   let session_files = (
-    $selected | where {|row| ($row | get -o file) != null } | get file | uniq
+    $selected
+      | where {|row| ($row
+      | get -o file) != null }
+      | get file
+      | uniq
   )
-  let subtrees = ($session_files | each {|file| $file | str replace --regex '\.jsonl$' '' }
-    | where {|path| $path | path exists })
+  let subtrees = ($session_files
+    | each {|file| $file
+    | str replace --regex '\.jsonl$' '' }
+    | where {|path| $path
+    | path exists })
   mut actions = ($session_files ++ $subtrees | outermost-paths $in
     | each {|file| action omp sessions delete $file "retire session tree" })
   for path in $paths {
@@ -494,7 +513,6 @@ export def plan-retire [old: string, --exact, --session-ids: list<string> = []]:
     ++ (agent-deletions ($agent | path join agent.db) $ids $paths)
   )
 }
-
 
 # --------------------------------------------------------------------------------------------------
 # Transfer
@@ -612,12 +630,24 @@ def agent-tables [
   ]
 }
 
-export def export-bundle [old: string, --exact, --session-ids: list<string> = []]: nothing -> record {
+export def export-bundle [
+  old: string
+  --exact
+  --session-ids: list<string> = []
+]: nothing -> record {
   let records = (session-records)
   let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
-  let ids = ($selected | get -o id | compact | uniq)
-  let owned = (($selected | get -o owner) ++ ($selected | get -o cwd) | where {|path| valid-path $path })
-  let paths = if ($session_ids | is-not-empty) { $owned | uniq } else {
+  let ids = ($selected
+    | get -o id
+    | compact
+    | uniq)
+  let owned = (($selected
+    | get -o owner) ++ ($selected
+    | get -o cwd)
+    | where {|path| valid-path $path })
+  let paths = if ($session_ids
+    | is-not-empty) { $owned
+    | uniq } else {
     let recorded = (recorded-paths | where {|path| if $exact { $path == $old } else { path-match $old $path } })
     $owned ++ $recorded ++ [$old] | uniq
   }
@@ -626,15 +656,19 @@ export def export-bundle [old: string, --exact, --session-ids: list<string> = []
   let history = (history-tables ($agent | path join history.db) $ids --metadata-paths $history_paths)
   let tables = ($history ++ (agent-tables ($agent | path join agent.db) $ids $paths))
   mut files = []
-  for row in ($selected | where {|row| ($row | get -o file) != null }) {
+  for row in ($selected
+    | where {|row| ($row
+    | get -o file) != null }) {
     let subtree = ($row.file | str replace --regex '\.jsonl$' '')
     for file in ([$row.file] ++ (files-under $subtree)) {
+      let header = (session-header $file)
       $files = ($files | append {
         kind: $row.kind
         project: $row.owner
         name: ($file | path relative-to $row.directory)
         source: $file
-        session: (session-header $file | get -o id)
+        source_path: (if $header == null { null } else { $file })
+        session: ($header | get -o id)
       })
     }
   }
@@ -651,6 +685,50 @@ export def export-bundle [old: string, --exact, --session-ids: list<string> = []
     }
   }
   {assistant: omp, old: $old, files: $files, tables: $tables}
+}
+
+def mapped-parent [file: record, targets: list<record>]: nothing -> any {
+  let parent = ($file.header | get -o parentSession)
+  if not (valid-path $parent) { return null }
+  let target = (
+    $targets
+    | where {|entry| $entry.source_path == $parent }
+    | first
+  )
+  if $target == null or $target.target == $parent { null } else {
+    {old: $parent, new: $target.target}
+  }
+}
+
+def remap-parent [content: string, old: string, new: string]: nothing -> string {
+  $content
+  | split row "\n"
+  | each {|line|
+    let header = (try { $line | from json } catch { null })
+    if ($header | get -o type) != "session" or ($header | get -o parentSession) != $old {
+      return $line
+    }
+    let field = (
+      $line
+      | parse --regex '(?<field>"parentSession"\s*:\s*"(?:\\.|[^"\\])*")'
+      | first
+      | get field
+    )
+    let mapped = ($field | str replace ($old | to json --raw) ($new | to json --raw))
+    $line | str replace $field $mapped
+  }
+  | str join "\n"
+}
+
+def rollout-target [id: string, value: any, targets: list<record>]: nothing -> any {
+  if ($value | describe) != "string" { return $value }
+
+  let found = (
+    $targets
+    | where {|target| $target.id == $id }
+    | get -o 0
+  )
+  if $found == null { $value } else { $found.target }
 }
 
 export def plan-import [bundle: record]: nothing -> list<record> {
@@ -688,102 +766,89 @@ export def plan-import [bundle: record]: nothing -> list<record> {
   )
 
   let local_inventory = (session-records)
-  let session_dirs = (
-    [(session-root) (archive-root)]
-    | each {|root|
-      if ($root | path exists) { ls $root | where type == "dir" | get name } else { [] }
-    }
-    | flatten
-  )
-  let session_files = ($bundle.files | where {|file| $file.kind in [sessions archives] })
-  for file in $session_files {
-    let header = (session-header $file.bundle)
-    if $header != null {
-      let copies = ($local_inventory | where {|row|
-        $row.id == $header.id and ($row | get -o file) != null
-      })
-      for copy in $copies {
-        if not (same-content $file.bundle $copy.file) {
-          error make --unspanned {msg: $"Existing session ($header.id) differs from the bundle"}
+  let targets = (
+    $bundle.files | each {|file|
+      let header = if $file.kind in [sessions archives] { session-header $file.bundle } else { null }
+      let local = if $header == null { null } else {
+        $local_inventory | where {|row|
+          $row.id == $header.id and ($row | get -o file) != null
+        } | first
+      }
+      let target = if $local != null { $local.file } else {
+        match $file.kind {
+          'sessions' => (session-root | path join (session-encode-here $file.project) $file.name)
+          'archives' => (archive-root | path join (session-encode-here $file.project) $file.name)
+          'memories' => (memory-root | path join (memory-encode $file.project) $file.name)
+          _ => {
+            error make --unspanned {msg: $"Unknown OMP file kind ($file.kind)"}
+          }
         }
       }
-      if ($copies | is-empty) and ($header.id in $local_sessions) {
-        error make --unspanned {msg: $"Existing session ($header.id) has no readable transcript"}
+      let thread = if $header == null { null } else {
+        (bundle-table $bundle threads).rows | where id == $header.id | first
+      }
+      $file | merge {
+        header: $header
+        target: $target
+        source_path: ($file | get -o source_path | default ($thread | get -o rollout_path))
       }
     }
-    for dir in $session_dirs {
-      let candidate = ($dir | path join $file.name)
-      if ($candidate | path exists) and not (same-content $file.bundle $candidate) {
-        error make --unspanned {msg: $"Existing session ($file.name) differs from the bundle"}
-      }
-    }
-  }
-
+  )
   let already_imported = (
     ($bundle_sessions | all {|id| $id in $local_sessions })
-    and ($session_files | all {|file|
-      $session_dirs | any {|dir| ($dir | path join $file.name) | path exists }
-    })
+    and ($targets | where {|file| $file.kind in [sessions archives] }
+      | all {|file| $file.target | path exists })
+    and (($bundle_sessions | is-not-empty) or ($targets | any {|file| $file.header != null }))
   )
-
   mut actions = []
-  mut rollout_targets = []
-  let memory_root_dir = (memory-root)
-  let memories = if ($memory_root_dir | path exists) {
-    ls $memory_root_dir
-    | where type == "dir"
-    | get name
-    | each {|dir| files-under $dir }
-    | flatten
-  } else {
-    []
-  }
-
-  for file in $bundle.files {
-    if $already_imported and $file.kind == "memories" { continue }
-    let target = match $file.kind {
-      'sessions' => (session-root | path join (session-encode-here $file.project) $file.name)
-      'archives' => (archive-root | path join (session-encode-here $file.project) $file.name)
-      'memories' => (memory-root | path join (memory-encode $file.project) $file.name)
-      _ => {
-        error make --unspanned {
-          msg: $"Unknown OMP file kind ($file.kind)"
-          help: "Rerun with the version that exported this bundle."
+  let memories = (files-under (memory-root))
+  for file in $targets {
+    let parent = (mapped-parent $file $targets)
+    let expected = if $file.header == null { null } else {
+      let content = (open --raw $file.bundle)
+      if $parent == null { $content } else { remap-parent $content $parent.old $parent.new }
+    }
+    if $file.header != null {
+      let copies = ($local_inventory | where {|row|
+        $row.id == $file.header.id and ($row | get -o file) != null
+      })
+      for copy in $copies {
+        if (open --raw $copy.file) != $expected {
+          error make --unspanned {msg: $"Existing session ($file.header.id) differs from the bundle"}
         }
       }
-    }
-    if ($file.kind in [sessions archives]) {
-      let header = (session-header $file.bundle)
-      if $header != null {
-        let local = ($local_inventory | where {|row|
-          $row.id == $header.id and ($row | get -o file) != null
-        } | first)
-        let destination = if $local == null { $target } else { $local.file }
-        $rollout_targets = ($rollout_targets | append {id: $header.id, target: $destination})
-        if $local != null { continue }
+      if ($copies | is-empty) and ($file.header.id in $local_sessions) {
+        error make --unspanned {msg: $"Existing session ($file.header.id) has no readable transcript"}
       }
     }
-    if ($target | path exists) {
-      if (same-content $file.bundle $target) { continue }
+    if $already_imported and $file.kind == "memories" { continue }
+    if ($file.target | path exists) {
+      let equal = if $expected == null { same-content $file.bundle $file.target } else {
+        (open --raw $file.target) == $expected
+      }
+      if $equal { continue }
       error make --unspanned {
-        msg: $"($target) already exists with content that differs from the bundle's copy"
-        help: "Compare the two files. Delete or rename the local file if the bundle's copy should win, then rerun the import."
+        msg: $"($file.target) already exists with content that differs from the bundle's copy"
+        help: "Compare the two files, then reconcile the copies before importing again."
       }
     }
     if $file.kind == memories {
-      let identical = (
-        $memories
-        | any {|path|
-          let same_name = (($path | path basename) == ($file.name | path basename))
-          $same_name and (same-content $file.bundle $path)
-        }
-      )
+      let identical = ($memories | any {|path|
+        (($path | path basename) == ($file.name | path basename)) and (same-content $file.bundle $path)
+      })
       if $identical { continue }
     }
-    let write = (copy-action omp files $file.bundle $target "import file")
-    $actions = ($actions | append $write)
+    let copy = if $parent == null {
+      copy-action omp files $file.bundle $file.target "import file"
+    } else {
+      copy-action omp files $file.bundle $file.target "import session" --transform {|content|
+        remap-parent $content $parent.old $parent.new
+      }
+    }
+    $actions = ($actions | append $copy)
   }
-  let rollout_map = $rollout_targets
+  let rollout_map = ($targets | where {|file| $file.header != null }
+    | each {|file| {id: $file.header.id, target: $file.target} })
 
   mut history_statements = []
   mut agent_statements = []
@@ -801,7 +866,9 @@ export def plan-import [bundle: record]: nothing -> list<record> {
         }
       }
     )
-    let natural = ($spec | get -o natural | default [])
+    let natural = ($spec
+      | get -o natural
+      | default [])
     let statements = (
       $rows
       | each {|row|
@@ -827,15 +894,4 @@ export def plan-import [bundle: record]: nothing -> list<record> {
     $actions = ($actions | append $load)
   }
   $actions
-}
-
-def rollout-target [id: string, value: any, targets: list<record>]: nothing -> any {
-  if ($value | describe) != "string" { return $value }
-
-  let found = (
-    $targets
-    | where {|target| $target.id == $id }
-    | get -o 0
-  )
-  if $found == null { $value } else { $found.target }
 }

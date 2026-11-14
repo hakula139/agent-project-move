@@ -3,9 +3,8 @@
 # ==================================================================================================
 # Agent Project Move
 # ==================================================================================================
-# Moves, exports, imports, and prunes Claude Code, Codex, and OMP state after a project directory
-# moves. Paths match by exact string prefix, case-sensitively. A move rewrites state in place,
-# while export and import transfer state between hosts. Run with --help for usage.
+# Repairs project paths and transfers or retires Claude Code, Codex, and OMP session state.
+# Paths match case-sensitively. Run with --help for usage.
 # ==================================================================================================
 
 use ./lib/actions.nu [apply-all]
@@ -40,10 +39,10 @@ if $nu.os-info.name == "macos" and (which brew | is-not-empty) {
   }
 }
 
-# Move, export, import, and prune assistant state recorded for project paths.
+# Move, export, import, prune, and retire assistant state recorded for project paths.
 #
-# Every plan is a dry run, and `--apply` writes it after a backup under
-# `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/`.
+# Every plan is a dry run. Applied runs create a backup under
+# `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/`, except `retire --no-backup`.
 def main [...rest: string] {
   if ($rest | is-empty) {
     help main
@@ -148,6 +147,18 @@ def "main prune" [
   apply-all (plan-prune $selected $targets) --apply=$apply
 }
 
+def selection-ids [exact: bool, value: any]: nothing -> list<string> {
+  if $exact and $value != null {
+    error make --unspanned {msg: "--exact and --session-ids are mutually exclusive"}
+  }
+  if $value == null { return [] }
+  let ids = ($value | split row "," | each {|id| $id | str trim } | where {|id| $id != "" } | uniq)
+  if ($ids | is-empty) {
+    error make --unspanned {msg: "--session-ids requires at least one session ID"}
+  }
+  $ids
+}
+
 # Write the state recorded for <path> as a bundle directory, unchanged.
 @example "Export a project's state to a bundle" {
   agent-project-move export ~/src/app ~/agent-project-move-bundle
@@ -156,8 +167,8 @@ def "main export" [
   path: string # Project path to export, or a parent of it
   dir: string # Directory receiving one subdirectory per assistant
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to export
-  --exact # Select sessions whose recorded cwd equals the path
-  --session-ids: string # Comma-separated session IDs under the path
+  --exact # Select exact-cwd sessions and their descendants
+  --session-ids: string # Session IDs under the path, with their descendants
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
   let old = (normalize-path $path)
@@ -196,24 +207,12 @@ def "main export" [
   print $"Exported to ($dir)"
 }
 
-def selection-ids [exact: bool, value: any]: nothing -> list<string> {
-  if $exact and $value != null {
-    error make --unspanned {msg: "--exact and --session-ids are mutually exclusive"}
-  }
-  if $value == null { return [] }
-  let ids = ($value | split row "," | each {|id| $id | str trim } | where {|id| $id != "" } | uniq)
-  if ($ids | is-empty) {
-    error make --unspanned {msg: "--session-ids requires at least one session ID"}
-  }
-  $ids
-}
-
 # Retire selected session trees even when their project directory still exists.
 def "main retire" [
   path: string # Recorded project path, or a parent of selected sessions
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to retire
-  --exact # Select sessions whose recorded cwd equals the path
-  --session-ids: string # Comma-separated session IDs under the path
+  --exact # Select exact-cwd sessions and their descendants
+  --session-ids: string # Session IDs under the path, with their descendants
   --apply # Write the planned changes
   --no-backup # Permanently remove selected copies without creating a backup
 ]: nothing -> nothing {

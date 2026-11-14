@@ -21,7 +21,7 @@ Coding assistants key their sessions, memory, and history by absolute directory 
 - **`prune`** deletes state whose directory exists nowhere, after you move anything worth keeping.
 - **`export`** and **`import`** carry a project's sessions, memory, and history in a bundle between hosts, and a normal `move` on the target then points them at its own path.
 
-`move`, `prune`, and `import` print a plan and change assistant state only with `--apply`. `scan` and `export` never change assistant state, and `export` writes only the bundle directory you name.
+`move`, `prune`, `retire`, and `import` print a plan and change assistant state only with `--apply`. `scan` and `export` never change assistant state, and `export` writes only the bundle directory you name.
 
 ## Install
 
@@ -108,7 +108,7 @@ The module installs the command and links the skill into `~/.agents/skills` and 
 
 Before any `--apply`, exit every assistant session working in the affected projects. A session that writes during the apply loses those writes, and a running Claude Code can rewrite `~/.claude.json` at the same moment. Your own agent session counts.
 
-- **One backup per applied run.** Everything edited or deleted is copied, and each database is backed up with `sqlite3 .backup`, under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, with a `manifest.json` listing every action in order, including each rename's destination. The directory is created with mode `0700` and outlives the run, and it holds the same transcripts as the stores, including any secret a session printed or a tool read. Delete the directory once you no longer need it.
+- **One backup per applied run by default.** Everything edited or deleted is copied, and each database is backed up with `sqlite3 .backup`, under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, with a `manifest.json` listing every action in order, including each rename's destination. The directory is created with mode `0700` and outlives the run, and it holds the same transcripts as the stores, including any secret a session printed or a tool read. Delete the directory once you no longer need it. Only `retire --no-backup` skips this backup, permanently removing the selected source copies when applied.
 - **Each SQL action is one transaction**, so a failed action leaves no partial rows.
 - **Local state only.** The tool needs no credentials, opens no network connections, and runs no commands from the assistant stores, so a bug in its selection or rewrite logic can delete local state or leave a session pointing at a dead path.
 
@@ -164,7 +164,21 @@ agent-project-move move ~/src/app ~/work/app           # When the path differs
 agent-project-move move ~/src/app ~/work/app --apply
 ```
 
-`export` copies the files and rows recorded for the path, unchanged, and needs no `--apply`. `import` writes them where the target's assistant keeps the same path, never overwrites state the target already holds, and aborts before writing when a target table lacks a column the bundle contains. The bundle holds transcripts, so keep it in a private directory, transfer it over a trusted channel, and delete it on both hosts once the import is done. Selection follows the project path, so the assistants' credential files and tables, such as `auth.json` and `.credentials.json`, stay out of a bundle. If you are retiring the source copy, delete its directory there once the target lists the sessions, then prune the source host.
+`export` copies the files and rows recorded for the path and its child paths, unchanged, and needs no `--apply`. Add `--exact` to select only sessions recorded at that cwd, or `--session-ids <id,id>` to select specific sessions under the path. These options are mutually exclusive. Each selection also carries linked descendants and each selected session's own artifact subtree. Selecting a child leaves its parent and siblings alone.
+
+`import` writes the bundle where the target's assistant keeps the same path, preserves existing state, and rejects a reused session ID with a different transcript. It also aborts before writing when a target table lacks a column the bundle contains. The bundle holds transcripts, so keep it in a private directory, transfer it over a trusted channel, and delete it on both hosts once the import is done. Selection follows the project path, so the assistants' credential files and tables, such as `auth.json` and `.credentials.json`, stay out of a bundle.
+
+### Retire transferred sessions
+
+After verifying the destination sessions and their artifacts, retire the source copies even when their directory still exists:
+
+```bash
+agent-project-move retire ~/src/app --exact
+agent-project-move retire ~/src/app --session-ids <id,id>
+agent-project-move retire ~/src/app --session-ids <id,id> --apply
+```
+
+`retire` requires either `--exact` or `--session-ids`, using the same session selection as `export`. It removes selected transcripts and dependent rows, and removes shared project metadata only when no remaining session references it. Review the dry run before applying. Use `--no-backup` only when you have verified the transferred copies and intend to discard the selected source state permanently.
 
 ## Tested with
 

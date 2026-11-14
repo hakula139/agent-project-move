@@ -22,6 +22,8 @@ A session that changed directories is attributed to every `cwd` its transcript r
 
 A prune deletes a directory only when every `cwd` it records lies under the pruned paths and no existing path encodes to its name.
 
+Selective exports and retirements use session filenames as identities and follow subagent transcripts under the owning session's directory. A child-only selection keeps the parent transcript and its other files. The selected IDs also carry their `file-history/` directories. Retirement invalidates `sessions-index.json` and keeps project configuration and memory while another transcript still owns the physical project directory.
+
 Merges, including memory staging, follow [Design](design.md#merges-and-memory-staging).
 
 ## Codex
@@ -41,6 +43,8 @@ A history projection is exact or absent. When both spellings of the path keep th
 
 A prune deletes the rollouts and `threads` rows with foreign keys on, then the removed threads' history projection rows explicitly, because that database has no cascades.
 
+Selection follows `thread_spawn_edges` and attached parent identities toward descendants. Export carries incoming spawn edges for selected children, preserving an external parent's identity without selecting that parent. Retirement deletes selected edges, threads, rollouts, and history projections, and removes a project row only when no thread still references it.
+
 ## OMP
 
 Root: `$PI_CODING_AGENT_DIR`, defaulting to `~/.omp/agent`. Session and archive directories use a home-relative encoding, and memory directories use an absolute encoding. Memory lives under `$XDG_STATE_HOME/omp/memories`, defaulting to `~/.local/state/omp/memories`.
@@ -57,4 +61,6 @@ Root: `$PI_CODING_AGENT_DIR`, defaulting to `~/.omp/agent`. Session and archive 
 
 A prune deletes a session or archive directory when every session it holds is under the pruned paths, and a memory directory unless another existing path encodes to the same name. Its statements delete `stage1_outputs` and thread-keyed `jobs` through a subquery on the removed threads, the removed sessions' `session_titles`, the `history` and `session_recaps` rows, and the `global:` jobs, then rebuild the external-content `history_fts` index.
 
-An import matches an OMP session by its rows and by its session files under any session directory, so a session file with no database row still imports.
+Selection reads the `type: session` header, skipping an optional title slot. `parentSession` can identify a parent by ID or file path, and a session file owns its same-stem artifact directory. A selected child carries its own subtree and linked descendants, while adjacent files belonging to its parent remain in place. Memory uses physical project ownership and remains while another session references it.
+
+An import matches an OMP session by its header ID and its database rows, so a session file with no database row still imports. Distinct nested files with the same basename retain their own rollout targets. History without a session ID and global jobs remain path metadata in default exports and prune plans.
