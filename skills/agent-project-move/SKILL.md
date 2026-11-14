@@ -2,7 +2,7 @@
 name: agent-project-move
 description: >-
   Repair the project paths recorded by Claude Code, Codex, and OMP after a directory moves,
-  transfer sessions between hosts, and prune state whose directory is gone. Use when a project was
+  transfer sessions between hosts, and retire selected session copies. Use when a project was
   moved or renamed and an assistant no longer lists its sessions under the new path, when memory
   or history still points at an old path, when a removed worktree leaves sessions stranded, when
   deleted directories leave stale state, or when moving work to another machine.
@@ -10,7 +10,7 @@ description: >-
 
 # Agent project move
 
-`agent-project-move` rewrites the project paths stored by the three assistants. Planning is read-only and prints every action, while `--apply` backs state up under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, then rewrites state in place. `move`, `import`, `prune`, and `retire` accept `--no-backup` to skip that backup explicitly. Use it only with authorization to proceed without recovery copies. The dry run reports whether a backup will be created, and [Restore](#restore) requires a backup.
+`agent-project-move` rewrites the project paths stored by the three assistants. Planning is read-only and prints every action, while `--apply` backs state up under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, then rewrites state in place. `move`, `import`, and `retire` accept `--no-backup` to skip that backup explicitly. Use it only with authorization to proceed without recovery copies. The dry run reports whether a backup will be created, and [Restore](#restore) requires a backup.
 
 ## Requirements
 
@@ -34,13 +34,13 @@ On macOS the command puts Homebrew's GNU coreutils first on its own `PATH`, so t
 
 1. Run `agent-project-move scan` on the host. It lists each recorded path with its session count, last use, and whether the directory exists. Run it again with `--assistant` to narrow the output. Assistant names are a comma-separated list: `claude`, `codex`, `omp`.
 2. Determine where missing paths belong from the user's intent, local checkouts, and Git repository and worktree relationships. Investigate ambiguous candidates and ask the user when the evidence does not establish a target.
-3. Present the old-to-new mappings and the paths that pruning would delete. Wait for the user to confirm them before any write.
+3. Present the old-to-new mappings and wait for the user to confirm them before any write.
 
-When the user names both paths, check that `scan` lists `<old>`, show the move plan, and offer pruning as a separate confirmation.
+When the user names both paths, check that `scan` lists `<old>` and show the move plan.
 
 ## Concurrent sessions
 
-Moves, prunes, and retirements rewrite state in place. Close sessions working in the affected paths before applying.
+Moves and retirements rewrite state in place. Close sessions working in the affected paths before applying.
 
 Your own session counts. When your working directory is under `<old>` or `<new>`, or the plan edits a shared document such as `~/.claude.json`, give the user the exact `--apply` command to run in a terminal after they exit the assistant.
 
@@ -54,7 +54,7 @@ When a Claude project directory lands on an existing one, the unique transcripts
 
 1. Move local directories first with the file manager or `mv`, so the recorded path is the only stale reference.
 
-2. Dry-run the state move, show the plan, and apply it after confirmation. Prefix matching is an exact, case-sensitive string test on `<old>` or `<old>/`, so a sibling such as `<old>-bar` is untouched even on a case-insensitive filesystem. A move whose paths differ only in case is refused, and a destination that does not exist draws a warning because a later prune would delete the moved state. See [Project merges](#project-merges) for what happens when a destination exists.
+2. Dry-run the state move, show the plan, and apply it after confirmation. Prefix matching is an exact, case-sensitive string test on `<old>` or `<old>/`, so a sibling such as `<old>-bar` is untouched even on a case-insensitive filesystem. A move whose paths differ only in case is refused, and a destination that does not exist draws a warning because sessions need it to resume. See [Project merges](#project-merges) for what happens when a destination exists.
 
    ```bash
    agent-project-move move ~/src/app ~/work/app
@@ -63,7 +63,7 @@ When a Claude project directory lands on an existing one, the unique transcripts
 
    When only part of a tree changes, move the diverging child first. If `~/src/app` moves to `~/work/app` but its `assets` subdirectory moves to `~/media/assets`, run `move ~/src/app/assets ~/media/assets` and then `move ~/src/app ~/work/app`. Reversed, the parent move carries `assets` to `~/work/app/assets`.
 
-3. Complete the confirmed moves and consolidate each destination project's `memory/incoming/` directory before pruning, since prune deletes state for paths that do not exist on disk.
+3. Complete the confirmed moves and consolidate each destination project's `memory/incoming/` directory.
 
 ## Transfer between hosts
 
@@ -90,7 +90,7 @@ After verifying the destination sessions and their artifacts, use [Retire](#reti
 
 ## Retire
 
-`retire` removes selected session state even when the project directory still exists. It requires either `--exact` or `--session-ids`, and follows the export's selection rules. Shared project metadata stays while another session references it.
+`retire` removes selected session state after explicit authorization. It requires either `--exact` or `--session-ids`, and follows the export's selection rules. Use IDs when sessions sharing a cwd belong to different projects or only some should be removed. Use `--exact` only when the whole cwd selection is intended. Shared project metadata stays while another session references it. Investigate other orphaned state separately and use task-specific scripts when needed.
 
 ```bash
 agent-project-move retire ~/src/app --exact
@@ -99,18 +99,6 @@ agent-project-move retire ~/src/app --session-ids session-a,session-b --apply
 ```
 
 Review the dry run and confirm the selected sessions before applying. `--apply` creates the normal backup. Add `--no-backup` only with explicit authorization to permanently discard these source copies after destination verification. No backup is created in that mode, so [Restore](#restore) cannot recover the retirement.
-
-## Prune
-
-Run a dry-run `prune` only after every move and cross-host transfer. Apply it once the plan names only abandoned sessions.
-
-```bash
-agent-project-move prune
-agent-project-move prune --keep ~/archive,/tmp/scratch
-agent-project-move prune --apply
-```
-
-`--keep` takes comma-separated path prefixes and leaves every missing path that equals one or falls under one. The dry run lists the excluded paths. Paths under an unmounted `/Volumes/<name>`, `/mnt/<name>`, `/media/<user>/<name>`, or `/run/media/<user>/<name>` stay, so a detached disk is not mistaken for a deleted project, while any other drive or network share should be mounted before pruning or passed to `--keep`.
 
 ## Restore
 

@@ -52,7 +52,7 @@ def "test a config move rewrites github repository paths" [] {
   }
 }
 
-def "test a config prune drops missing projects and emptied repos" [] {
+def "test retirement removes project configuration and emptied repos" [] {
   let config = {
     projects: {
       "/work/gone": {}

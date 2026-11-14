@@ -12,9 +12,8 @@ use ./lib/bundle.nu [read-bundle write-bundle]
 use ./lib/output.nu [plural print-table]
 use ./lib/paths.nu [
   check-destination
-  match-any
   normalize-path
-  parse-paths
+  path-match
 ]
 use ./assistants.nu [
   ALL_ASSISTANTS
@@ -23,9 +22,7 @@ use ./assistants.nu [
   assistant-plan-import
   parse-assistants
   plan-move
-  plan-prune
   plan-retire
-  prune-missing-paths
   scan-all
 ]
 
@@ -42,7 +39,7 @@ if $nu.os-info.name == "macos" and (which brew | is-not-empty) {
   }
 }
 
-# Move, export, import, prune, and retire assistant state recorded for project paths.
+# Move, export, import, and retire assistant state recorded for project paths.
 #
 # Every plan is a dry run. Applied changes create a backup under
 # `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/`, unless `--no-backup` is given.
@@ -101,51 +98,16 @@ def "main move" [
 
   check-destination $old $new
   if not ($new | path exists) {
-    print $"($new) does not exist. Move the directory first, or a later prune deletes this state."
+    print $"($new) does not exist. Move the directory first so sessions can resume there."
   }
   let actions = (plan-move $selected $old $new)
   if ($actions | is-empty) {
     let recorded = (all-recorded-paths $selected)
-    if not ($recorded | any {|candidate| match-any [$old] $candidate }) {
+    if not ($recorded | any {|candidate| path-match $old $candidate }) {
       print $"Nothing is recorded under ($old)"
     }
   }
   apply-all $actions --apply=$apply --no-backup=$no_backup
-}
-
-# Delete state recorded for missing project paths. Prints the plan, and writes only with --apply.
-@example "Preview a prune, then apply it" {
-  agent-project-move prune
-  agent-project-move prune --apply
-}
-def "main prune" [
-  --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to prune
-  --keep (-k): string = "" # Comma-separated path prefixes to leave alone
-  --apply # Write the planned changes
-  --no-backup # Skip creating recovery backups
-]: nothing -> nothing {
-  let selected = (parse-assistants $assistant)
-  let keep = (parse-paths $keep)
-  let missing = (prune-missing-paths $selected)
-  let excluded = ($missing | where {|path| match-any $keep $path })
-  let targets = ($missing | where {|path| not (match-any $keep $path) })
-  if ($excluded | is-not-empty) {
-    print "Excluded by --keep:"
-    $excluded
-    | wrap path
-    | print-table
-  }
-
-  if not $apply and ($targets | is-not-empty) {
-    let rows = (scan-all $selected | where {|row| $row.path in $targets })
-    let count = ($targets | length)
-    print $"Prune deletes state for ($count) (plural $count 'missing path' 'missing paths'):"
-    $rows
-    | select assistant path sessions last_used
-    | print-table
-  }
-
-  apply-all (plan-prune $selected $targets) --apply=$apply --no-backup=$no_backup
 }
 
 def selection-ids [exact: bool, value: any]: nothing -> list<string> {

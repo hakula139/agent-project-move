@@ -63,10 +63,6 @@ export def path-map [old: string, new: string, path: string]: nothing -> string 
   }
 }
 
-export def match-any [bases: list<string>, path: any]: nothing -> bool {
-  $bases | any {|base| path-match $base $path }
-}
-
 export def outermost-paths [paths: list<string>]: nothing -> list<string> {
   let unique = ($paths | uniq)
   $unique
@@ -75,65 +71,10 @@ export def outermost-paths [paths: list<string>]: nothing -> list<string> {
   }
 }
 
-export def parse-paths [value: string]: nothing -> list<string> {
-  $value
-  | split row ","
-  | str trim
-  | where {|path| $path != "" }
-}
-
 export def files-under [dir: string]: nothing -> list<string> {
   if not ($dir | path exists) { return [] }
   if ($dir | path type) != "dir" { return [$dir] }
   ^find $dir -type "f"
   | lines
   | sort
-}
-
-# Whether a path is missing. A path under an unmounted drive root counts as present, so a prune
-# does not delete state for a disk that is merely detached.
-export def path-missing [path: string]: nothing -> bool {
-  if ($path | path exists) { return false }
-
-  let parts = (
-    $path
-    | str replace --regex "^/" ""
-    | split row "/"
-  )
-  if ($parts | length) < 2 { return true }
-
-  let root = if ($parts | length) >= 4 and (
-    $parts
-    | first 2
-    | str join "/"
-  ) == "run/media" {
-    "/" + (
-      $parts
-      | take 4
-      | str join "/"
-    )
-  } else if ($parts | length) >= 3 and ($parts | first 1 | first) == "media" {
-    "/" + (
-      $parts
-      | take 3
-      | str join "/"
-    )
-  } else {
-    "/" + (
-      $parts
-      | take 2
-      | str join "/"
-    )
-  }
-
-  if (
-    ($root | str starts-with "/Volumes/")
-    or ($root | str starts-with "/mnt/")
-    or ($root | str starts-with "/media/")
-    or ($root | str starts-with "/run/media/")
-  ) {
-    $root | path exists
-  } else {
-    true
-  }
 }
