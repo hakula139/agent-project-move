@@ -48,7 +48,7 @@ If the run aborts, read the error and close the session working in that path. A 
 
 ## Project merges
 
-When a Claude project directory lands on an existing one, the unique transcripts from both sides are kept, and `sessions-index.json` is deleted as stale derived data. If the destination already has a `memory/` directory, the source's whole memory directory is staged under `memory/incoming/<source-encoded-name>/`, listed as a rename, and left for the user to consolidate by hand. Otherwise the source memory moves in directly, with identical duplicates dropped. Memory content is never merged by the script.
+When Claude project directories merge, unique files are kept. Memory moves as ordinary directory content, and differing files at the same destination stop the move for review. Shared memory content is handled separately from session transfer.
 
 ## Move
 
@@ -62,8 +62,6 @@ When a Claude project directory lands on an existing one, the unique transcripts
    ```
 
    When only part of a tree changes, move the diverging child first. If `~/src/app` moves to `~/work/app` but its `assets` subdirectory moves to `~/media/assets`, run `move ~/src/app/assets ~/media/assets` and then `move ~/src/app ~/work/app`. Reversed, the parent move carries `assets` to `~/work/app/assets`.
-
-3. Complete the confirmed moves and consolidate each destination project's `memory/incoming/` directory.
 
 ## Transfer between hosts
 
@@ -82,15 +80,13 @@ When a Claude project directory lands on an existing one, the unique transcripts
    agent-project-move import ~/agent-project-move-bundle --target ~/work/app --apply
    ```
 
-3. On the target host, consolidate each destination project whose `memory/incoming/` directory exists, by hand.
-
-4. Delete the bundle on both hosts. The bundle holds transcripts, so it should not stay in a shared directory.
+3. Delete the bundle on both hosts. The bundle holds transcripts, so it should not stay in a shared directory.
 
 After verifying the destination sessions and their artifacts, use [Retire](#retire) to remove the selected source state. Use the same path, assistant list, and selection as the export.
 
 ## Retire
 
-`retire` removes selected session state after explicit authorization. It requires either `--exact` or `--session-ids`, and follows the export's selection rules. Use IDs when sessions sharing a cwd belong to different projects or only some should be removed. Use `--exact` only when the whole cwd selection is intended. Shared project metadata stays while another session references it. Investigate other orphaned state separately and use task-specific scripts when needed.
+`retire` removes selected session state after explicit authorization. It requires either `--exact` or `--session-ids`, and follows the export's selection rules. Use IDs when sessions sharing a cwd belong to different projects or only some should be removed. Use `--exact` only when the whole cwd selection is intended. Claude project memory, global configuration, and prompt history stay in place. Other shared project metadata stays while another session references it. Investigate other orphaned state separately and use task-specific scripts when needed.
 
 ```bash
 agent-project-move retire ~/src/app --exact

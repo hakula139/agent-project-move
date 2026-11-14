@@ -4,12 +4,12 @@
 
 ## Invariants
 
-A `move <old> <new>` rewrites the managed session paths under `<old>` to `<new>`, makes moved sessions resumable at `<new>`, and keeps unique transcripts when projects merge. Claude memory waiting for consolidation sits in `memory/incoming/`. These rules follow:
+After a `move <old> <new>`, rewritten session paths use `<new>` and moved project directories use its encoding. These rules follow:
 
 - **Plan from current state.** Selection and every decision read what is on disk now, never what a previous run was expected to do. A transcript is selected because a record's `cwd` is under `<old>`, whatever its first line says. A rerun after a partial failure therefore converges on the same final state, and no step may make a rerun fail forever, as a key collision would.
-- **Rewrite sources of truth and drop derived data.** Transcripts, rollouts, and session rows are rewritten. Anything an assistant derives from them is deleted instead: Claude's `sessions-index.json` when a project directory merges, and Codex's `thread_history` projections when a rollout is rewritten. Nothing derived is maintained by hand.
-- **A Claude project directory's identity is its name.** A directory moves or participates in a default prefix export only when its name encodes `<old>` or a path under it. Its owner is the recorded `cwd` whose encoding equals its name, which need not be any transcript's first `cwd`. Transcripts elsewhere that merely reference `<old>` are edited in place during a move and stay in their directory. Exact and ID-selected exports preserve each selected transcript's physical project owner.
-- **Rewrite values generically.** Every JSON string token equal to `<old>` or starting with `<old>/` is rewritten, as a key or a value, at any depth, plain or as a `file://` URI, while every other byte round-trips untouched. Each assistant release adds record kinds, so a field list would never stay complete.
+- **Rewrite sources of truth and drop derived data.** Transcripts, rollouts, and session rows are rewritten. Codex's `thread_history` projections are deleted when a rollout is rewritten. Nothing derived is maintained by hand.
+- **A Claude project directory's identity is its name.** A directory moves only when its name encodes `<old>` or a path under it. Its owner is identified by matching its name against encoded recorded paths, configuration project keys, and the explicit source path. Transcripts elsewhere that merely reference `<old>` are edited in place during a move and stay in their directory. Exports preserve each selected transcript's physical project owner.
+- **Rewrite values generically.** In rewritten files, every JSON string token equal to `<old>` or starting with `<old>/` is rewritten, as a key or a value, at any depth, plain or as a `file://` URI, while every other byte round-trips untouched. Each assistant release adds record kinds, so a field list would never stay complete.
 - **Match and record one spelling each.** `<old>` matches as an exact, case-sensitive string prefix, and each rewritten value takes the spelling the working directory reports at the destination.
 - **Derive destinations from where files land.** An import sets `rollout_path` and similar fields to the path it writes the file to on the target, without mapping the source host's roots.
 
@@ -17,9 +17,9 @@ A backup makes a mistake restorable. An applied run copies everything it edits o
 
 ## Session selection
 
-Default exports select paths equal to the argument or under it. Claude preserves its directory-based prefix export, carrying the whole owning directory and its session dependencies. `--exact` selects sessions whose recorded cwd equals the path, while `--session-ids` selects the given IDs under the path. The options are mutually exclusive, and retirement requires one of them. Session selection follows dependent descendants, even when their cwd differs, without adding ancestors or siblings.
+Default exports select paths equal to the argument or under it. `--exact` selects sessions whose recorded cwd equals the path, while `--session-ids` selects the given IDs under the path. The options are mutually exclusive, and retirement requires one of them. Session selection follows dependent descendants, even when their cwd differs, without adding ancestors or siblings.
 
-Each store normalizes its session identities, recorded cwds, parent relationships, physical files, and project ownership before selection. Missing or invalid IDs never participate in the relationship graph. Physical project ownership stays separate from a visited cwd. A selected session owns its transcript and its same-stem artifact subtree. Shared project metadata is removed only after its remaining references are accounted for, using exact owners during retirement.
+Each store normalizes its session identities, recorded cwds, parent relationships, physical files, and project ownership before selection. Missing or invalid IDs never participate in the relationship graph. Physical project ownership stays separate from a visited cwd. A selected session owns its transcript and its same-stem artifact subtree. Claude retirement leaves project memory, configuration, and prompt history in place. Other shared project metadata is removed only after its remaining references are accounted for, using exact owners during retirement.
 
 ## Actions
 
@@ -85,9 +85,9 @@ Each file descriptor records its exported source in `origin_path`. This field is
 
 A bundle carries no Codex history projection, because rewriting the rollout invalidates its byte offsets.
 
-## Merges and memory staging
+## Directory merges
 
-When two Claude project directories merge, the unique transcripts from both sides are kept and `sessions-index.json` is deleted. If the destination already has a `memory/` directory, the source's memory lands in `<destination>/memory/incoming/<source-encoded-name>/` untouched, for consolidation by hand. Otherwise it moves in directly, dropping identical duplicates. The script never merges memory content itself.
+When Claude project directories merge, unique files are kept. Memory is ordinary directory content, so differing files at the same destination stop the move. Session transfers exclude Claude project memory. The script never merges memory content itself.
 
 ## Safety
 
