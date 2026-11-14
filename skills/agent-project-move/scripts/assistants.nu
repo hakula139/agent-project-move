@@ -1,11 +1,10 @@
 # ==================================================================================================
 # Agent Project Move: Assistants
 # ==================================================================================================
-# The per-assistant dispatch, the shared argument parser, and the scan, move, and prune
-# orchestration over every store.
+# Per-assistant dispatch and shared argument parsing.
 # ==================================================================================================
 
-use ./lib/paths.nu [match-any path-missing valid-path]
+use ./lib/paths.nu [valid-path]
 use ./stores/claude.nu
 use ./stores/codex.nu
 use ./stores/omp.nu
@@ -59,14 +58,6 @@ def assistant-plan-move [assistant: string, old: string, new: string]: nothing -
     "claude" => { claude plan-move $old $new }
     "codex" => { codex plan-move $old $new }
     "omp" => { omp plan-move $old $new }
-  }
-}
-
-def assistant-plan-prune [assistant: string, paths: list<string>]: nothing -> list<record> {
-  match $assistant {
-    "claude" => { claude plan-prune $paths }
-    "codex" => { codex plan-prune $paths }
-    "omp" => { omp plan-prune $paths }
   }
 }
 
@@ -125,17 +116,6 @@ export def plan-move [
 ]: nothing -> list<record> {
   $selected
   | each {|assistant| assistant-plan-move $assistant $old $new }
-  | flatten
-}
-
-export def prune-missing-paths [selected: list<string>]: nothing -> list<string> {
-  all-recorded-paths $selected | where {|path| path-missing $path }
-}
-
-export def plan-prune [selected: list<string>, paths: list<string>]: nothing -> list<record> {
-  if ($paths | is-empty) { return [] }
-  $selected
-  | each {|assistant| assistant-plan-prune $assistant $paths }
   | flatten
 }
 

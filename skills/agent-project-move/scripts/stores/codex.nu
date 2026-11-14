@@ -13,7 +13,7 @@ use ../lib/actions.nu [
   sql-action
 ]
 use ../lib/bundle.nu [bundle-table]
-use ../lib/paths.nu [match-any path-map valid-path]
+use ../lib/paths.nu [path-map valid-path]
 use ../lib/rewrite.nu [files-with-path rewrite-text]
 use ../lib/selection.nu [select-sessions]
 use ../lib/sqlite.nu [
@@ -219,7 +219,7 @@ def selected-threads [
 }
 
 # --------------------------------------------------------------------------------------------------
-# Prune
+# Retirement
 # --------------------------------------------------------------------------------------------------
 
 def delete-threads [state: string, threads: list<record>]: nothing -> list<record> {
@@ -265,16 +265,6 @@ def delete-threads [state: string, threads: list<record>]: nothing -> list<recor
   }
 
   $actions
-}
-
-export def plan-prune [paths: list<string>]: nothing -> list<record> {
-  let state = (state-db)
-  if $state == null { return [] }
-  let threads = (
-    sqlite-rows $state "SELECT * FROM threads"
-    | where {|row| match-any $paths $row.cwd }
-  )
-  delete-threads $state $threads
 }
 
 export def plan-retire [

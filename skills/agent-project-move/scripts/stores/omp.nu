@@ -16,7 +16,6 @@ use ../lib/actions.nu [
 use ../lib/bundle.nu [bundle-table]
 use ../lib/paths.nu [
   files-under
-  match-any
   normalize-path
   outermost-paths
   path-map
@@ -438,61 +437,12 @@ def session-records []: nothing -> list<record> {
 }
 
 # --------------------------------------------------------------------------------------------------
-# Prune
+# Retirement
 # --------------------------------------------------------------------------------------------------
-
-def directory-prune-actions [
-  paths: list<string>
-  live_paths: list<string>
-]: nothing -> list<record> {
-  mut actions = []
-  for path in ($paths | uniq) {
-    for spec in [
-      {
-        kind: "sessions"
-        directory: (session-root | path join (session-encode-here $path))
-      }
-      {
-        kind: "archives"
-        directory: (archive-root | path join (session-encode-here $path))
-      }
-      {
-        kind: "memories"
-        directory: (memory-root | path join (memory-encode $path))
-      }
-    ] {
-      let directory = $spec.directory
-      if not ($directory | path exists) { continue }
-
-      if $spec.kind == "memories" {
-        let collisions = (
-          $live_paths
-          | where {|live| (memory-encode $live) == ($directory | path basename) }
-        )
-
-        if ($collisions | is-not-empty) {
-          print $"Skipping ($directory): a live path encodes to the same name"
-          continue
-        }
-
-      } else {
-        let cwds = (session-cwds [$directory] | uniq)
-        if ($cwds | is-not-empty) and (not ($cwds | all {|cwd| match-any $paths $cwd })) {
-          print $"Skipping ($directory): holds a session outside the pruned paths"
-          continue
-        }
-      }
-
-      $actions = ($actions | append (action "omp" $spec.kind "delete" $directory "project state"))
-    }
-  }
-  $actions
-}
 
 def history-deletions [
   db: string
   ids: list<string>
-  --metadata-paths: list<string> = []
 ]: nothing -> list<record> {
   if not ($db | path exists) { return [] }
   let sessions = if ($ids | is-empty) {
@@ -501,15 +451,8 @@ def history-deletions [
     $"session_id IN \((sql-list $ids)\)"
   }
 
-  let metadata = if ($metadata_paths | is-empty) {
-    "0"
-  } else {
-    $"session_id IS NULL AND cwd IN \((sql-list $metadata_paths)\)"
-  }
-
-  let condition = $"\(($sessions)\) OR \(($metadata)\)"
-  let history = $"history WHERE ($condition)"
-  let recaps = $"session_recaps WHERE \(($condition)\)"
+  let history = $"history WHERE ($sessions)"
+  let recaps = $"session_recaps WHERE \(($sessions)\)"
   let counts = (
     sqlite-rows $db $"SELECT \(SELECT count\(*\) FROM ($history)\) AS history, \(SELECT count\(*\) FROM ($recaps)\) AS recaps, \(SELECT count\(*\) FROM session_titles WHERE ($sessions)\) AS titles"
     | get 0
@@ -529,12 +472,12 @@ def history-deletions [
   }
 
   if ($counts.recaps | into int) > 0 {
-    $statements = ($statements | append $"DELETE FROM session_recaps WHERE \(($condition)\)")
+    $statements = ($statements | append $"DELETE FROM session_recaps WHERE \(($sessions)\)")
   }
 
   if ($counts.history | into int) > 0 {
     $statements = (
-      $statements | append $"DELETE FROM history WHERE \(($condition)\)"
+      $statements | append $"DELETE FROM history WHERE \(($sessions)\)"
     )
     $statements = ($statements | append "INSERT INTO history_fts(history_fts) VALUES('rebuild')")
   }
@@ -580,26 +523,6 @@ def agent-deletions [db: string, ids: list<string>, paths: list<string>]: nothin
     $statements = ($statements | append $"DELETE FROM jobs WHERE ($global)")
   }
   [(sql-action "omp" "agent" $db $statements "delete threads and jobs" --rows-first)]
-}
-
-export def plan-prune [paths: list<string>]: nothing -> list<record> {
-  let agent = (agent-dir)
-  let recorded = (recorded-paths)
-  let live_paths = ($recorded | where {|path| (valid-path $path) and ($path | path exists) })
-  let ids = (
-    session-records
-    | where {|row| match-any $paths $row.cwd }
-    | get -o id
-    | compact
-    | uniq
-  )
-  let metadata = ($recorded | where {|path| match-any $paths $path })
-
-  (
-    (directory-prune-actions $paths $live_paths)
-    ++ (history-deletions ($agent | path join "history.db") $ids --metadata-paths $metadata)
-    ++ (agent-deletions ($agent | path join "agent.db") $ids $metadata)
-  )
 }
 
 export def plan-retire [

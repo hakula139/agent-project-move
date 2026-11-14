@@ -13,7 +13,7 @@ use ../lib/actions.nu [
   same-content
   same-directory
 ]
-use ../lib/paths.nu [files-under match-any outermost-paths path-map path-match valid-path]
+use ../lib/paths.nu [files-under outermost-paths path-map path-match valid-path]
 use ../lib/rewrite.nu [files-with-path json-value rewrite-text rg-lines]
 use ../lib/selection.nu [select-sessions]
 
@@ -174,8 +174,7 @@ def transcript-cwds []: nothing -> list<record> {
   | each {|entry| $entry | upsert cwd (json-value $entry.cwd) }
 }
 
-# The cwds that name their own project directory, deduplicated by file and cwd. A cwd a session
-# only visited owns no state, so it is neither listed nor pruned.
+# The cwds that name their own project directory, deduplicated by file and cwd.
 def identity-records [transcripts: list<record>]: nothing -> list<record> {
   let names = (
     $transcripts
@@ -543,20 +542,16 @@ def session-records []: nothing -> list<record> {
 }
 
 # --------------------------------------------------------------------------------------------------
-# Prune
+# Retirement
 # --------------------------------------------------------------------------------------------------
 
-export def prune-config [config: record, paths: list<string>, --exact]: nothing -> record {
+export def prune-config [config: record, paths: list<string>]: nothing -> record {
   let projects = ($config | get -o projects | default {})
   let removed = (
     $projects
     | transpose key value
     | where {|entry|
-      if $exact {
-        $entry.key in $paths
-      } else {
-        match-any $paths $entry.key
-      }
+      $entry.key in $paths
     }
     | get key
   )
@@ -569,11 +564,7 @@ export def prune-config [config: record, paths: list<string>, --exact]: nothing 
     | update cells {
       $in
       | where {|path|
-        if $exact {
-          $path not-in $paths
-        } else {
-          not (match-any $paths $path)
-        }
+        $path not-in $paths
       }
     }
   )
@@ -590,39 +581,6 @@ export def prune-config [config: record, paths: list<string>, --exact]: nothing 
   $config
   | upsert projects $updated_projects
   | upsert githubRepoPaths $updated_repos
-}
-
-def project-path [line: string]: nothing -> any {
-  let found = (
-    $line
-    | parse --regex '"project":"(?<project>[^"]*)"'
-    | get -o 0
-  )
-
-  if $found == null {
-    null
-  } else {
-    json-value $found.project
-  }
-}
-
-def prune-history [content: string, paths: list<string>]: nothing -> string {
-  let trailing = ($content | str ends-with "\n")
-  let lines = (
-    $content
-    | lines
-    | where {|line|
-      let project = (project-path $line)
-      ($project == null) or (not (match-any $paths $project))
-    }
-  )
-
-  let body = ($lines | str join "\n")
-  if $trailing {
-    $body + "\n"
-  } else {
-    $body
-  }
 }
 
 def session-deletions [records: list<record>, directories: list<string>]: nothing -> list<record> {
@@ -657,70 +615,6 @@ def session-deletions [records: list<record>, directories: list<string>]: nothin
   $directories ++ $files ++ $subtrees ++ $indexes ++ $history
   | outermost-paths $in
   | each {|path| action "claude" "sessions" "delete" $path "session state" }
-}
-
-export def plan-prune [paths: list<string>]: nothing -> list<record> {
-  mut directories = []
-  let transcripts = (identity-records (transcript-cwds))
-  let known = (recorded-from $transcripts)
-  let live_paths = ($known | where {|path| $path | path exists })
-  let missing_names = (
-    $paths
-    | each {|path|
-      ($known | where {|known_path| path-match $path $known_path })
-      | append $path
-      | each {|known_path| encode-path $known_path }
-    }
-    | flatten
-    | uniq
-  )
-
-  for dir in (project-dirs) {
-    let name = ($dir | path basename)
-    if $name not-in $missing_names { continue }
-    let cwds = (
-      $transcripts
-      | where {|record| ($record.file | path dirname) == $dir }
-      | get cwd
-      | uniq
-    )
-    if ($cwds | is-not-empty) and (not ($cwds | all {|cwd| match-any $paths $cwd })) {
-      print $"Skipping ($dir): records a path outside the pruned paths"
-      continue
-    }
-    let live = ($live_paths | any {|path| (encode-path $path) == $name })
-    if $live {
-      print $"Skipping ($dir): a live path encodes to the same name"
-      continue
-    }
-    $directories = ($directories | append $dir)
-  }
-
-  let records = (session-records | where {|row| $row.directory in $directories })
-  mut actions = (session-deletions $records $directories)
-
-  let config = (global-config)
-  let config_match = (config-paths | any {|path| match-any $paths $path })
-  if ($config | path exists) and $config_match {
-    $actions = ($actions | append (edit-action "claude" "global-config" $config {|content|
-      $content
-      | from json
-      | prune-config $in $paths
-      | to json
-    } "remove projects and githubRepoPaths"))
-  }
-
-  let history = (root | path join "history.jsonl")
-  let history_match = (
-    history-records
-    | any {|record| match-any $paths ($record | get -o project) }
-  )
-  if ($history | path exists) and $history_match {
-    $actions = ($actions | append (edit-action "claude" "history" $history {|content|
-      prune-history $content $paths
-    } "remove project entries"))
-  }
-  $actions
 }
 
 export def plan-retire [
@@ -796,7 +690,7 @@ export def plan-retire [
     $actions = ($actions | append (edit-action "claude" "global-config" $config {|content|
       $content
       | from json
-      | prune-config $in $unused --exact
+      | prune-config $in $unused
       | to json
     } "remove unreferenced projects"))
   }

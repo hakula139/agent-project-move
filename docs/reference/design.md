@@ -1,6 +1,6 @@
 # Design
 
-`agent-project-move` treats an assistant store as a set of records keyed by absolute paths. A move rewrites those keys in place, a prune deletes the records of paths that no longer exist, a retirement removes selected session copies, and a transfer copies them to another host. This page explains their invariants and the shape every action takes.
+`agent-project-move` treats an assistant store as a set of records keyed by absolute paths. A move rewrites those keys in place, a retirement removes selected session copies, and a transfer copies them to another host. This page explains their invariants and the shape every action takes.
 
 ## Invariants
 
@@ -12,15 +12,14 @@ The final state after a `move <old> <new>` is that structured path fields in mov
 - **Rewrite values generically.** Every JSON string token equal to `<old>` or starting with `<old>/` is rewritten, as a key or a value, at any depth, plain or as a `file://` URI, while every other byte round-trips untouched. Each assistant release adds record kinds, so a field list would never stay complete.
 - **Match and record one spelling each.** `<old>` matches as an exact, case-sensitive string prefix, and each rewritten value takes the spelling the working directory reports at the destination.
 - **Derive destinations from where files land.** An import sets `rollout_path` and similar fields to the path it writes the file to on the target, without mapping the source host's roots.
-- **Missing means gone.** A path under a mount root (`/Volumes/<name>`, `/mnt/<name>`, `/media/<user>/<name>`, `/run/media/<user>/<name>`) counts as missing only when that root is mounted. A missing subpath or worktree of a repository that still exists is a move target, because its sessions belong to the repository's history.
 
-A backup makes a mistake restorable. An applied run copies everything it edits or deletes, backs up every database, and writes a manifest of every action in order. The mutation commands `move`, `import`, `prune`, and `retire` accept `--no-backup` to skip this recovery material explicitly. They all pass the choice to the shared executor.
+A backup makes a mistake restorable. An applied run copies everything it edits or deletes, backs up every database, and writes a manifest of every action in order. The mutation commands `move`, `import`, and `retire` accept `--no-backup` to skip this recovery material explicitly. They all pass the choice to the shared executor.
 
 ## Session selection
 
 Default exports select paths equal to the argument or under it. Claude preserves its directory-based prefix export, carrying the whole owning directory and its session dependencies. `--exact` selects sessions whose recorded cwd equals the path, while `--session-ids` selects the given IDs under the path. The options are mutually exclusive, and retirement requires one of them. Session selection follows dependent descendants, even when their cwd differs, without adding ancestors or siblings.
 
-Each store normalizes its session identities, recorded cwds, parent relationships, physical files, and project ownership before selection. Missing or invalid IDs never participate in the relationship graph. Physical project ownership stays separate from a visited cwd. A selected session owns its transcript and its same-stem artifact subtree. Shared project metadata is removed only after its remaining references are accounted for, using exact owners during retirement. Prune retains its missing-path semantics and shares session deletion helpers with retirement.
+Each store normalizes its session identities, recorded cwds, parent relationships, physical files, and project ownership before selection. Missing or invalid IDs never participate in the relationship graph. Physical project ownership stays separate from a visited cwd. A selected session owns its transcript and its same-stem artifact subtree. Shared project metadata is removed only after its remaining references are accounted for, using exact owners during retirement.
 
 ## Actions
 
@@ -32,7 +31,7 @@ Each store returns plain records, and none of them writes. An action is `{assist
 | `rmdir`   |                                          | Removes a directory a merge emptied, aborting when anything else remains                                                                        |
 | `edit`    | `transform`                              | Reads the current file at apply time, transforms it, and replaces it atomically, keeping its mtime                                              |
 | `copy`    | `to`, optional `transform`, `compressed` | Copies a bundle file or atomically writes its transformed content, decoding and re-encoding zstd when requested, preserving mode and timestamps |
-| `delete`  |                                          | Removes a file or directory that a prune or a listed discard owns                                                                               |
+| `delete`  |                                          | Removes selected session state or a listed discard                                                                                              |
 | `sql`     | `db`, `statements`                       | One `sqlite3 -bail` run per action, each in its own transaction                                                                                 |
 
 `edit` runs at apply time, so a change another process made between plan and apply survives. Binary files are never edited.
@@ -51,10 +50,10 @@ A row written between plan and apply is therefore covered too. A key collision u
 A dry run prints the order below and reports whether a backup will be created. `--apply` writes a backup unless `--no-backup` is given, runs the derived statements, then every remaining action in this order:
 
 1. **Derived statements**, which delete data that a source rewrite invalidates. They run first because a source write ends their selection, so an interrupted apply still converges on the rerun.
-2. **Per assistant, the row actions that must precede files**, such as a prune's row deletes, so a failure leaves that assistant's files or rows for the rerun.
+2. **Per assistant, the row actions that must precede files**, such as retirement's row deletes, so a failure leaves that assistant's files or rows for the rerun.
 3. **Per assistant, file actions**, then the rest of that assistant's statements.
 
-A prune's SQL actions turn on `PRAGMA foreign_keys` so the schema's cascades delete child rows. Planning opens every database read-only.
+Codex retirement turns on `PRAGMA foreign_keys` so the schema's cascades delete child rows. Planning opens every database read-only.
 
 ## Backup layout
 

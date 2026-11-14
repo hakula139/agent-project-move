@@ -53,7 +53,7 @@
             zstd
           ];
           meta = {
-            description = "Move, prune, and transfer the project state stored by coding agents";
+            description = "Move, transfer, and retire coding agent sessions";
             homepage = "https://github.com/hakula139/agent-project-move";
             license = lib.licenses.mit;
             platforms = lib.platforms.all;

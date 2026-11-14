@@ -1,6 +1,6 @@
 # AGENTS.md: agent-project-move
 
-`agent-project-move` is a Nushell command and an agent skill that repair the project paths recorded by Claude Code, Codex, and OMP after a directory moves, transfer sessions between hosts, and prune state whose directory is gone.
+`agent-project-move` is a Nushell command and an agent skill that repair the project paths recorded by Claude Code, Codex, and OMP after a directory moves, transfer sessions between hosts, and retire selected session copies.
 
 ## Read before you edit
 
@@ -8,7 +8,7 @@
 | ---------------------------------------------- | --------------------------------------------------------------------------- |
 | CI or a workflow                               | [devkit's CI guide](https://github.com/hakula139/devkit/blob/v3/docs/ci.md) |
 | A store module or an assistant's on-disk state | [Assistant stores](docs/reference/stores.md)                                |
-| Move, transfer, prune, or backup behavior      | [Design](docs/reference/design.md)                                          |
+| Move, transfer, retirement, or backup behavior | [Design](docs/reference/design.md)                                          |
 | A release                                      | [RELEASING.md](RELEASING.md)                                                |
 
 ## Code

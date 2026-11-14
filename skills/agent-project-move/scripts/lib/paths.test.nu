@@ -8,41 +8,6 @@ use std/assert
 
 use ./paths.nu *
 
-def "test absent mount roots keep paths present" [] {
-  let name = (random uuid)
-  let cases = [
-    {
-      name: "an absent volume"
-      path: $"/Volumes/($name)/work/app"
-      missing: false
-    }
-    {
-      name: "an absent mount"
-      path: $"/mnt/($name)/app"
-      missing: false
-    }
-    {
-      name: "an absent media mount"
-      path: $"/media/($name)/drive/app"
-      missing: false
-    }
-    {
-      name: "an absent run-media mount"
-      path: $"/run/media/($name)/drive/app"
-      missing: false
-    }
-    {
-      name: "an absent directory"
-      path: $"/home/($name)/app"
-      missing: true
-    }
-  ]
-
-  for case in $cases {
-    assert equal (path-missing $case.path) $case.missing $case.name
-  }
-}
-
 def "test a destination must be distinct and outside the source" [] {
   let cases = [
     {

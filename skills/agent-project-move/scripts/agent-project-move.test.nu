@@ -361,7 +361,7 @@ def "test live Codex retirement preserves peers and removes dependent rows with 
 }
 
 def "test Codex mutations honor backup choice and preserve unrelated imports" [] {
-  for operation in ["move" "import" "prune"] {
+  for operation in ["move" "import"] {
     for backup in [true false] {
       let root = (mktemp -d)
       let target = ($root | path join "target")
@@ -411,10 +411,8 @@ def "test Codex mutations honor backup choice and preserve unrelated imports" []
       let label = $"($operation), backup=($backup)"
       let args = if $operation == "move" {
         ["move" $project $moved]
-      } else if $operation == "import" {
-        ["import" $directory]
       } else {
-        ["prune"]
+        ["import" $directory]
       }
 
       apply-codex $target $fixture.db $args $backup | ignore
@@ -453,15 +451,10 @@ def "test Codex mutations honor backup choice and preserve unrelated imports" []
           assert equal (open --raw $retained) $retained_body $label
           assert ($fixture.compressed | path exists) $label
           assert (($target | path join "codex/sessions/child.jsonl") | path exists) $label
-        } else if $operation == "move" {
+        } else {
           assert equal (sqlite-rows $fixture.db "SELECT cwd FROM threads WHERE id = 'parent'") [
             {cwd: $moved}
           ] $label
-        } else {
-          assert equal (
-            sqlite-rows $fixture.db "SELECT id FROM threads WHERE id = 'parent'"
-          ) [] $label
-          assert not ($fixture.compressed | path exists) $label
         }
       }
     }
