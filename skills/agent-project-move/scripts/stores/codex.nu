@@ -334,17 +334,17 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
 
   mut actions = (
     column-actions "codex" [
-    {
-      db: $state
-      table: "threads"
-      column: "cwd"
-    }
-    {
-      db: $state
-      table: "threads"
-      column: "sandbox_policy"
-      json: true
-    }
+      {
+        db: $state
+        table: "threads"
+        column: "cwd"
+      }
+      {
+        db: $state
+        table: "threads"
+        column: "sandbox_policy"
+        json: true
+      }
     ] $old $new
   )
 
