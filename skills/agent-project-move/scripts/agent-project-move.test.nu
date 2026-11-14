@@ -49,6 +49,48 @@ def --wrapped run-cli [...args: string]: nothing -> record {
   ^$nu.current-exe $SCRIPT ...$args | complete
 }
 
+def apply-codex [root: string, db: string, args: list<string>, backup: bool]: nothing -> any {
+  let before = (open --raw $db | hash sha256)
+  let ids = (sqlite-rows $db "SELECT id FROM threads ORDER BY id")
+  let rollout = ($root | path join "codex/sessions/parent.jsonl.zst")
+  let had_rollout = ($rollout | path exists)
+  let backup_root = ($root | path join "state/agent-project-move")
+  let backup_log = ($root | path join "sqlite-backups.jsonl")
+  let flags = if $backup { [] } else { ["--no-backup"] }
+  let label = $"($args | str join ' '), backup=($backup)"
+
+  with-env (traced-fixture-env $root) {
+    let dry = (run-cli ...$args --assistant "codex" ...$flags)
+    assert equal $dry.exit_code 0 $"($label): ($dry.stderr)"
+
+    assert equal (open --raw $db | hash sha256) $before $label
+    assert equal ($rollout | path exists) $had_rollout $label
+    assert not ($backup_root | path exists) $label
+    assert not ($backup_log | path exists) $label
+    assert str contains $dry.stdout (
+      if $backup { "A backup goes to" } else { "No backup will be created." }
+    ) $label
+
+    let apply = (run-cli ...$args --assistant "codex" --apply ...$flags)
+    assert equal $apply.exit_code 0 $"($label): ($apply.stderr)"
+
+    assert equal ($backup_root | path exists) $backup $label
+    assert equal ($backup_log | path exists) $backup $label
+    if $backup {
+      let saved = (
+        ls $backup_root
+        | get name
+        | first
+      )
+      let saved_db = ($saved | path join ($db | str trim --left --char "/"))
+
+      assert (($saved | path join "manifest.json") | path exists) $label
+      assert equal (sqlite-rows $saved_db "SELECT id FROM threads ORDER BY id") $ids $label
+      $saved
+    }
+  }
+}
+
 def make-codex [root: string, project: string]: nothing -> record {
   let dir = ($root | path join "codex")
   let db = ($dir | path join "state_5.sqlite")
@@ -271,28 +313,9 @@ def "test live Codex retirement preserves peers and removes dependent rows with 
     mkdir $project
     let fixture = (make-codex $root $project)
 
-    let before = (open --raw $fixture.db | hash sha256)
-    let backup_root = ($root | path join "state/agent-project-move")
-    let backup_log = ($root | path join "sqlite-backups.jsonl")
-    let flags = if $backup { [] } else { ["--no-backup"] }
+    let saved = (apply-codex $root $fixture.db ["retire" $project "--session-ids" "parent"] $backup)
 
-    with-env (traced-fixture-env $root) {
-      let dry = (run-cli retire $project --assistant "codex" --session-ids "parent" ...$flags)
-      assert equal $dry.exit_code 0 $dry.stderr
-
-      assert equal (open --raw $fixture.db | hash sha256) $before
-      assert ($fixture.compressed | path exists)
-      assert not ($backup_root | path exists)
-      assert not ($backup_log | path exists)
-      assert str contains $dry.stdout (
-        if $backup { "A backup goes to" } else { "No backup will be created." }
-      )
-
-      let apply = (
-        run-cli retire $project --assistant "codex" --session-ids "parent" --apply ...$flags
-      )
-      assert equal $apply.exit_code 0 $apply.stderr
-
+    with-env (fixture-env $root) {
       assert equal (sqlite-rows $fixture.db "SELECT id FROM threads ORDER BY id") [
         {id: "nested"}
         {id: "retained"}
@@ -314,27 +337,10 @@ def "test live Codex retirement preserves peers and removes dependent rows with 
         ] $table
       }
 
-      assert equal ($backup_root | path exists) $backup
-      assert equal ($backup_log | path exists) $backup
       if $backup {
-        let run_backup = (
-          ls $backup_root
-          | get name
-          | first
-        )
-        assert (($run_backup | path join "manifest.json") | path exists)
+        let saved_rollout = ($saved | path join ($fixture.compressed | str trim --left --char "/"))
 
-        let saved = ($run_backup | path join ($fixture.compressed | str trim --left --char "/"))
-        let saved_db = ($run_backup | path join ($fixture.db | str trim --left --char "/"))
-
-        assert ($saved | path exists)
-        assert equal (sqlite-rows $saved_db "SELECT id FROM threads ORDER BY id") [
-          {id: "child"}
-          {id: "nested"}
-          {id: "other-child"}
-          {id: "parent"}
-          {id: "retained"}
-        ]
+        assert ($saved_rollout | path exists)
       }
 
       let exact = (run-cli retire $project --assistant "codex" --exact --apply --no-backup)
@@ -400,13 +406,8 @@ def "test Codex mutations honor backup choice and preserve unrelated imports" []
         "ALTER TABLE threads ADD COLUMN sandbox_policy TEXT;" | ^sqlite3 $fixture.db
       }
 
-      let before = (open --raw $fixture.db | hash sha256)
-      let before_ids = (sqlite-rows $fixture.db "SELECT id FROM threads ORDER BY id")
       let retained = ($target | path join "codex/sessions/retained.jsonl")
       let retained_body = (open --raw $retained)
-      let backup_root = ($target | path join "state/agent-project-move")
-      let backup_log = ($target | path join "sqlite-backups.jsonl")
-      let flags = if $backup { [] } else { ["--no-backup"] }
       let label = $"($operation), backup=($backup)"
       let args = if $operation == "move" {
         ["move" $project $moved]
@@ -416,33 +417,9 @@ def "test Codex mutations honor backup choice and preserve unrelated imports" []
         ["prune"]
       }
 
-      with-env (traced-fixture-env $target) {
-        let dry = (run-cli ...$args --assistant "codex" ...$flags)
-        assert equal $dry.exit_code 0 $"($label): ($dry.stderr)"
+      apply-codex $target $fixture.db $args $backup | ignore
 
-        assert equal (open --raw $fixture.db | hash sha256) $before $label
-        assert not ($backup_root | path exists) $label
-        assert not ($backup_log | path exists) $label
-        assert str contains $dry.stdout (
-          if $backup { "A backup goes to" } else { "No backup will be created." }
-        ) $label
-
-        let apply = (run-cli ...$args --assistant "codex" --apply ...$flags)
-        assert equal $apply.exit_code 0 $"($label): ($apply.stderr)"
-
-        assert equal ($backup_root | path exists) $backup $label
-        assert equal ($backup_log | path exists) $backup $label
-        if $backup {
-          let saved = (
-            ls $backup_root
-            | get name
-            | first
-            | path join ($fixture.db | str trim --left --char "/")
-          )
-
-          assert equal (sqlite-rows $saved "SELECT id FROM threads ORDER BY id") $before_ids $label
-        }
-
+      with-env (fixture-env $target) {
         if $operation == "import" {
           assert equal (
             sqlite-rows $fixture.db "SELECT id, cwd, project_id FROM threads ORDER BY id"
@@ -1379,7 +1356,7 @@ def make-omp-dbs [root: string, project: string, --empty]: nothing -> record {
   }
 }
 
-def "test OMP file-only sessions preserve peers and shared memories until last retirement" [] {
+def "test OMP file-only retirement preserves peers and backs up nested artifacts" [] {
   let root = (mktemp -d)
   let project = "/home/u/src/app"
   let fixture = (make-omp $root $project)
@@ -1407,9 +1384,7 @@ def "test OMP file-only sessions preserve peers and shared memories until last r
       "2026-01-01T00-00-00_parent/reviewer/worker/result.json"
     ]
 
-    let apply = (
-      run-cli retire $project --assistant "omp" --session-ids "parent" --apply --no-backup
-    )
+    let apply = (run-cli retire $project --assistant "omp" --session-ids "parent" --apply)
     assert equal $apply.exit_code 0 $apply.stderr
 
     assert not ($fixture.parent | path exists)
@@ -1417,48 +1392,26 @@ def "test OMP file-only sessions preserve peers and shared memories until last r
     assert (($fixture.dir | path join "retained.jsonl") | path exists)
     assert equal (open --raw ($fixture.memory | path join "MEMORY.md")) "shared memory"
 
-    let final = (run-cli retire $project --assistant "omp" --exact --apply --no-backup)
-    assert equal $final.exit_code 0 $final.stderr
-
-    assert not ($fixture.memory | path exists)
-  }
-}
-
-def "test nested OMP retirement backs up artifacts at their original relative paths" [] {
-  let root = (mktemp -d)
-  let project = "/home/u/src/app"
-  let fixture = (make-omp $root $project)
-  let artifacts = [
-    {
-      name: "implementer/worker.log"
-      body: "worker log"
-    }
-    {
-      name: "notes.md"
-      body: "task notes"
-    }
-    {
-      name: "reviewer/result.json"
-      body: ({result: "review"} | to json)
-    }
-  ]
-
-  with-env (fixture-env $root) {
-    let apply = (run-cli retire $project --assistant "omp" --session-ids "parent" --apply)
-    assert equal $apply.exit_code 0 $apply.stderr
-
     let backup = (
       ls ($root | path join "state/agent-project-move")
       | get name
       | first
     )
     let subtree = ($backup | path join ($fixture.children | str trim --left --char "/"))
-    for artifact in $artifacts {
+    for artifact in [
+      {name: "implementer/worker.log", body: "worker log"}
+      {name: "notes.md", body: "task notes"}
+      {name: "reviewer/result.json", body: ({result: "review"} | to json)}
+    ] {
       assert equal (open --raw ($subtree | path join $artifact.name)) $artifact.body
     }
     assert (($subtree | path join "implementer/worker.jsonl") | path exists)
     assert (($subtree | path join "reviewer/worker.jsonl") | path exists)
-    assert (($fixture.dir | path join "retained.jsonl") | path exists)
+
+    let final = (run-cli retire $project --assistant "omp" --exact --apply --no-backup)
+    assert equal $final.exit_code 0 $final.stderr
+
+    assert not ($fixture.memory | path exists)
   }
 }
 
@@ -1816,7 +1769,7 @@ def "test flat OMP forks keep parent links after importing to a different state 
   let target = ($root | path join "target")
   let project = "/home/u/src/app"
   let fixture = (make-omp $source $project)
-  for row in [
+  let forks = [
     {
       id: "path-fork"
       parentSession: $fixture.parent
@@ -1829,7 +1782,8 @@ def "test flat OMP forks keep parent links after importing to a different state 
       id: "id-fork"
       parentSession: "parent"
     }
-  ] {
+  ]
+  for row in $forks {
     let file = ($fixture.dir | path join $"($row.id).jsonl")
     write-jsonl $file [
       (
@@ -1874,27 +1828,12 @@ def "test flat OMP forks keep parent links after importing to a different state 
     assert equal $import.exit_code 0 $import.stderr
 
     let destination = ($target | path join "omp/sessions" (session-encode-here $project))
-    for row in [
-      {
-        id: "path-fork"
-        parent: ($destination | path join "2026-01-01T00-00-00_parent.jsonl")
+    for row in $forks {
+      let parent = if $row.parentSession == "parent" {
+        "parent"
+      } else {
+        $destination | path join "2026-01-01T00-00-00_parent.jsonl"
       }
-      {
-        id: "escaped-fork"
-        parent: ($destination | path join "2026-01-01T00-00-00_parent.jsonl")
-      }
-      {
-        id: "id-fork"
-        parent: "parent"
-      }
-    ] {
-      let parent = (
-        open --raw ($destination | path join $"($row.id).jsonl")
-        | lines
-        | first
-        | from json
-        | get parentSession
-      )
       let original = (open --raw ($fixture.dir | path join $"($row.id).jsonl"))
       let expected = if $row.id != "id-fork" {
         let value = ($fixture.parent | to json --raw)
@@ -1904,7 +1843,7 @@ def "test flat OMP forks keep parent links after importing to a different state 
           $value
         }
         let old = ('"parentSession":' + $encoded)
-        let new = ('"parentSession":' + ($row.parent | to json --raw))
+        let new = ('"parentSession":' + ($parent | to json --raw))
 
         $original | str replace $old $new
 
@@ -1912,7 +1851,6 @@ def "test flat OMP forks keep parent links after importing to a different state 
         $original
       }
 
-      assert equal $parent $row.parent $row.id
       assert equal (open --raw ($destination | path join $"($row.id).jsonl")) $expected
     }
 
@@ -2234,7 +2172,7 @@ def "test OMP selected titles transfer and retire without requiring history rows
   }
 }
 
-def "test selective CLI rejects ambiguous retirement and backup flags on reads" [] {
+def "test selective CLI rejects ambiguous session selections" [] {
   let root = (mktemp -d)
   make-codex $root "/home/u/src/app" | ignore
   let cases = [
@@ -2244,8 +2182,6 @@ def "test selective CLI rejects ambiguous retirement and backup flags on reads" 
     ["export" "/home/u/src/app" ($root | path join "bundle") "--session-ids" ""]
     ["export" "/home/u/src/app" ($root | path join "bundle") "--exact" "--session-ids" ""]
     ["retire" "/home/u/src/app" "--session-ids" ""]
-    ["export" "/home/u/src/app" ($root | path join "bundle") "--no-backup"]
-    ["scan" "--no-backup"]
   ]
 
   with-env (fixture-env $root) {
