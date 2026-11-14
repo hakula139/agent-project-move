@@ -14,7 +14,7 @@ The final state after a `move <old> <new>` is that no structured path field refe
 - **Derive destinations from where files land.** An import sets `rollout_path` and similar fields to the path it writes the file to on the target, without mapping the source host's roots.
 - **Missing means gone.** A path under a mount root (`/Volumes/<name>`, `/mnt/<name>`, `/media/<user>/<name>`, `/run/media/<user>/<name>`) counts as missing only when that root is mounted. A missing subpath or worktree of a repository that still exists is a move target, because its sessions belong to the repository's history.
 
-A backup makes a mistake restorable. An applied run copies everything it edits or deletes, backs up every database, and writes a manifest of every action in order. Only an explicit `retire --no-backup` skips this recovery material.
+A backup makes a mistake restorable. An applied run copies everything it edits or deletes, backs up every database, and writes a manifest of every action in order. The mutation commands `move`, `import`, `prune`, and `retire` accept `--no-backup` to skip this recovery material explicitly. They all pass the choice to the shared executor.
 
 ## Session selection
 
@@ -48,7 +48,7 @@ A row written between plan and apply is therefore covered too. A key collision u
 
 ## Apply order
 
-A dry run prints the order below and stops. `--apply` writes a backup, runs the derived statements, then every remaining action in this order:
+A dry run prints the order below and reports whether a backup will be created. `--apply` writes a backup unless `--no-backup` is given, runs the derived statements, then every remaining action in this order:
 
 1. **Derived statements**, which delete data that a source rewrite invalidates. They run first because a source write ends their selection, so an interrupted apply still converges on the rerun.
 2. **Per assistant, the row actions that must precede files**, such as a prune's row deletes, so a failure leaves that assistant's files or rows for the rerun.
@@ -58,7 +58,7 @@ A prune's SQL actions turn on `PRAGMA foreign_keys` so the schema's cascades del
 
 ## Backup layout
 
-An applied run creates `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/` and its `<timestamp>-<pid>/` directory with mode 0700:
+An applied run with changes creates `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/` and its `<timestamp>-<pid>/` directory with mode 0700, unless `--no-backup` is given:
 
 - `manifest.json` lists every action in order, including each rename's `to`.
 - Each edited or deleted file is copied under the same absolute path, with its leading `/` removed.
@@ -93,4 +93,4 @@ When two Claude project directories merge, the unique transcripts from both side
 
 See [Safety model](../../README.md#safety-model) for the concurrency requirements.
 
-- **A file-phase failure needs the backup.** Rewritten transcripts no longer name the subpaths that selected their directories, so restore from the run's backup and rerun. An SQL-phase failure recovers from a plain rerun.
+- **A file-phase failure needs a recovery copy.** Rewritten transcripts no longer name the subpaths that selected their directories, so restore from the run's backup and rerun. With `--no-backup`, that repair requires an independent copy. An SQL-phase failure recovers from a plain rerun.

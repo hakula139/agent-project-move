@@ -45,8 +45,8 @@ if $nu.os-info.name == "macos" and (which brew | is-not-empty) {
 
 # Move, export, import, prune, and retire assistant state recorded for project paths.
 #
-# Every plan is a dry run. Applied runs create a backup under
-# `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/`, except `retire --no-backup`.
+# Every plan is a dry run. Applied changes create a backup under
+# `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/`, unless `--no-backup` is given.
 def main [...rest: string] {
   if ($rest | is-empty) {
     help main
@@ -103,6 +103,7 @@ def "main move" [
   new: string # New project path
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to move
   --apply # Write the planned changes
+  --no-backup # Skip creating recovery backups
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
   # `<old>` keeps the given spelling, because matching is an exact case-sensitive string test.
@@ -121,7 +122,7 @@ def "main move" [
       print $"Nothing is recorded under ($old)"
     }
   }
-  apply-all $actions --apply=$apply
+  apply-all $actions --apply=$apply --no-backup=$no_backup
 }
 
 # Delete state recorded for missing project paths. Prints the plan, and writes only with --apply.
@@ -133,6 +134,7 @@ def "main prune" [
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to prune
   --keep (-k): string = "" # Comma-separated path prefixes to leave alone
   --apply # Write the planned changes
+  --no-backup # Skip creating recovery backups
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
   let keep = (parse-paths $keep)
@@ -155,7 +157,7 @@ def "main prune" [
     | print-table
   }
 
-  apply-all (plan-prune $selected $targets) --apply=$apply
+  apply-all (plan-prune $selected $targets) --apply=$apply --no-backup=$no_backup
 }
 
 def selection-ids [exact: bool, value: any]: nothing -> list<string> {
@@ -243,7 +245,7 @@ def "main retire" [
   --exact # Select exact-cwd sessions and their descendants
   --session-ids: string # Session IDs under the path, with their descendants
   --apply # Write the planned changes
-  --no-backup # Permanently remove selected copies without creating a backup
+  --no-backup # Skip creating recovery backups
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
   let old = (normalize-path $path)
@@ -265,6 +267,7 @@ def "main import" [
   dir: string # Directory written by export
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to import
   --apply # Write the planned changes
+  --no-backup # Skip creating recovery backups
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
   let bundles = (
@@ -300,5 +303,5 @@ def "main import" [
     | get actions
     | flatten
   )
-  apply-all $actions --apply=$apply
+  apply-all $actions --apply=$apply --no-backup=$no_backup
 }

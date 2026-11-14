@@ -10,7 +10,7 @@ description: >-
 
 # Agent project move
 
-`agent-project-move` rewrites the project paths stored by the three assistants. Planning is read-only and prints every action, while `--apply` backs state up under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, then rewrites state in place. Only the explicit `retire --no-backup` option skips that backup.
+`agent-project-move` rewrites the project paths stored by the three assistants. Planning is read-only and prints every action, while `--apply` backs state up under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/`, then rewrites state in place. `move`, `import`, `prune`, and `retire` accept `--no-backup` to skip that backup explicitly. Use it only with authorization to proceed without recovery copies. The dry run reports whether a backup will be created, and [Restore](#restore) requires a backup.
 
 ## Requirements
 
@@ -44,7 +44,7 @@ Moves, prunes, and retirements rewrite state in place. Close sessions working in
 
 Your own session counts. When your working directory is under `<old>` or `<new>`, or the plan edits a shared document such as `~/.claude.json`, give the user the exact `--apply` command to run in a terminal after they exit the assistant.
 
-If the run aborts, read the error and close the session working in that path. A run that failed in its SQL phase, usually because a database stayed busy, recovers from a plain rerun: it re-plans from the current state, so completed actions are skipped. A failure while writing files leaves rewritten transcripts that no longer name the subpaths that selected their directories, so restore from the run's backup first and then rerun.
+If the run aborts, read the error and close the session working in that path. A run that failed in its SQL phase, usually because a database stayed busy, recovers from a plain rerun: it re-plans from the current state, so completed actions are skipped. A failure while writing files leaves rewritten transcripts that no longer name the subpaths that selected their directories, so restore from the run's backup first and then rerun. A run with `--no-backup` requires an independent recovery copy for that repair.
 
 ## Project merges
 
