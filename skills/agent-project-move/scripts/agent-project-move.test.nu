@@ -881,10 +881,13 @@ def "test flat OMP forks keep parent links after importing to a different state 
     {id: "path-fork", parentSession: $fixture.parent}
     {id: "id-fork", parentSession: "parent"}
   ] {
-    write-jsonl ($fixture.dir | path join $"($row.id).jsonl") [
+    let file = ($fixture.dir | path join $"($row.id).jsonl")
+    write-jsonl $file [
       ($row | merge {type: "session", cwd: $project})
-      {type: "message", message: {role: "user", content: $row.id}}
+      {type: "message", message: {role: "user", content: $fixture.parent}}
     ]
+    let content = (open --raw $file)
+    "  " + $content + "\n\n" | save --force $file
   }
   let directory = ($root | path join "bundle")
 
@@ -906,6 +909,13 @@ def "test flat OMP forks keep parent links after importing to a different state 
         | lines | first | from json | get parentSession
       )
       assert equal $parent $row.parent $row.id
+      let original = (open --raw ($fixture.dir | path join $"($row.id).jsonl"))
+      let expected = if $row.id == "path-fork" {
+        let old = ('"parentSession":' + ($fixture.parent | to json --raw))
+        let new = ('"parentSession":' + ($row.parent | to json --raw))
+        $original | str replace $old $new
+      } else { $original }
+      assert equal (open --raw ($destination | path join $"($row.id).jsonl")) $expected
     }
 
     let repeated = (run-cli import $directory --assistant omp --apply)
