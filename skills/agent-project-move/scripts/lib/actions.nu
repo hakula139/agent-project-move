@@ -174,7 +174,7 @@ export def same-content [left: string, right: string]: nothing -> bool {
 }
 
 # Whether two paths name one directory, including two spellings of it on a case-insensitive volume.
-export def same-directory [left: string, right: string]: nothing -> bool {
+def same-directory [left: string, right: string]: nothing -> bool {
   if $left == $right { return true }
   if not (($left | path exists) and ($right | path exists)) { return false }
 
@@ -503,6 +503,6 @@ export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> n
   let count = ($actions | length)
   print $"Applied ($count) (plural $count 'action' 'actions')."
   if $backup_dir != null {
-    print $"Run 'agent-project-move scan' to check the result, and keep ($backup_dir) until you have."
+    print $"Keep ($backup_dir) until you verify the intended result in the affected assistants."
   }
 }

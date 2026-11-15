@@ -8,16 +8,14 @@
 # ==================================================================================================
 
 use ./lib/actions.nu [apply-all]
-use ./lib/bundle.nu [read-bundle write-bundle]
+use ./lib/bundle.nu [read-bundle require-empty-directory write-bundle]
 use ./lib/output.nu [plural print-table]
 use ./lib/paths.nu [
   check-destination
   normalize-path
-  path-match
 ]
 use ./assistants.nu [
   ALL_ASSISTANTS
-  all-recorded-paths
   assistant-export-bundle
   assistant-plan-import
   parse-assistants
@@ -102,12 +100,6 @@ def "main move" [
     print $"($new) does not exist. Move the directory first so sessions can resume there."
   }
   let actions = (plan-move $selected $old $new)
-  if ($actions | is-empty) {
-    let recorded = (all-recorded-paths $selected)
-    if not ($recorded | any {|candidate| path-match $old $candidate }) {
-      print $"Nothing is recorded under ($old)"
-    }
-  }
   apply-all $actions --apply=$apply --no-backup=$no_backup
 }
 
@@ -136,7 +128,7 @@ def selection-ids [exact: bool, value: any]: nothing -> list<string> {
 }
 def "main export" [
   path: string # Project path to export, or a parent of it
-  dir: string # Directory receiving one subdirectory per assistant
+  dir: string # New or empty bundle directory, with one subdirectory per assistant
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to export
   --exact # Select exact-cwd sessions and their descendants
   --session-ids: string # Session IDs under the path, with their descendants
@@ -144,6 +136,7 @@ def "main export" [
   let selected = (parse-assistants $assistant)
   let old = (normalize-path $path)
   let ids = (selection-ids $exact $session_ids)
+  require-empty-directory $dir
 
   let bundles = ($selected | each {|assistant|
     assistant-export-bundle $assistant $old --exact=$exact --session-ids $ids
@@ -192,8 +185,9 @@ def "main export" [
 # Export OMP blobs listed as one SHA256 ID per line, without reading session state.
 def "main export-blobs" [
   ids_file: string # Plain text file containing canonical blob IDs
-  dir: string # Bundle directory
+  dir: string # New or empty bundle directory
 ]: nothing -> nothing {
+  require-empty-directory $dir
   let bundle = (omp export-blobs $ids_file)
   mkdir $dir
   write-bundle $dir $bundle

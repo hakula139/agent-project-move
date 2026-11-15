@@ -163,13 +163,6 @@ def session-records []: nothing -> list<record> {
   }
 }
 
-export def recorded-paths []: nothing -> list<string> {
-  let records = (session-records)
-  ($records | get -o cwd) ++ ($records | get -o owner)
-  | where {|path| valid-path $path }
-  | uniq
-}
-
 export def scan []: nothing -> list<record> {
   let records = (session-records)
   let paths = (
@@ -227,8 +220,12 @@ def remap-parent [content: string, new: string]: nothing -> string {
   | str join "\n"
 }
 
-def session-actions [candidates: list<string>, old: string, new: string]: nothing -> list<record> {
-  let records = (session-records)
+def session-actions [
+  records: list<record>
+  candidates: list<string>
+  old: string
+  new: string
+]: nothing -> list<record> {
   mut targets = []
   mut merges = []
 
@@ -290,9 +287,13 @@ def session-actions [candidates: list<string>, old: string, new: string]: nothin
 }
 
 export def plan-move [old: string, new: string]: nothing -> list<record> {
-  let recorded = (recorded-paths | where {|path| path-match $old $path })
+  let records = (session-records)
+  let recorded = (
+    ($records | get -o cwd) ++ ($records | get -o owner)
+    | where {|path| (valid-path $path) and (path-match $old $path) }
+  )
   let candidates = ($recorded ++ [$old] | uniq)
-  session-actions $candidates $old $new
+  session-actions $records $candidates $old $new
 }
 
 # --------------------------------------------------------------------------------------------------

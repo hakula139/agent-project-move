@@ -304,6 +304,48 @@ def "test Codex export scopes roots and carries compressed descendants" [] {
       "child" "other-child" "parent"
     ]
   }
+
+  for fault in ["null" "numeric" "missing-field" "missing-plain" "missing-compressed"] {
+    let source = ($root | path join $fault)
+    let broken = (make-codex $source $project)
+    let id = if $fault == "missing-compressed" { "parent" } else { "retained" }
+    let directory = ($source | path join "rejected")
+    if $fault == "missing-field" {
+      "ALTER TABLE threads DROP COLUMN rollout_path;" | ^sqlite3 $broken.db
+    } else if $fault == "numeric" {
+      (
+        "ALTER TABLE threads RENAME COLUMN rollout_path TO original_rollout_path; "
+        + "ALTER TABLE threads ADD COLUMN rollout_path; "
+        + "UPDATE threads SET rollout_path = original_rollout_path; "
+        + "UPDATE threads SET rollout_path = 42 WHERE id = 'retained';"
+      ) | ^sqlite3 $broken.db
+    } else if $fault == "null" {
+      "UPDATE threads SET rollout_path = NULL WHERE id = 'retained';" | ^sqlite3 $broken.db
+    } else {
+      let file = if $fault == "missing-compressed" {
+        $broken.compressed
+      } else {
+        $source | path join "codex/sessions/retained.jsonl"
+      }
+      rm $file
+    }
+
+    with-env (fixture-env $source) {
+      let rejected = (run-cli export $project $directory --assistant "codex" --session-ids $id)
+      assert not equal $rejected.exit_code 0 $fault
+
+      assert not ($directory | path exists) $fault
+      if $fault != "missing-field" {
+        let valid = ($source | path join "valid")
+        let exported = (
+          run-cli export $project $valid --assistant "codex" --session-ids "nested"
+        )
+        assert equal $exported.exit_code 0 $"($fault): ($exported.stderr)"
+
+        assert equal (bundle-ids $valid "codex" "threads") ["nested"] $fault
+      }
+    }
+  }
 }
 
 def "test live Codex retirement preserves peers and removes dependent rows with backups" [] {
@@ -1710,6 +1752,66 @@ def "test OMP scans and transfers session files without touching auxiliary state
   }
 }
 
+def "test exports require a new or empty bundle directory" [] {
+  let root = (mktemp -d)
+  let project = "/home/u/src/app"
+  let session = ($root | path join "omp/sessions" (session-encode-here $project) "one.jsonl")
+  write-jsonl $session [{type: "session", id: "one", cwd: $project}]
+  let bytes = 0x[01 02 ff]
+  let id = ($bytes | hash sha256)
+  let pool = ($root | path join "omp/blobs")
+  let ids = ($root | path join "ids.txt")
+  mkdir $pool
+  $bytes | save ($pool | path join $id)
+  $id | save $ids
+  let cases = [
+    [state entry];
+    ["new" null]
+    ["empty" null]
+    ["visible" "claude/entries.json"]
+    ["hidden" ".keep"]
+  ]
+
+  with-env (fixture-env $root) {
+    for command in ["export" "export-blobs"] {
+      for case in $cases {
+        let directory = ($root | path join $command $case.state)
+        if $case.state != "new" { mkdir $directory }
+        if $case.entry != null {
+          let entry = ($directory | path join $case.entry)
+          mkdir ($entry | path dirname)
+          "existing bundle bytes" | save $entry
+        }
+        let args = if $command == "export" {
+          ["export" $project $directory "--assistant" "omp"]
+        } else {
+          ["export-blobs" $ids $directory]
+        }
+        let label = $"($command): ($case.state)"
+
+        let exported = (run-cli ...$args)
+        if $case.entry == null {
+          assert equal $exported.exit_code 0 $"($label): ($exported.stderr)"
+
+          let expected = if $command == "export" { "one.jsonl" } else { $id }
+          let entries = (open ($directory | path join "omp/entries.json"))
+          assert equal ($entries.files | get name) [$expected] $label
+        } else {
+          assert not equal $exported.exit_code 0 $label
+
+          assert equal (
+            open --raw ($directory | path join $case.entry)
+          ) "existing bundle bytes" $label
+          assert not (($directory | path join "omp") | path exists) $label
+          assert equal (
+            ls --all $directory | get name | path basename
+          ) [($case.entry | path split | first)] $label
+        }
+      }
+    }
+  }
+}
+
 def "test bundle file origins describe source files without directing imports" [] {
   let root = (mktemp -d)
   let source = ($root | path join "source")
@@ -1792,6 +1894,17 @@ def "test bundle file origins describe source files without directing imports" [
     assert equal (open --raw ($destination | path join "recording/notes.md")) "owned notes" $mode
     assert equal (open --raw $protected) "protected content" $mode
   }
+
+  mv ($directory | path join "omp") ($directory | path join "claude")
+  let target = ($root | path join "mismatched-assistant")
+
+  let rejected = (with-env (fixture-env $target) {
+    run-cli import $directory --assistant "claude" --apply --no-backup
+  })
+  assert not equal $rejected.exit_code 0
+
+  assert not ($target | path exists)
+  assert equal (open --raw $protected) "protected content"
 }
 
 def "test OMP imports compare session header ids when filenames change" [] {

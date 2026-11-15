@@ -4,7 +4,6 @@
 # Per-assistant dispatch and shared argument parsing.
 # ==================================================================================================
 
-use ./lib/paths.nu [valid-path]
 use ./stores/claude.nu
 use ./stores/codex.nu
 use ./stores/omp.nu
@@ -45,14 +44,6 @@ def assistant-scan [assistant: string]: nothing -> list<record> {
   }
 }
 
-def assistant-recorded-paths [assistant: string]: nothing -> list<string> {
-  match $assistant {
-    "claude" => { claude recorded-paths }
-    "codex" => { codex recorded-paths }
-    "omp" => { omp recorded-paths }
-  }
-}
-
 def assistant-plan-move [assistant: string, old: string, new: string]: nothing -> list<record> {
   match $assistant {
     "claude" => { claude plan-move $old $new }
@@ -90,23 +81,6 @@ export def scan-all [selected: list<string>]: nothing -> list<record> {
   $selected
   | each {|assistant| assistant-scan $assistant }
   | flatten
-}
-
-export def all-recorded-paths [selected: list<string>]: nothing -> list<string> {
-  let rows = (
-    scan-all $selected
-    | get -o path
-    | where {|path| valid-path $path }
-  )
-  let recorded = (
-    $selected
-    | each {|assistant| assistant-recorded-paths $assistant }
-    | flatten
-  )
-
-  $rows
-  | append $recorded
-  | uniq
 }
 
 export def plan-move [

@@ -82,9 +82,6 @@ def rollout-file [path: string]: nothing -> any {
 # Scan
 # --------------------------------------------------------------------------------------------------
 
-# The store records paths only through its scan rows.
-export def recorded-paths []: nothing -> list<string> { [] }
-
 export def scan []: nothing -> list<record> {
   let db = (state-db)
   if $db == null { return [] }
@@ -251,17 +248,7 @@ def delete-threads [state: string, threads: list<record>]: nothing -> list<recor
     )
     $actions = ($actions | append $remove)
 
-    let history = (history-db)
-    if $history != null {
-      let id_list = (sql-list $ids)
-      for table in $PROJECTION_TABLES {
-        let statement = $"DELETE FROM ($table) WHERE thread_id IN \(($id_list)\)"
-        let remove = (
-          sql-action "codex" "thread-history" $history [$statement] $"delete ($table)" --derived
-        )
-        $actions = ($actions | append $remove)
-      }
-    }
+    $actions = ($actions ++ (projection-actions (history-db) $ids))
   }
 
   $actions
@@ -319,9 +306,13 @@ export def export-bundle [
   mut files = []
   for row in $threads {
     let rollout = ($row | get -o rollout_path)
-    if ($rollout | describe) != "string" { continue }
+    if ($rollout | describe) != "string" {
+      error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout path"}
+    }
     let resolved = (rollout-file $rollout)
-    if $resolved == null { continue }
+    if $resolved == null {
+      error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout file"}
+    }
     let name = ($resolved.file | path relative-to (root))
     $files = ($files | append {
       kind: "rollouts"
