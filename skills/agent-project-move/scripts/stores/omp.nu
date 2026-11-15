@@ -10,6 +10,7 @@ use ../lib/actions.nu [
   edit-action
   merge-actions
   same-content
+  session-merge-actions
 ]
 use ../lib/paths.nu [
   files-under
@@ -286,8 +287,48 @@ def session-actions [
   $edits ++ $merges
 }
 
-export def plan-move [old: string, new: string]: nothing -> list<record> {
+export def plan-move [
+  old: string
+  new: string
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
   let records = (session-records)
+  if ($session_ids | is-not-empty) {
+    let selected = (select-sessions $records $old --session-ids $session_ids)
+    let targets = (
+      $selected
+      | each {|row|
+        let directory = if (path-match $old $row.owner) {
+          let project = (path-map $old $new $row.owner)
+          $row.directory | path dirname | path join (session-encode-here $project)
+        } else {
+          $row.directory
+        }
+        {
+          source_path: $row.file
+          target: ($directory | path join ($row.file | path relative-to $row.directory))
+        }
+      }
+      | uniq
+    )
+    let edits = (
+      $selected
+      | each {|row|
+        let original = (session-header $row.file | get -o parentSession)
+        let parent = ($targets | where source_path == $original | first | get -o target)
+        let content = (open --raw $row.file)
+        let rewrite = {|content|
+          let rewritten = (rewrite-text $content $old $new)
+          if $parent == null { $rewritten } else { remap-parent $rewritten $parent }
+        }
+        if (do $rewrite $content) != $content {
+          edit-action "omp" "sessions" $row.file $rewrite "rewrite session paths"
+        }
+      }
+      | compact
+    )
+    return ($edits ++ (session-merge-actions "omp" "sessions" $targets))
+  }
   let recorded = (
     ($records | get -o cwd) ++ ($records | get -o owner)
     | where {|path| (valid-path $path) and (path-match $old $path) }

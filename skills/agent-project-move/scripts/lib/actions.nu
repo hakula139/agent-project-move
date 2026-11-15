@@ -89,10 +89,13 @@ def json-column-statements [
   column: string
   old: string
   new: string
+  --where: string
 ]: nothing -> list<string> {
   let plain = (sql-quote (json-escape $old))
   let uri = (sql-quote (json-escape (file-uri $old)))
-  let query = $"SELECT rowid AS rid, ($column) AS value FROM ($table) WHERE instr\(($column), ($plain)\) > 0 OR instr\(($column), ($uri)\) > 0"
+  let matching = $"\(instr\(($column), ($plain)\) > 0 OR instr\(($column), ($uri)\) > 0\)"
+  let condition = if $where == null { $matching } else { $"($matching) AND \(($where)\)" }
+  let query = $"SELECT rowid AS rid, ($column) AS value FROM ($table) WHERE ($condition)"
 
   sqlite-rows $db $query
   | each {|row|
@@ -101,7 +104,9 @@ def json-column-statements [
     if $updated == $value {
       null
     } else {
-      $"UPDATE ($table) SET ($column) = (sql-quote $updated) WHERE rowid = ($row.rid | into string) AND ($column) = (sql-quote $value)"
+      let matching = $"rowid = ($row.rid | into string) AND ($column) = (sql-quote $value)"
+      let condition = if $where == null { $matching } else { $"($matching) AND \(($where)\)" }
+      $"UPDATE ($table) SET ($column) = (sql-quote $updated) WHERE ($condition)"
     }
   }
   | compact
@@ -112,8 +117,10 @@ export def column-statements [
   column: string
   old: string
   new: string
+  --where: string
 ]: nothing -> list<string> {
-  let condition = (path-condition $column [$old])
+  let matching = (path-condition $column [$old])
+  let condition = if $where == null { $matching } else { $"\(($matching)\) AND \(($where)\)" }
   let offset = if $new == "/" { 2 } else { 1 }
   let value = $"(sql-quote $new) || substr\(($column), length\((sql-quote $old)\) + ($offset)\)"
   [$"UPDATE ($table) SET ($column) = ($value) WHERE ($condition)"]
@@ -135,9 +142,15 @@ export def column-actions [
 
     let table = $spec.table
     let column = $spec.column
-    let condition = (path-condition $column [$old])
+    let predicate = ($spec | get -o where)
+    let matching = (path-condition $column [$old])
+    let condition = if $predicate == null {
+      $matching
+    } else {
+      $"\(($matching)\) AND \(($predicate)\)"
+    }
     let statements = if ($spec | get -o json | default false) {
-      json-column-statements $db $table $column $old $new
+      json-column-statements $db $table $column $old $new --where $predicate
     } else {
       let exists = (
         sqlite-rows $db $"SELECT EXISTS \(SELECT 1 FROM ($table) WHERE ($condition)\) AS found"
@@ -147,7 +160,7 @@ export def column-actions [
       if $exists == 0 {
         []
       } else {
-        column-statements $table $column $old $new
+        column-statements $table $column $old $new --where $predicate
       }
     }
 
@@ -242,6 +255,35 @@ export def merge-actions [
   }
 
   $actions | append (action $assistant $store "rmdir" $source "remove emptied source directory")
+}
+
+export def session-merge-actions [
+  assistant: string
+  store: string
+  targets: list<record>
+]: nothing -> list<record> {
+  let paths = (
+    $targets
+    | each {|item|
+      [
+        {source: $item.source_path, target: $item.target}
+        {
+          source: ($item.source_path | str replace --regex '\.jsonl$' "")
+          target: ($item.target | str replace --regex '\.jsonl$' "")
+        }
+      ]
+    }
+    | flatten
+    | where {|item| $item.source != $item.target and ($item.source | path exists) }
+    | uniq
+  )
+  let sources = ($paths | get -o source | outermost-paths $in)
+  $paths
+  | where {|item| $item.source in $sources }
+  | each {|item|
+    merge-actions $assistant $store $item.source $item.target "move selected session state"
+  }
+  | flatten
 }
 
 export def decompress-file [path: string]: nothing -> string {

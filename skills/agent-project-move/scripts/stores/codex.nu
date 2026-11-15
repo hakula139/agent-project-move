@@ -122,18 +122,47 @@ def projection-actions [db: any, ids: list<string>]: nothing -> list<record> {
   }
 }
 
-export def plan-move [old: string, new: string]: nothing -> list<record> {
+export def plan-move [
+  old: string
+  new: string
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
   let state = (state-db)
   if $state == null { return [] }
 
   let home = (root)
   let rewrite = {|content| rewrite-text $content $old $new }
-  let rollouts = (files-with-path $old [
-    ($home | path join "sessions")
-    ($home | path join "archived_sessions")
-  ])
-
-  let threads = (sqlite-rows $state "SELECT * FROM threads")
+  let inventory = (sqlite-rows $state "SELECT * FROM threads")
+  let selective = ($session_ids | is-not-empty)
+  let threads = if $selective {
+    selected-threads $state $inventory $old --session-ids $session_ids
+  } else {
+    $inventory
+  }
+  if $selective and ($threads | is-empty) { return [] }
+  let rollouts = if $selective {
+    $threads
+    | each {|row|
+      let path = ($row | get -o rollout_path)
+      if ($path | describe) != "string" {
+        error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout path"}
+      }
+      let resolved = (rollout-file $path)
+      if $resolved == null {
+        error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout file"}
+      }
+      let content = (rollout-content $resolved.file $resolved.compressed)
+      if (rewrite-text $content $old $new) != $content { $resolved.file }
+    }
+    | compact
+    | uniq
+  } else {
+    files-with-path $old [
+      ($home | path join "sessions")
+      ($home | path join "archived_sessions")
+    ]
+  }
+  let predicate = if $selective { $"id IN \((sql-list ($threads | get id))\)" } else { null }
   let edited_ids = (
     $threads
     | where {|row|
@@ -152,12 +181,14 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
         db: $state
         table: "threads"
         column: "cwd"
+        where: $predicate
       }
       {
         db: $state
         table: "threads"
         column: "sandbox_policy"
         json: true
+        where: $predicate
       }
     ] $old $new
   )

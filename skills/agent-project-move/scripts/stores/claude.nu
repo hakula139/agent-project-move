@@ -10,6 +10,7 @@ use ../lib/actions.nu [
   edit-action
   merge-actions
   same-content
+  session-merge-actions
 ]
 use ../lib/paths.nu [files-under outermost-paths path-map path-match valid-path]
 use ../lib/rewrite.nu [files-with-path json-value rewrite-text rg-lines]
@@ -264,8 +265,41 @@ def session-project-files [records: list<record>]: nothing -> list<record> {
 # Move
 # --------------------------------------------------------------------------------------------------
 
-export def plan-move [old: string, new: string]: nothing -> list<record> {
+export def plan-move [
+  old: string
+  new: string
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
   let inventory = (session-records $old)
+  if ($session_ids | is-not-empty) {
+    let selected = (select-sessions $inventory $old --session-ids $session_ids)
+    let files = (session-project-files $selected)
+    let unknown = ($files | where owner == null | first)
+    if $unknown != null {
+      error make --unspanned {msg: $"Cannot locate the project owner of ($unknown.file)"}
+    }
+    let targets = (
+      $selected
+      | where {|row| path-match $old $row.owner }
+      | each {|row|
+        let directory = (projects-dir | path join (encode-path (path-map $old $new $row.owner)))
+        {
+          source_path: $row.file
+          target: ($directory | path join ($row.file | path relative-to $row.directory))
+        }
+      }
+      | uniq
+    )
+    let rewrite = {|content| rewrite-text $content $old $new }
+    let edits = (
+      $selected
+      | get -o file
+      | uniq
+      | files-with-path $old $in --glob ["*.jsonl"]
+      | each {|file| edit-action "claude" "projects" $file $rewrite "rewrite paths" }
+    )
+    return ($edits ++ (session-merge-actions "claude" "projects" $targets))
+  }
   let unknown = (
     $inventory
     | where {|record| $record.owner == null and (path-match $old $record.cwd) }

@@ -86,10 +86,12 @@ def "main move" [
   old: string # Recorded project path, or a parent of it
   new: string # New project path
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to move
+  --session-ids: string # Move these sessions and their descendants
   --apply # Write the planned changes
   --no-backup # Skip creating recovery backups
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
+  let ids = (selection-ids false $session_ids)
   # `<old>` keeps the given spelling, because matching is an exact case-sensitive string test.
   # `<new>` is canonicalized, so state records the spelling the working directory reports.
   let old = (normalize-path $old)
@@ -99,7 +101,7 @@ def "main move" [
   if not ($new | path exists) {
     print $"($new) does not exist. Move the directory first so sessions can resume there."
   }
-  let actions = (plan-move $selected $old $new)
+  let actions = (plan-move $selected $old $new --session-ids $ids)
   apply-all $actions --apply=$apply --no-backup=$no_backup
 }
 

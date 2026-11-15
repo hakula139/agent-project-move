@@ -44,11 +44,16 @@ def assistant-scan [assistant: string]: nothing -> list<record> {
   }
 }
 
-def assistant-plan-move [assistant: string, old: string, new: string]: nothing -> list<record> {
+def assistant-plan-move [
+  assistant: string
+  old: string
+  new: string
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
   match $assistant {
-    "claude" => { claude plan-move $old $new }
-    "codex" => { codex plan-move $old $new }
-    "omp" => { omp plan-move $old $new }
+    "claude" => { claude plan-move $old $new --session-ids $session_ids }
+    "codex" => { codex plan-move $old $new --session-ids $session_ids }
+    "omp" => { omp plan-move $old $new --session-ids $session_ids }
   }
 }
 
@@ -87,9 +92,10 @@ export def plan-move [
   selected: list<string>
   old: string
   new: string
+  --session-ids: list<string> = []
 ]: nothing -> list<record> {
   $selected
-  | each {|assistant| assistant-plan-move $assistant $old $new }
+  | each {|assistant| assistant-plan-move $assistant $old $new --session-ids $session_ids }
   | flatten
 }
 

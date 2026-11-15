@@ -30,7 +30,7 @@ A SQL-phase failure can be replanned and rerun. After a file-phase failure, [res
 
 ## Project merges
 
-Claude project-directory merges keep unique files and move memory as ordinary directory content. Differing files at the same destination stop the move for review. Session transfer leaves shared project memory in place.
+Claude project-directory merges keep unique files and move memory as ordinary directory content. Differing files at the same destination stop the move for review. Selected-session moves and session transfer leave shared project memory in place.
 
 ## Move
 
@@ -42,6 +42,8 @@ agent-project-move move ~/src/app ~/work/app --apply
 ```
 
 Paths match case-sensitively at `<old>` or `<old>/`. Case-only moves are refused. A missing destination draws a warning because sessions need it to resume. When a child moves outside its parent's destination, repair the child's mapping before the parent's.
+
+Use `move <old> <new> --session-ids <id,id>` to move specific sessions recorded under `<old>` and their linked descendants, including descendants whose cwd is elsewhere. Ancestors and siblings stay in place. Only selected transcripts are rewritten, and their owned artifacts move when their physical project owner is under `<old>`. Shared project state stays in place.
 
 ## Transfer between hosts
 
