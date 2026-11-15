@@ -5,6 +5,7 @@
 # ==================================================================================================
 
 use std/assert
+use std-rfc/str
 
 use ./lib/sqlite.nu [sql-quote sqlite-rows]
 use ./stores/claude.nu [encode-path]
@@ -123,14 +124,17 @@ def make-codex [root: string, project: string]: nothing -> record {
     }
   ]
   let schema = (
-    "CREATE TABLE projects (id TEXT PRIMARY KEY, path TEXT); "
-    + "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, rollout_path TEXT, "
-    + "project_id TEXT REFERENCES projects(id), attached_thread_parent_id TEXT, "
-    + "updated_at INTEGER, updated_at_ms INTEGER); "
-    + "CREATE TABLE thread_spawn_edges (parent_thread_id TEXT NOT NULL, "
-    + "child_thread_id TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL); "
-    + "CREATE TABLE dependent (thread_id TEXT REFERENCES threads(id) ON DELETE CASCADE); "
-    + $"INSERT INTO projects VALUES \('shared', (sql-quote $project)\); "
+    $"
+    CREATE TABLE projects \(id TEXT PRIMARY KEY, path TEXT\);
+    CREATE TABLE threads \(id TEXT PRIMARY KEY, cwd TEXT, rollout_path TEXT,
+      project_id TEXT REFERENCES projects\(id\), attached_thread_parent_id TEXT,
+      updated_at INTEGER, updated_at_ms INTEGER\);
+    CREATE TABLE thread_spawn_edges \(parent_thread_id TEXT NOT NULL,
+      child_thread_id TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL\);
+    CREATE TABLE dependent \(thread_id TEXT REFERENCES threads\(id\) ON DELETE CASCADE\);
+    INSERT INTO projects VALUES \('shared', (sql-quote $project)\);
+    "
+    | str dedent
   )
   $schema | ^sqlite3 $db
   "INSERT INTO thread_spawn_edges VALUES ('parent', 'child', 'completed');"
@@ -175,12 +179,15 @@ def make-codex [root: string, project: string]: nothing -> record {
 
   let history = ($dir | path join "thread_history_1.sqlite")
   let projection_schema = (
-    "CREATE TABLE thread_history_projection_state (thread_id TEXT); "
-    + "CREATE TABLE thread_turns (thread_id TEXT); "
-    + "CREATE TABLE thread_items (thread_id TEXT); "
-    + "CREATE TABLE thread_realtime_items (thread_id TEXT); "
-    + "CREATE TRIGGER clear_realtime AFTER DELETE ON thread_history_projection_state "
-    + "BEGIN DELETE FROM thread_realtime_items WHERE thread_id = OLD.thread_id; END; "
+    "
+    CREATE TABLE thread_history_projection_state (thread_id TEXT);
+    CREATE TABLE thread_turns (thread_id TEXT);
+    CREATE TABLE thread_items (thread_id TEXT);
+    CREATE TABLE thread_realtime_items (thread_id TEXT);
+    CREATE TRIGGER clear_realtime AFTER DELETE ON thread_history_projection_state
+    BEGIN DELETE FROM thread_realtime_items WHERE thread_id = OLD.thread_id; END;
+    "
+    | str dedent
   )
   $projection_schema | ^sqlite3 $history
   for table in [
@@ -644,12 +651,15 @@ def "test an imported Codex id with different rollout content is rejected" [] {
 def make-target-codex [root: string, project: string]: nothing -> record {
   let fixture = (make-codex $root $project)
   (
-    "DROP TABLE projects; "
-    + "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, metadata TEXT, position INTEGER, "
-    + "created_at_ms INTEGER, updated_at_ms INTEGER); "
-    + "CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT); "
-    + "ALTER TABLE threads ADD COLUMN sandbox_policy TEXT; "
-    + "ALTER TABLE threads ADD COLUMN agent_path TEXT;"
+    "
+    DROP TABLE projects;
+    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, metadata TEXT, position INTEGER,
+      created_at_ms INTEGER, updated_at_ms INTEGER);
+    CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT);
+    ALTER TABLE threads ADD COLUMN sandbox_policy TEXT;
+    ALTER TABLE threads ADD COLUMN agent_path TEXT;
+    "
+    | str dedent
   ) | ^sqlite3 $fixture.db
 
   let metadata = (
