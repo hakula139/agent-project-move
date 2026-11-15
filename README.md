@@ -5,7 +5,7 @@
 
 Repair the project paths recorded by [Claude Code](https://claude.com/claude-code), [Codex](https://openai.com/codex/), and [OMP](https://omp.sh) after a directory moves, transfer sessions between hosts, and retire selected session copies.
 
-Moving a project can leave sessions under its old path, and copying a repository to another host leaves transcripts behind. `agent-project-move` previews state changes and applies them only with `--apply`. Export creates a bundle without changing the source store.
+Preview changes before applying them with `--apply`. Export leaves the source store unchanged.
 
 ## Install
 
@@ -31,7 +31,7 @@ Pin a release with `--ref vX.Y.Z` on `marketplace add`.
 
 ### Skill directories
 
-For OMP, or for any of the three assistants without a plugin, clone the repository and link the skill directory where each assistant reads skills:
+For standalone skill installation, clone the repository and link its skill directory:
 
 ```bash
 git clone https://github.com/hakula139/agent-project-move ~/.local/share/agent-project-move
@@ -48,7 +48,7 @@ ln -s "$skill_dir" ~/.claude/skills/agent-project-move
 
 Link the whole skill directory, never `SKILL.md` alone, because Codex skips a `SKILL.md` that is itself a symlink. `git pull` updates the clone, and `git checkout vX.Y.Z` pins a release.
 
-Skill installers copy only the skill directory:
+Alternatively, use a skill installer:
 
 - `npx skills add hakula139/agent-project-move -g` installs it into `~/.agents/skills` and links it for Claude Code.
 - Codex's `$skill-installer` takes `--repo hakula139/agent-project-move --path skills/agent-project-move`.
@@ -67,7 +67,7 @@ Or install it into your profile:
 nix profile install github:hakula139/agent-project-move
 ```
 
-The package includes its runtime tools and supports `aarch64-darwin`, `aarch64-linux`, and `x86_64-linux`. Enable Nix flakes before using it. The optional Cachix cache can speed up the first build.
+The package includes runtime tools for `aarch64-darwin`, `aarch64-linux`, and `x86_64-linux` and requires Nix flakes.
 
 Home Manager users add the flake input and import the module:
 
@@ -104,11 +104,11 @@ agent-project-move move ~/src/app ~/work/app --apply
 
 Use `-a claude,codex` to select assistants, or omit it for all three. The [skill procedures](skills/agent-project-move/SKILL.md) cover path ordering, [cross-host transfers](skills/agent-project-move/SKILL.md#transfer-between-hosts), [selected source retirement](skills/agent-project-move/SKILL.md#retire), and verification. `agent-project-move --help` lists the commands and options.
 
-Before applying, close affected assistant sessions, including your own, to avoid losing concurrent writes. Applied changes create private recovery backups by default. Keep them until the migrated sessions open successfully. Read the skill's [concurrency and recovery guidance](skills/agent-project-move/SKILL.md#concurrent-sessions) before changing live stores.
+Before applying, close affected assistant sessions, including your own. Keep the default recovery backups until migrated sessions resume successfully. See [concurrency and recovery](skills/agent-project-move/SKILL.md#concurrent-sessions).
 
 ## Tested with
 
-Each assistant changes its local storage without notice. `agent-project-move` is tested on Linux against these versions:
+Tested on Linux against:
 
 | Assistant   | Tested  |
 | ----------- | ------- |
@@ -116,7 +116,7 @@ Each assistant changes its local storage without notice. `agent-project-move` is
 | Codex       | 0.165.0 |
 | OMP         | 18.13.2 |
 
-A newer version can add a database, a table, or a path-bearing column this tool does not know about, and those paths then stay stale after a move. Path values in JSON transcripts are rewritten wherever they appear, so new record kinds are covered. If a move leaves sessions behind, open an issue with the release tag or commit you run and the assistant's version.
+New assistant storage formats may leave paths unchanged. If sessions remain under the old path, open an issue with this tool's release tag or commit and the assistant version.
 
 ## Documentation
 
