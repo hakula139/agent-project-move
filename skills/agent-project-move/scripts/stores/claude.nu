@@ -273,8 +273,7 @@ export def plan-move [
   let inventory = (session-records $old)
   if ($session_ids | is-not-empty) {
     let selected = (select-sessions $inventory $old --session-ids $session_ids)
-    let files = (session-project-files $selected)
-    let unknown = ($files | where owner == null | first)
+    let unknown = ($selected | where owner == null | first)
     if $unknown != null {
       error make --unspanned {msg: $"Cannot locate the project owner of ($unknown.file)"}
     }

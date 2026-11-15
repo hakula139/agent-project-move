@@ -315,7 +315,14 @@ export def plan-move [
       $selected
       | each {|row|
         let original = (session-header $row.file | get -o parentSession)
-        let parent = ($targets | where source_path == $original | first | get -o target)
+        let mapped = ($targets | where source_path == $original | first | get -o target)
+        let parent = if $mapped != null {
+          $mapped
+        } else if (valid-path $original) {
+          $original
+        } else {
+          null
+        }
         let content = (open --raw $row.file)
         let rewrite = {|content|
           let rewritten = (rewrite-text $content $old $new)

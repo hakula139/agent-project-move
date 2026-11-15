@@ -707,6 +707,125 @@ def make-target-codex [root: string, project: string]: nothing -> record {
   $fixture
 }
 
+def "test selected Codex moves bound rows and rollouts to the session closure" [] {
+  for compressed in [false true] {
+    let root = (mktemp -d | path expand)
+    let project = "/home/u/src/app"
+    let target = ($root | path join "moved")
+    mkdir $target
+    let fixture = (make-target-codex $root $project)
+    let plain = ($fixture.compressed | str replace --regex '\.zst$' '')
+    if not $compressed {
+      ^zstd -dc $fixture.compressed | save $plain
+      rm $fixture.compressed
+    }
+    let canonical = if $compressed { $fixture.compressed } else { $plain }
+    let sessions = ($root | path join "codex/sessions")
+    let child = ($sessions | path join "child.jsonl")
+    let child_rows = [
+      {type: "session_meta", payload: {id: "child", cwd: "/other/worker"}}
+      {type: "response_item", payload: {path: $"($project)/child.txt", prose: $"Mention ($project)"}}
+    ]
+    rm $child
+    write-jsonl $child $child_rows
+    let desktop = ($root | path join "codex/.codex-global-state.json")
+    {saved: [$project]} | to json | save $desktop
+    let desktop_bytes = (open --raw $desktop)
+    let rows = (sqlite-rows $fixture.db "SELECT * FROM threads ORDER BY id")
+    let projects = (sqlite-rows $fixture.db "SELECT * FROM projects")
+    let roots = (sqlite-rows $fixture.db "SELECT * FROM project_roots ORDER BY position")
+    let edges = (sqlite-rows $fixture.db "SELECT * FROM thread_spawn_edges")
+    let peers = (
+      ["retained" "nested" "other-child"]
+      | each {|id|
+        let file = ($sessions | path join $"($id).jsonl")
+        {file: $file, bytes: (open --raw $file)}
+      }
+    )
+    let expected_parent = [
+      {
+        type: "session_meta"
+        payload: {id: "parent", cwd: $target, timestamp: "2026-01-01T00:00:00.123456789Z"}
+      }
+      {
+        type: "response_item"
+        payload: {
+          path: $"($target)/file.txt"
+          uri: $"file://($target)/file.txt"
+          sibling: $"($project)-peer/file.txt"
+        }
+      }
+    ]
+
+    let moved = (with-env (fixture-env $root) {
+      run-cli move $project $target --assistant "codex" --session-ids "parent" --apply --no-backup
+    })
+    assert equal $moved.exit_code 0 $moved.stderr
+
+    assert equal (sqlite-rows $fixture.db "SELECT * FROM threads ORDER BY id") (
+      $rows | each {|row|
+        if $row.id in ["parent" "child" "other-child"] {
+          $row | merge {
+            cwd: (if $row.id == "parent" { $target } else { $row.cwd })
+            sandbox_policy: ({writable_roots: [$target]} | to json --raw)
+          }
+        } else {
+          $row
+        }
+      }
+    )
+    let parent_body = if $compressed { ^zstd -dc $canonical } else { open --raw $canonical }
+    assert equal ($parent_body | lines | each {|line| $line | from json }) $expected_parent
+    assert equal (open --raw $child | lines | each {|line| $line | from json }) (
+      $child_rows | update 1.payload.path $"($target)/child.txt"
+    )
+    for peer in $peers {
+      assert equal (open --raw $peer.file) $peer.bytes $peer.file
+    }
+    for table in [
+      "thread_history_projection_state" "thread_turns" "thread_items" "thread_realtime_items"
+    ] {
+      assert equal (sqlite-rows $fixture.history $"SELECT * FROM ($table) ORDER BY thread_id") [
+        {thread_id: "nested"}
+        {thread_id: "other-child"}
+        {thread_id: "retained"}
+      ] $table
+    }
+    assert equal (sqlite-rows $fixture.db "SELECT * FROM projects") $projects
+    assert equal (sqlite-rows $fixture.db "SELECT * FROM project_roots ORDER BY position") $roots
+    assert equal (sqlite-rows $fixture.db "SELECT * FROM thread_spawn_edges") $edges
+    assert equal (open --raw $desktop) $desktop_bytes
+    let stable = (open --raw $fixture.db | hash sha256)
+
+    let repeated = (with-env (fixture-env $root) {
+      (
+        run-cli move $project $target --assistant "codex"
+          --session-ids "parent,child,unknown" --apply --no-backup
+      )
+    })
+    assert equal $repeated.exit_code 0 $repeated.stderr
+    assert str contains $repeated.stdout "No changes."
+    assert equal (open --raw $fixture.db | hash sha256) $stable
+  }
+
+  let root = (mktemp -d | path expand)
+  let project = "/home/u/src/app"
+  let target = ($root | path join "moved")
+  mkdir $target
+  let fixture = (make-codex $root $project)
+  rm $fixture.compressed
+  let state = (open --raw $fixture.db | hash sha256)
+  let history = (open --raw $fixture.history | hash sha256)
+
+  let rejected = (with-env (fixture-env $root) {
+    run-cli move $project $target --assistant "codex" --session-ids "parent" --apply --no-backup
+  })
+  assert not equal $rejected.exit_code 0
+
+  assert equal (open --raw $fixture.db | hash sha256) $state
+  assert equal (open --raw $fixture.history | hash sha256) $history
+}
+
 def "test targeted Codex imports map incoming paths and preserve local state" [] {
   let root = (mktemp -d)
   let source = ($root | path join "source")
@@ -1062,6 +1181,125 @@ def "test Claude project moves preserve opaque files and reject memory conflicts
       ) $target
     }
     assert equal ($state | each {|name| open --raw ($fixture.config | path join $name) }) $originals
+  }
+}
+
+def "test selected Claude moves preserve peers and shared project state" [] {
+  for selected in ["parent" "child"] {
+    let root = (mktemp -d | path expand)
+    let project = "/home/u/src/app"
+    let target = ($root | path join "moved")
+    mkdir $target
+    let fixture = (make-claude $root $project)
+    let destination = ($fixture.config | path join "projects" (encode-path $target))
+    let parent = ($fixture.dir | path join "parent.jsonl")
+    let retained = ($fixture.dir | path join "retained.jsonl")
+    rm $retained
+    write-jsonl $retained [{type: "user", sessionId: "retained", cwd: $project}]
+    let child = (open --raw $fixture.child | from json)
+    $child
+    | upsert cwd $"($project)/worker"
+    | to json --raw
+    | save --force $fixture.child
+    let child_artifact = ($fixture.dir | path join "parent/subagents/agent-child/notes.md")
+    mkdir ($child_artifact | path dirname)
+    $project | save $child_artifact
+    let external = (
+      $fixture.config
+      | path join "projects" (encode-path "/other/external") "parent/subagents/agent-external.jsonl"
+    )
+    write-jsonl $external [
+      {type: "assistant", sessionId: "external", cwd: "/other/external", path: $project}
+    ]
+    let unchanged = (
+      [
+        $retained
+        ($fixture.nested | path join "nested.jsonl")
+        ($fixture.dir | path join "memory/MEMORY.md")
+        ($fixture.dir | path join "memory/notes.jsonl")
+        ($fixture.dir | path join "sessions-index.json")
+        ($fixture.config | path join "history.jsonl")
+        ($fixture.config | path join ".claude.json")
+        ($fixture.config | path join "file-history/parent/file@v1")
+        ($fixture.config | path join "file-history/child/child@v1")
+      ]
+      | each {|file| {file: $file, bytes: (open --raw $file)} }
+    )
+    let parent_bytes = (open --raw $parent)
+    let artifact_names = if $selected == "parent" {
+      ["parent/output.json" "parent/output.jsonl" "parent/subagents/agent-child/notes.md"]
+    } else {
+      ["parent/subagents/agent-child/notes.md"]
+    }
+    let artifacts = ($artifact_names | each {|name|
+      {name: $name, bytes: (open --raw ($fixture.dir | path join $name))}
+    })
+    if $selected == "parent" {
+      mkdir $destination
+      "conflicting transcript" | save ($destination | path join "parent.jsonl")
+
+      let rejected = (with-env (fixture-env $root) {
+        (
+          run-cli move $project $target --assistant "claude"
+            --session-ids $selected --apply --no-backup
+        )
+      })
+      assert not equal $rejected.exit_code 0
+
+      assert equal (open --raw $parent) $parent_bytes
+      assert equal (open --raw ($destination | path join "parent.jsonl")) "conflicting transcript"
+      for artifact in $artifacts {
+        assert equal (open --raw ($fixture.dir | path join $artifact.name)) $artifact.bytes
+      }
+      rm ($destination | path join "parent.jsonl")
+    }
+
+    let moved = (with-env (fixture-env $root) {
+      run-cli move $project $target --assistant "claude" --session-ids $selected --apply --no-backup
+    })
+    assert equal $moved.exit_code 0 $moved.stderr
+
+    let imported_child = ($destination | path join "parent/subagents/agent-child.jsonl")
+    assert equal (open --raw $imported_child | from json) (
+      $child
+      | merge {
+        cwd: $"($target)/worker"
+        message: {
+          content: [{type: "tool_use", id: "read-child", name: "Read", input: {file_path: $target}}]
+        }
+      }
+    )
+    assert not ($fixture.child | path exists)
+    for artifact in $artifacts {
+      assert equal (open --raw ($destination | path join $artifact.name)) $artifact.bytes
+      assert not (($fixture.dir | path join $artifact.name) | path exists)
+    }
+    if $selected == "parent" {
+      assert not ($parent | path exists)
+      assert equal (
+        open --raw ($destination | path join "parent.jsonl")
+      ) ($parent_bytes | str replace ($project | to json --raw) ($target | to json --raw))
+      assert equal (open --raw $external | from json) {
+        type: "assistant", sessionId: "external", cwd: "/other/external", path: $target
+      }
+    } else {
+      assert equal (open --raw $parent) $parent_bytes
+      assert equal (open --raw ($fixture.dir | path join "parent/output.json")) (
+        $'{ "cwd": "($project)", "sessionId": "artifact" }'
+      )
+      assert equal (open --raw $external | from json) {
+        type: "assistant", sessionId: "external", cwd: "/other/external", path: $project
+      }
+    }
+    for original in $unchanged {
+      assert equal (open --raw $original.file) $original.bytes $original.file
+    }
+
+    let repeated = (with-env (fixture-env $root) {
+      run-cli move $project $target --assistant "claude" --session-ids $selected --apply --no-backup
+    })
+    assert equal $repeated.exit_code 0 $repeated.stderr
+    assert str contains $repeated.stdout "No changes."
   }
 }
 
@@ -1511,6 +1749,138 @@ def make-omp [root: string, project: string]: nothing -> record {
     parent: $parent_file
     children: $child_root
   }
+}
+
+def "test selected OMP moves map nested and flat descendants while preserving peers" [] {
+  let root = (mktemp -d | path expand)
+  let project = "/home/u/src/app"
+  let target = ($root | path join "moved")
+  mkdir $target
+  let fixture = (make-omp $root $project)
+  let destination = ($root | path join "omp/sessions" (session-encode-here $target))
+  let flat = ($fixture.dir | path join "flat.jsonl")
+  let external = (
+    $root | path join "omp/sessions" (session-encode-here "/other/external") "outside.jsonl"
+  )
+  write-jsonl $flat [
+    {type: "session", id: "flat", cwd: "/other/flat", parentSession: $fixture.parent}
+    {type: "message", path: $"($project)/flat.txt"}
+  ]
+  write-jsonl $external [
+    {type: "session", id: "external", cwd: "/other/external", parentSession: $fixture.parent}
+    {type: "message", path: $"($project)/external.txt"}
+  ]
+  mkdir ($fixture.dir | path join "flat")
+  "flat artifact" | save ($fixture.dir | path join "flat/notes.md")
+  let retained = ($fixture.dir | path join "retained.jsonl")
+  rm $retained
+  write-jsonl $retained [
+    {type: "session", id: "retained", cwd: $project}
+    {type: "message", path: $"($project)/peer.txt", parent: $fixture.parent}
+  ]
+  let retained_bytes = (open --raw $retained)
+  let globals = (
+    ["omp/agent.db" "omp/history.db" "omp/blobs/kept" "state/omp/memories/kept/MEMORY.md"]
+    | each {|name|
+      let file = ($root | path join $name)
+      mkdir ($file | path dirname)
+      $project | save $file
+      {file: $file, bytes: (open --raw $file)}
+    }
+  )
+  let child = ($fixture.children | path join "implementer/worker.jsonl")
+  let checks = (
+    (glob ($fixture.dir | path join "**/*") | where {|file| ($file | path type) == "file" })
+    | where {|file| $file != $retained }
+    | append $external
+    | each {|file|
+      let moved = if $file == $external {
+        $external
+      } else {
+        $destination | path join ($file | path relative-to $fixture.dir)
+      }
+      mut expected = (open --raw $file)
+      if ($file | str ends-with ".jsonl") {
+        $expected = (
+          $expected | str replace --all ($project | to json --raw) ($target | to json --raw)
+        )
+        for name in ["flat" "external"] {
+          $expected = (
+            $expected
+            | str replace ($"($project)/($name).txt" | to json --raw) (
+              $"($target)/($name).txt" | to json --raw
+            )
+          )
+        }
+        for parent in [$fixture.parent $child] {
+          let mapped = ($destination | path join ($parent | path relative-to $fixture.dir))
+          let original = $'"parentSession":($parent | to json --raw)'
+          let replacement = $'"parentSession":($mapped | to json --raw)'
+          $expected = ($expected | str replace $original $replacement)
+        }
+      }
+      {source: $file, target: $moved, expected: $expected}
+    }
+  )
+
+  let moved = (with-env (fixture-env $root) {
+    run-cli move $project $target --assistant "omp" --session-ids "parent" --apply --no-backup
+  })
+  assert equal $moved.exit_code 0 $moved.stderr
+
+  for check in $checks {
+    assert equal (open --raw $check.target) $check.expected $check.target
+    if $check.source != $check.target {
+      assert not ($check.source | path exists) $check.source
+    }
+  }
+  assert equal (open --raw $retained) $retained_bytes
+  for original in $globals {
+    assert equal (open --raw $original.file) $original.bytes $original.file
+  }
+
+  let repeated = (with-env (fixture-env $root) {
+    (
+      run-cli move $project $target --assistant "omp"
+        --session-ids "parent,external,unknown" --apply --no-backup
+    )
+  })
+  assert equal $repeated.exit_code 0 $repeated.stderr
+  assert str contains $repeated.stdout "No changes."
+
+  let root = (mktemp -d | path expand)
+  let project = ($root | path join "source")
+  let target = ($root | path join "moved")
+  mkdir $target
+  let fixture = (make-omp $project $project)
+  let child = ($fixture.children | path join "implementer/worker.jsonl")
+  let child_rows = (
+    open --raw $child
+    | lines
+    | each {|line|
+      let row = ($line | from json)
+      if $row.type == "session" { $row | upsert parentSession $fixture.parent } else { $row }
+    }
+  )
+  $child_rows
+  | each {|row| $row | to json --raw }
+  | str join "\n"
+  | save --force $child
+  let parent_bytes = (open --raw $fixture.parent)
+  let destination = ($project | path join "omp/sessions" (session-encode-here $target))
+  let moved_child = ($destination | path join ($child | path relative-to $fixture.dir))
+
+  let moved = (with-env (fixture-env $project) {
+    run-cli move $project $target --assistant "omp" --session-ids "child" --apply --no-backup
+  })
+  assert equal $moved.exit_code 0 $moved.stderr
+
+  assert equal (open --raw $fixture.parent) $parent_bytes
+  assert equal (
+    open --raw $moved_child | lines | each {|line| $line | from json }
+  ) ($child_rows | each {|row|
+    if $row.type == "session" { $row | upsert cwd $target } else { $row }
+  })
 }
 
 def "test OMP file-only retirement preserves peers and backs up nested artifacts" [] {
