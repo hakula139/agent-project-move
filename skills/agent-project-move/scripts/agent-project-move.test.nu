@@ -313,12 +313,13 @@ def "test Codex export scopes roots and carries compressed descendants" [] {
     if $fault == "missing-field" {
       "ALTER TABLE threads DROP COLUMN rollout_path;" | ^sqlite3 $broken.db
     } else if $fault == "numeric" {
-      (
-        "ALTER TABLE threads RENAME COLUMN rollout_path TO original_rollout_path; "
-        + "ALTER TABLE threads ADD COLUMN rollout_path; "
-        + "UPDATE threads SET rollout_path = original_rollout_path; "
-        + "UPDATE threads SET rollout_path = 42 WHERE id = 'retained';"
-      ) | ^sqlite3 $broken.db
+      "
+      ALTER TABLE threads RENAME COLUMN rollout_path TO original_rollout_path;
+      ALTER TABLE threads ADD COLUMN rollout_path;
+      UPDATE threads SET rollout_path = original_rollout_path;
+      UPDATE threads SET rollout_path = 42 WHERE id = 'retained';
+      "
+      | ^sqlite3 $broken.db
     } else if $fault == "null" {
       "UPDATE threads SET rollout_path = NULL WHERE id = 'retained';" | ^sqlite3 $broken.db
     } else {
