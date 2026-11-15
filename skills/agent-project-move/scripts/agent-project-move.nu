@@ -25,6 +25,7 @@ use ./assistants.nu [
   plan-retire
   scan-all
 ]
+use ./stores/omp.nu
 
 # The stores call GNU stat, realpath, mv, and cp, which Homebrew keeps unprefixed only in gnubin.
 if $nu.os-info.name == "macos" and (which brew | is-not-empty) {
@@ -185,6 +186,17 @@ def "main export" [
   for bundle in ($bundles | where {|bundle| $bundle.assistant in $carried }) {
     write-bundle $dir $bundle
   }
+  print $"Exported to ($dir)"
+}
+
+# Export OMP blobs listed as one SHA256 ID per line, without reading session state.
+def "main export-blobs" [
+  ids_file: string # Plain text file containing canonical blob IDs
+  dir: string # Bundle directory
+]: nothing -> nothing {
+  let bundle = (omp export-blobs $ids_file)
+  mkdir $dir
+  write-bundle $dir $bundle
   print $"Exported to ($dir)"
 }
 

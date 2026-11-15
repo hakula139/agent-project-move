@@ -20,6 +20,7 @@ use ../lib/paths.nu [
 ]
 use ../lib/rewrite.nu [files-with-path rewrite-text]
 use ../lib/selection.nu [select-sessions]
+use ./omp-blobs.nu
 
 # --------------------------------------------------------------------------------------------------
 # Locations
@@ -32,6 +33,8 @@ def agent-dir []: nothing -> string {
 def session-root []: nothing -> string { agent-dir | path join "sessions" }
 
 def archive-root []: nothing -> string { agent-dir | path join "archive/sessions" }
+
+def blob-root []: nothing -> string { agent-dir | path join "blobs" }
 
 # Resolve a path without requiring it to exist.
 def resolved-path [path: string]: nothing -> string {
@@ -146,7 +149,10 @@ def session-records []: nothing -> list<record> {
     let main = (
       $inventory
       | where {|candidate|
-        $candidate.directory == $row.directory and ($candidate.file | path dirname) == $row.directory
+        (
+          $candidate.directory == $row.directory
+          and ($candidate.file | path dirname) == $row.directory
+        )
       }
       | first
     )
@@ -321,6 +327,20 @@ export def plan-retire [
 # Transfer
 # --------------------------------------------------------------------------------------------------
 
+# Export canonical blobs and their aliases from a plain ID list.
+export def export-blobs [ids_file: string]: nothing -> record {
+  let ids = (open --raw $ids_file | lines | str trim | where {|id| $id != "" } | uniq)
+  if ($ids | is-empty) {
+    error make --unspanned {msg: "The blob ID file is empty"}
+  }
+  {
+    assistant: "omp"
+    old: (blob-root)
+    files: (omp-blobs resolve-files $ids (blob-root))
+    tables: []
+  }
+}
+
 export def export-bundle [
   old: string
   --exact
@@ -343,7 +363,14 @@ export def export-bundle [
       })
     }
   }
-  $files = ($files | uniq)
+  let journals = (
+    $files
+    | get source
+    | where {|file| $file | str ends-with ".jsonl" }
+    | uniq
+  )
+  let ids = (omp-blobs references $journals (blob-root))
+  $files = (($files | uniq) ++ (omp-blobs resolve-files $ids (blob-root)))
 
   {
     assistant: "omp"
@@ -392,7 +419,15 @@ def mapped-parent [file: record, targets: list<record>, --remap]: nothing -> any
 }
 
 export def plan-import [bundle: record, --target: string]: nothing -> list<record> {
+  omp-blobs verify-files $bundle.files
   let destination = $target
+  let blob_roots = (
+    $bundle.files
+    | where kind == "blobs"
+    | get -o origin_path
+    | each {|path| $path | path dirname }
+    | uniq
+  )
   let rewritten = if $destination == null {
     []
   } else {
@@ -404,6 +439,14 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
     files-with-path $bundle.old $sources
   }
 
+  let blob_sources = (
+    $bundle.files
+    | where {|file| $file.kind in ["sessions" "archives"] and (
+      $file.name | str ends-with ".jsonl"
+    ) }
+    | get -o bundle
+    | where {|file| $blob_roots | any {|root| (files-with-path $root [$file]) | is-not-empty } }
+  )
   let local_inventory = (session-records)
 
   let planned = (
@@ -437,6 +480,7 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
         match $file.kind {
           "sessions" => (session-root | path join (session-encode-here $project) $file.name)
           "archives" => (archive-root | path join (session-encode-here $project) $file.name)
+          "blobs" => (blob-root | path join $file.name)
           _ => {
             error make --unspanned {msg: $"Unknown OMP file kind ($file.kind)"}
           }
@@ -457,20 +501,34 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
 
   for file in $targets {
     let parent = (mapped-parent $file $targets --remap=($destination != null))
-    let content = if $file.header != null or $file.bundle in $rewritten {
+    let blob_rewrite = $file.bundle in $blob_sources
+    let content = if $file.header != null or $file.bundle in $rewritten or $blob_rewrite {
       open --raw $file.bundle
     } else {
       null
     }
 
     let rewrite = $file.bundle in $rewritten and ($content | describe) == "string"
-    let transform = if not $rewrite and $parent == null {
+    let transform = if not $rewrite and not $blob_rewrite and $parent == null {
       null
 
     } else {
       {|content|
         let content = if $rewrite {
           rewrite-text $content $bundle.old $destination
+        } else {
+          $content
+        }
+
+        let content = if $blob_rewrite {
+          $blob_roots | reduce --fold $content {|root, text|
+            let source = if $rewrite {
+              path-map $bundle.old $destination $root
+            } else {
+              $root
+            }
+            rewrite-text $text $source (blob-root)
+          }
         } else {
           $content
         }
