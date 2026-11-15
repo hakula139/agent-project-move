@@ -65,7 +65,7 @@ def rollout-file [path: string]: nothing -> any {
   }
 
   let compressed = if $plain == $path {
-    $path + ".zst"
+    $"($path).zst"
   } else {
     $path
   }
@@ -397,7 +397,7 @@ export def export-bundle [
 def rollout-target [file: record]: nothing -> string {
   let name = ($file.name | into string)
   if ($file | get -o compress | default false) and not ($name | str ends-with ".zst") {
-    $name + ".zst"
+    $"($name).zst"
   } else {
     $name
   }

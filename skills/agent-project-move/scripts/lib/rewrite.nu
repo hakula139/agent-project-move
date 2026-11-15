@@ -20,7 +20,7 @@ export def file-uri [path: string]: nothing -> string {
     }
     | str join
   )
-  "file://" + $encoded
+  $"file://($encoded)"
 }
 
 export def json-escape [text: string]: nothing -> string {
