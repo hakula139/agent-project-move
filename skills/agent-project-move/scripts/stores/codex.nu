@@ -78,6 +78,18 @@ def rollout-file [path: string]: nothing -> any {
   null
 }
 
+def required-rollout [row: record]: nothing -> record {
+  let path = ($row | get -o rollout_path)
+  if ($path | describe) != "string" {
+    error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout path"}
+  }
+  let resolved = (rollout-file $path)
+  if $resolved == null {
+    error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout file"}
+  }
+  $resolved
+}
+
 # --------------------------------------------------------------------------------------------------
 # Scan
 # --------------------------------------------------------------------------------------------------
@@ -142,20 +154,9 @@ export def plan-move [
   if $selective and ($threads | is-empty) { return [] }
   let rollouts = if $selective {
     $threads
-    | each {|row|
-      let path = ($row | get -o rollout_path)
-      if ($path | describe) != "string" {
-        error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout path"}
-      }
-      let resolved = (rollout-file $path)
-      if $resolved == null {
-        error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout file"}
-      }
-      let content = (rollout-content $resolved.file $resolved.compressed)
-      if (rewrite-text $content $old $new) != $content { $resolved.file }
-    }
-    | compact
+    | each {|row| required-rollout $row | get file }
     | uniq
+    | files-with-path $old $in
   } else {
     files-with-path $old [
       ($home | path join "sessions")
@@ -336,14 +337,7 @@ export def export-bundle [
 
   mut files = []
   for row in $threads {
-    let rollout = ($row | get -o rollout_path)
-    if ($rollout | describe) != "string" {
-      error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout path"}
-    }
-    let resolved = (rollout-file $rollout)
-    if $resolved == null {
-      error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout file"}
-    }
+    let resolved = (required-rollout $row)
     let name = ($resolved.file | path relative-to (root))
     $files = ($files | append {
       kind: "rollouts"

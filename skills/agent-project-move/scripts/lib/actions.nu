@@ -83,6 +83,14 @@ export def sql-action [
   }
 }
 
+def condition-with-predicate [matching: string, predicate: any]: nothing -> string {
+  if $predicate == null {
+    $matching
+  } else {
+    $"\(($matching)\) AND \(($predicate)\)"
+  }
+}
+
 def json-column-statements [
   db: string
   table: string
@@ -94,7 +102,7 @@ def json-column-statements [
   let plain = (sql-quote (json-escape $old))
   let uri = (sql-quote (json-escape (file-uri $old)))
   let matching = $"\(instr\(($column), ($plain)\) > 0 OR instr\(($column), ($uri)\) > 0\)"
-  let condition = if $where == null { $matching } else { $"($matching) AND \(($where)\)" }
+  let condition = (condition-with-predicate $matching $where)
   let query = $"SELECT rowid AS rid, ($column) AS value FROM ($table) WHERE ($condition)"
 
   sqlite-rows $db $query
@@ -105,7 +113,7 @@ def json-column-statements [
       null
     } else {
       let matching = $"rowid = ($row.rid | into string) AND ($column) = (sql-quote $value)"
-      let condition = if $where == null { $matching } else { $"($matching) AND \(($where)\)" }
+      let condition = (condition-with-predicate $matching $where)
       $"UPDATE ($table) SET ($column) = (sql-quote $updated) WHERE ($condition)"
     }
   }
@@ -120,7 +128,7 @@ export def column-statements [
   --where: string
 ]: nothing -> list<string> {
   let matching = (path-condition $column [$old])
-  let condition = if $where == null { $matching } else { $"\(($matching)\) AND \(($where)\)" }
+  let condition = (condition-with-predicate $matching $where)
   let offset = if $new == "/" { 2 } else { 1 }
   let value = $"(sql-quote $new) || substr\(($column), length\((sql-quote $old)\) + ($offset)\)"
   [$"UPDATE ($table) SET ($column) = ($value) WHERE ($condition)"]
@@ -144,11 +152,7 @@ export def column-actions [
     let column = $spec.column
     let predicate = ($spec | get -o where)
     let matching = (path-condition $column [$old])
-    let condition = if $predicate == null {
-      $matching
-    } else {
-      $"\(($matching)\) AND \(($predicate)\)"
-    }
+    let condition = (condition-with-predicate $matching $predicate)
     let statements = if ($spec | get -o json | default false) {
       json-column-statements $db $table $column $old $new --where $predicate
     } else {
