@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-15
+
+### Breaking changes
+
+- _(omp)_ Session transfers now include referenced global blobs and their aliases. Use v0.4.0 or newer on both hosts for bundles containing blobs. Export attachments separately with `export-blobs <ids-file> <bundle>` when source session files are unavailable ([#33](https://github.com/hakula139/agent-project-move/pull/33))
+
+[0.4.0]: https://github.com/hakula139/agent-project-move/compare/v0.3.0...v0.4.0
+
 ## [0.3.0] - 2026-11-15
 
 ### Breaking changes
