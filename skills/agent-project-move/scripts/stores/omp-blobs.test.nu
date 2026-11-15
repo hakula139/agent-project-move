@@ -168,8 +168,11 @@ def "test OMP export carries only selected native and historical blob dependenci
   }
 
   for component in ['quote"agent' 'back\slash-agent'] {
-    let pool = ($root | path join $component "blobs")
+    let case_root = ($root | path join $component)
+    let pool = ($case_root | path join "source agent/blobs")
     let journal = ($root | path join $"($component).jsonl")
+    let ids = ($case_root | path join "ids.txt")
+    let bundle = ($case_root | path join "bundle")
     let blob = $fixture.blobs.0
     mkdir $pool
     $blob.data | save ($pool | path join $blob.id)
@@ -181,6 +184,14 @@ def "test OMP export carries only selected native and historical blob dependenci
     ]
 
     assert equal (references [$journal] $pool) [$blob.id] $component
+    $blob.id | save $ids
+    let exported = (run-cli $case_root ["export-blobs" $ids $bundle])
+    assert equal $exported.exit_code 0 $exported.stderr
+    let files = (open ($bundle | path join "omp/entries.json")).files
+    assert equal ($files | get name) [$blob.id]
+    assert equal (
+      open --raw ($bundle | path join "omp" $files.0.bundle) | into binary
+    ) $blob.data
   }
 }
 

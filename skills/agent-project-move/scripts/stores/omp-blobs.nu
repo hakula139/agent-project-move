@@ -54,7 +54,7 @@ export def references [files: list<string>, root: string]: nothing -> list<strin
 }
 
 def content-hash [file: string]: nothing -> string {
-  ^sha256sum -- $file | split row " " | first
+  ^sha256sum --zero -- $file | split row " " | first
 }
 
 # Resolve selected IDs to verified canonical files and every safe alias in the local pool.
