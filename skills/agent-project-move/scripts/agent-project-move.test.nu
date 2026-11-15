@@ -730,7 +730,7 @@ def "test selected Codex moves bound rows and rollouts to the session closure" [
     write-jsonl $child $child_rows
     let desktop = ($root | path join "codex/.codex-global-state.json")
     {saved: [$project]} | to json | save $desktop
-    let desktop_bytes = (open --raw $desktop)
+    let desktop_bytes = (open --raw $desktop | into binary)
     let rows = (sqlite-rows $fixture.db "SELECT * FROM threads ORDER BY id")
     let projects = (sqlite-rows $fixture.db "SELECT * FROM projects")
     let roots = (sqlite-rows $fixture.db "SELECT * FROM project_roots ORDER BY position")
@@ -739,8 +739,9 @@ def "test selected Codex moves bound rows and rollouts to the session closure" [
       ["retained" "nested" "other-child"]
       | each {|id|
         let file = ($sessions | path join $"($id).jsonl")
-        {file: $file, bytes: (open --raw $file)}
+        {file: $file, bytes: (open --raw $file | into binary)}
       }
+      | collect
     )
     let expected_parent = [
       {
@@ -780,7 +781,7 @@ def "test selected Codex moves bound rows and rollouts to the session closure" [
       $child_rows | update 1.payload.path $"($target)/child.txt"
     )
     for peer in $peers {
-      assert equal (open --raw $peer.file) $peer.bytes $peer.file
+      assert equal (open --raw $peer.file | into binary) $peer.bytes $peer.file
     }
     for table in [
       "thread_history_projection_state" "thread_turns" "thread_items" "thread_realtime_items"
@@ -794,7 +795,7 @@ def "test selected Codex moves bound rows and rollouts to the session closure" [
     assert equal (sqlite-rows $fixture.db "SELECT * FROM projects") $projects
     assert equal (sqlite-rows $fixture.db "SELECT * FROM project_roots ORDER BY position") $roots
     assert equal (sqlite-rows $fixture.db "SELECT * FROM thread_spawn_edges") $edges
-    assert equal (open --raw $desktop) $desktop_bytes
+    assert equal (open --raw $desktop | into binary) $desktop_bytes
     let stable = (open --raw $fixture.db | hash sha256)
 
     let repeated = (with-env (fixture-env $root) {
@@ -1223,17 +1224,22 @@ def "test selected Claude moves preserve peers and shared project state" [] {
         ($fixture.config | path join "file-history/parent/file@v1")
         ($fixture.config | path join "file-history/child/child@v1")
       ]
-      | each {|file| {file: $file, bytes: (open --raw $file)} }
+      | each {|file| {file: $file, bytes: (open --raw $file | into binary)} }
+      | collect
     )
-    let parent_bytes = (open --raw $parent)
+    let parent_bytes = (open --raw $parent | into string)
     let artifact_names = if $selected == "parent" {
       ["parent/output.json" "parent/output.jsonl" "parent/subagents/agent-child/notes.md"]
     } else {
       ["parent/subagents/agent-child/notes.md"]
     }
-    let artifacts = ($artifact_names | each {|name|
-      {name: $name, bytes: (open --raw ($fixture.dir | path join $name))}
-    })
+    let artifacts = (
+      $artifact_names
+      | each {|name|
+        {name: $name, bytes: (open --raw ($fixture.dir | path join $name) | into binary)}
+      }
+      | collect
+    )
     if $selected == "parent" {
       mkdir $destination
       "conflicting transcript" | save ($destination | path join "parent.jsonl")
@@ -1249,7 +1255,9 @@ def "test selected Claude moves preserve peers and shared project state" [] {
       assert equal (open --raw $parent) $parent_bytes
       assert equal (open --raw ($destination | path join "parent.jsonl")) "conflicting transcript"
       for artifact in $artifacts {
-        assert equal (open --raw ($fixture.dir | path join $artifact.name)) $artifact.bytes
+        assert equal (
+          open --raw ($fixture.dir | path join $artifact.name) | into binary
+        ) $artifact.bytes
       }
       rm ($destination | path join "parent.jsonl")
     }
@@ -1271,7 +1279,9 @@ def "test selected Claude moves preserve peers and shared project state" [] {
     )
     assert not ($fixture.child | path exists)
     for artifact in $artifacts {
-      assert equal (open --raw ($destination | path join $artifact.name)) $artifact.bytes
+      assert equal (
+        open --raw ($destination | path join $artifact.name) | into binary
+      ) $artifact.bytes
       assert not (($fixture.dir | path join $artifact.name) | path exists)
     }
     if $selected == "parent" {
@@ -1292,7 +1302,7 @@ def "test selected Claude moves preserve peers and shared project state" [] {
       }
     }
     for original in $unchanged {
-      assert equal (open --raw $original.file) $original.bytes $original.file
+      assert equal (open --raw $original.file | into binary) $original.bytes $original.file
     }
 
     let repeated = (with-env (fixture-env $root) {
@@ -1778,15 +1788,16 @@ def "test selected OMP moves map nested and flat descendants while preserving pe
     {type: "session", id: "retained", cwd: $project}
     {type: "message", path: $"($project)/peer.txt", parent: $fixture.parent}
   ]
-  let retained_bytes = (open --raw $retained)
+  let retained_bytes = (open --raw $retained | into binary)
   let globals = (
     ["omp/agent.db" "omp/history.db" "omp/blobs/kept" "state/omp/memories/kept/MEMORY.md"]
     | each {|name|
       let file = ($root | path join $name)
       mkdir ($file | path dirname)
       $project | save $file
-      {file: $file, bytes: (open --raw $file)}
+      {file: $file, bytes: (open --raw $file | into binary)}
     }
+    | collect
   )
   let child = ($fixture.children | path join "implementer/worker.jsonl")
   let checks = (
@@ -1799,7 +1810,7 @@ def "test selected OMP moves map nested and flat descendants while preserving pe
       } else {
         $destination | path join ($file | path relative-to $fixture.dir)
       }
-      mut expected = (open --raw $file)
+      mut expected = (open --raw $file | into string)
       if ($file | str ends-with ".jsonl") {
         $expected = (
           $expected | str replace --all ($project | to json --raw) ($target | to json --raw)
@@ -1821,6 +1832,7 @@ def "test selected OMP moves map nested and flat descendants while preserving pe
       }
       {source: $file, target: $moved, expected: $expected}
     }
+    | collect
   )
 
   let moved = (with-env (fixture-env $root) {
@@ -1834,9 +1846,9 @@ def "test selected OMP moves map nested and flat descendants while preserving pe
       assert not ($check.source | path exists) $check.source
     }
   }
-  assert equal (open --raw $retained) $retained_bytes
+  assert equal (open --raw $retained | into binary) $retained_bytes
   for original in $globals {
-    assert equal (open --raw $original.file) $original.bytes $original.file
+    assert equal (open --raw $original.file | into binary) $original.bytes $original.file
   }
 
   let repeated = (with-env (fixture-env $root) {
@@ -1866,7 +1878,7 @@ def "test selected OMP moves map nested and flat descendants while preserving pe
   | each {|row| $row | to json --raw }
   | str join "\n"
   | save --force $child
-  let parent_bytes = (open --raw $fixture.parent)
+  let parent_bytes = (open --raw $fixture.parent | into binary)
   let destination = ($project | path join "omp/sessions" (session-encode-here $target))
   let moved_child = ($destination | path join ($child | path relative-to $fixture.dir))
 
@@ -1875,7 +1887,7 @@ def "test selected OMP moves map nested and flat descendants while preserving pe
   })
   assert equal $moved.exit_code 0 $moved.stderr
 
-  assert equal (open --raw $fixture.parent) $parent_bytes
+  assert equal (open --raw $fixture.parent | into binary) $parent_bytes
   assert equal (
     open --raw $moved_child | lines | each {|line| $line | from json }
   ) ($child_rows | each {|row|
