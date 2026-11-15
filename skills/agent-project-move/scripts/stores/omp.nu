@@ -296,109 +296,16 @@ export def plan-move [old: string, new: string]: nothing -> list<record> {
 }
 
 # --------------------------------------------------------------------------------------------------
-# Dependencies
-# --------------------------------------------------------------------------------------------------
-
-def owned-journals [rows: list<record>]: nothing -> list<string> {
-  $rows
-  | each {|row|
-    let subtree = ($row.file | str replace --regex '\.jsonl$' "")
-    [$row.file] ++ (files-under $subtree)
-  }
-  | flatten
-  | where {|file| $file | str ends-with ".jsonl" }
-  | uniq
-  | sort
-}
-
-def dependency-request [
-  old: string
-  selected: list<record>
-  source_root: string
-]: nothing -> record {
-  let local_root = (blob-root)
-  let sessions = (
-    $selected
-    | group-by id
-    | transpose id rows
-    | each {|group|
-      {
-        id: $group.id
-        blobs: (omp-blobs references (owned-journals $group.rows) [$source_root $local_root])
-      }
-    }
-  )
-  omp-blobs validate-request {
-    version: 1
-    assistant: "omp"
-    path: $old
-    source_blob_root: $source_root
-    sessions: $sessions
-  }
-}
-
-export def dependencies [
-  old: string
-  --source-blob-root: string
-  --exact
-  --session-ids: list<string> = []
-]: nothing -> record {
-  let selected = (select-sessions (session-records) $old --exact=$exact --session-ids $session_ids)
-  if ($selected | is-empty) {
-    error make --unspanned {msg: $"No OMP sessions are recorded under ($old)"}
-  }
-  let root = ($source_blob_root | default (blob-root))
-  dependency-request $old $selected $root
-}
-
-def request-for-path [file: string, old: string]: nothing -> record {
-  let request = (omp-blobs read-request $file)
-  if $request.path != $old {
-    error make --unspanned {msg: "OMP dependency request selection path differs from the argument"}
-  }
-  $request
-}
-
-# --------------------------------------------------------------------------------------------------
 # Retirement
 # --------------------------------------------------------------------------------------------------
-
-def blob-retirement [request: record, retained: list<string>]: nothing -> list<record> {
-  let root = (blob-root)
-  let protected = (
-    omp-blobs references $retained [$root $request.source_blob_root]
-    | get id
-  )
-  let unshared = (
-    $request
-    | update sessions {
-      $in
-      | each {|session|
-        $session | update blobs { $in | where {|blob| $blob.id not-in $protected } }
-      }
-    }
-  )
-  omp-blobs retirement-files $unshared $root
-  | each {|file| action "omp" "blobs" "delete" $file "retire unshared session dependency" }
-}
 
 export def plan-retire [
   old: string
   --exact
   --session-ids: list<string> = []
-  --dependencies-from: string
 ]: nothing -> list<record> {
-  let all_journals = (
-    (files-under (session-root)) ++ (files-under (archive-root))
-    | where {|file| $file | str ends-with ".jsonl" }
-  )
-  if $dependencies_from != null {
-    return (blob-retirement (request-for-path $dependencies_from $old) $all_journals)
-  }
-
   let records = (session-records)
   let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
-  let request = (dependency-request $old $selected (blob-root))
   let session_files = (
     $selected
     | get file
@@ -411,40 +318,34 @@ export def plan-retire [
     | where {|path| $path | path exists }
   )
 
-  let removed = (outermost-paths ($session_files ++ $subtrees))
-  let retained = (
-    $all_journals
-    | where {|file| not ($removed | any {|path| path-match $path $file }) }
-  )
-  let blobs = (blob-retirement $request $retained)
-  let sessions = (
-    $removed
-    | each {|file| action "omp" "sessions" "delete" $file "retire session tree" }
-  )
-  $sessions ++ $blobs
+  $session_files ++ $subtrees
+  | outermost-paths $in
+  | each {|file| action "omp" "sessions" "delete" $file "retire session tree" }
 }
 
 # --------------------------------------------------------------------------------------------------
 # Transfer
 # --------------------------------------------------------------------------------------------------
 
+# Export canonical blobs and their aliases from a plain ID list.
+export def export-blobs [ids_file: string]: nothing -> record {
+  let ids = (open --raw $ids_file | lines | str trim | where {|id| $id != "" } | uniq)
+  if ($ids | is-empty) {
+    error make --unspanned {msg: "The blob ID file is empty"}
+  }
+  {
+    assistant: "omp"
+    old: (blob-root)
+    files: (omp-blobs resolve-files $ids (blob-root))
+    tables: []
+  }
+}
+
 export def export-bundle [
   old: string
   --exact
   --session-ids: list<string> = []
-  --dependencies-from: string
 ]: nothing -> record {
-  if $dependencies_from != null {
-    let request = (request-for-path $dependencies_from $old)
-    return {
-      assistant: "omp"
-      old: $old
-      files: (omp-blobs resolve-files $request (blob-root))
-      tables: []
-      dependencies: $request
-    }
-  }
-
   let records = (session-records)
   let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
   mut files = []
@@ -462,15 +363,20 @@ export def export-bundle [
       })
     }
   }
-  $files = ($files | uniq)
-  let request = (dependency-request $old $selected (blob-root))
+  let journals = (
+    $files
+    | get source
+    | where {|file| $file | str ends-with ".jsonl" }
+    | uniq
+  )
+  let ids = (omp-blobs references $journals (blob-root))
+  $files = (($files | uniq) ++ (omp-blobs resolve-files $ids (blob-root)))
 
   {
     assistant: "omp"
     old: $old
-    files: ($files ++ (omp-blobs resolve-files $request (blob-root)))
+    files: $files
     tables: []
-    dependencies: $request
   }
 }
 
@@ -512,74 +418,35 @@ def mapped-parent [file: record, targets: list<record>, --remap]: nothing -> any
   }
 }
 
-def dependency-repairs [request: record, inventory: list<record>]: nothing -> list<record> {
-  let root = (blob-root)
-  mut actions = []
-  for session in $request.sessions {
-    let local = ($inventory | where id == $session.id)
-    if ($local | is-empty) {
-      error make --unspanned {msg: $"Missing local OMP session ($session.id) for dependency repair"}
-    }
-    let journals = (owned-journals $local)
-    let actual = (omp-blobs references $journals [$root $request.source_blob_root])
-    if $actual != $session.blobs {
-      error make --unspanned {
-        msg: $"Local OMP session ($session.id) dependencies differ from the request"
-      }
-    }
-    let scoped = ($request | update sessions [$session])
-    for file in $journals {
-      let content = (open --raw $file)
-      let expected = (omp-blobs rewrite-paths $content $scoped $root)
-      if $content != $expected {
-        $actions = ($actions | append (
-          edit-action "omp" "sessions" $file {|text| omp-blobs rewrite-paths $text $scoped $root }
-            "repair session dependency paths"
-        ))
-      }
-    }
-  }
-  $actions | uniq-by path
-}
-
-export def plan-import [
-  bundle: record
-  --target: string
-  --repair-dependencies
-]: nothing -> list<record> {
+export def plan-import [bundle: record, --target: string]: nothing -> list<record> {
+  omp-blobs verify-files $bundle.files
   let destination = $target
-  let request = if ($bundle | get -o dependencies) == null {
-    if $repair_dependencies or ($bundle.files | any {|file| $file.kind == "blobs" }) {
-      error make --unspanned {msg: "OMP blob import requires a dependency manifest"}
-    }
-    null
-  } else {
-    let request = (omp-blobs validate-request $bundle.dependencies)
-    if $request.path != $bundle.old {
-      error make --unspanned {msg: "OMP dependency manifest selection path differs from the bundle"}
-    }
-    omp-blobs verify-files $request $bundle.files
-    $request
-  }
-  if $repair_dependencies and ($bundle.files | any {|file| $file.kind != "blobs" }) {
-    error make --unspanned {msg: "Dependency repair requires a dependency-only OMP bundle"}
-  }
-  let session_sources = (
+  let blob_roots = (
     $bundle.files
-    | where {|file| $file.kind in ["sessions" "archives"] }
-    | get -o bundle
+    | where kind == "blobs"
+    | get -o origin_path
+    | each {|path| $path | path dirname }
+    | uniq
   )
   let rewritten = if $destination == null {
     []
   } else {
-    files-with-path $bundle.old $session_sources
-  }
-  let dependency_rewritten = if $request == null {
-    []
-  } else {
-    $session_sources | where {|file| $file | str ends-with ".jsonl" }
+    let sources = (
+      $bundle.files
+      | where {|file| $file.kind in ["sessions" "archives"] }
+      | get -o bundle
+    )
+    files-with-path $bundle.old $sources
   }
 
+  let blob_sources = (
+    $bundle.files
+    | where {|file| $file.kind in ["sessions" "archives"] and (
+      $file.name | str ends-with ".jsonl"
+    ) }
+    | get -o bundle
+    | where {|file| $blob_roots | any {|root| (files-with-path $root [$file]) | is-not-empty } }
+  )
   let local_inventory = (session-records)
 
   let planned = (
@@ -630,28 +497,19 @@ export def plan-import [
 
   let targets = ($planned | each {|file| $file | upsert target (artifact-target $file $planned) })
 
-  mut actions = if $repair_dependencies {
-    dependency-repairs $request $local_inventory
-  } else {
-    []
-  }
+  mut actions = []
 
   for file in $targets {
     let parent = (mapped-parent $file $targets --remap=($destination != null))
-    let dependency_rewrite = $file.bundle in $dependency_rewritten
-    let scoped = if $file.header == null or $request == null {
-      $request
-    } else {
-      $request | update sessions { $in | where id == $file.header.id }
-    }
-    let content = if $file.header != null or $file.bundle in $rewritten or $dependency_rewrite {
+    let blob_rewrite = $file.bundle in $blob_sources
+    let content = if $file.header != null or $file.bundle in $rewritten or $blob_rewrite {
       open --raw $file.bundle
     } else {
       null
     }
 
     let rewrite = $file.bundle in $rewritten and ($content | describe) == "string"
-    let transform = if not $rewrite and not $dependency_rewrite and $parent == null {
+    let transform = if not $rewrite and not $blob_rewrite and $parent == null {
       null
 
     } else {
@@ -661,13 +519,16 @@ export def plan-import [
         } else {
           $content
         }
-        let content = if $dependency_rewrite {
-          let mapped_root = if $rewrite {
-            path-map $bundle.old $destination $request.source_blob_root
-          } else {
-            $request.source_blob_root
+
+        let content = if $blob_rewrite {
+          $blob_roots | reduce --fold $content {|root, text|
+            let source = if $rewrite {
+              path-map $bundle.old $destination $root
+            } else {
+              $root
+            }
+            rewrite-text $text $source (blob-root)
           }
-          omp-blobs rewrite-paths $content $scoped (blob-root) --source-root $mapped_root
         } else {
           $content
         }

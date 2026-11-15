@@ -7,23 +7,19 @@
 use std/assert
 
 use ../lib/rewrite.nu [file-uri]
+use ./omp-blobs.nu [references]
 use ./omp.nu [session-encode-here]
-use ./omp-blobs.nu [references rewrite-paths]
 
 const SCRIPT = path self "../agent-project-move.nu"
 
-def fixture-env [root: string]: nothing -> record {
-  {
-    CLAUDE_CONFIG_DIR: ($root | path join "claude")
-    CODEX_HOME: ($root | path join "codex")
-    PI_CODING_AGENT_DIR: ($root | path join "omp")
-    TZ: "UTC"
+def run-cli [root: string, args: list<string>]: nothing -> record {
+  with-env {
+    PI_CODING_AGENT_DIR: ($root | path join "source agent")
     XDG_STATE_HOME: ($root | path join "state")
+    TZ: "UTC"
+  } {
+    ^$nu.current-exe $SCRIPT ...$args | complete
   }
-}
-
-def --wrapped run-cli [...args: string]: nothing -> record {
-  ^$nu.current-exe $SCRIPT ...$args | complete
 }
 
 def write-jsonl [file: string, rows: list<record>] {
@@ -31,29 +27,11 @@ def write-jsonl [file: string, rows: list<record>] {
   $rows
   | each {|row| $row | to json --raw }
   | str join "\n"
-  | save --force $file
+  | save $file
 }
 
-def escape-path-tokens [content: string, paths: list<string>, escape: string]: nothing -> string {
-  mut encoded = $content
-  for path in $paths {
-    let token = ($path | to json --raw)
-    let escaped = ($token | str replace --all "/" $escape)
-    $encoded = ($encoded | str replace --all $token $escaped)
-  }
-  $encoded
-}
-
-def blob-row [data: binary, suffix: string]: nothing -> record {
-  {
-    id: ($data | hash sha256)
-    data: $data
-    suffix: $suffix
-  }
-}
-
-def parent-rows [project: string, blob_root: string, prose_root: string, blobs: list<record>] {
-  let display = ($blob_root | path join ($blobs.2.id + $blobs.2.suffix))
+def parent-rows [project: string, root: string, prose_root: string, blobs: list<record>] {
+  let display = ($root | path join ($blobs.0.id + $blobs.0.suffix))
   [
     {
       type: "session"
@@ -70,48 +48,46 @@ def parent-rows [project: string, blob_root: string, prose_root: string, blobs: 
           }
           {
             type: "text"
-            text: $"Prior image ($blobs.3.id)($blobs.3.suffix). Historical root ($prose_root). Unrelated digest ($blobs.4.id)."
+            text: $"Prior image ($blobs.2.id)($blobs.2.suffix). Historical root ($prose_root). Unrelated digest ($blobs.3.id)."
           }
         ]
         details: {
-          files: [$display (file-uri $display)]
+          files: [$display (file-uri $display) (file-uri ($root | path join $blobs.4.id))]
         }
       }
     }
     {
       type: "compaction"
-      preserveData: {
-        snapcompact: {
-          frames: [{data: $"blob:sha256:($blobs.1.id)"}]
-        }
-      }
+      preserveData: {snapcompact: {frames: [{data: $"blob:sha256:($blobs.1.id)"}]}}
     }
   ]
 }
 
 def make-fixture [root: string, project: string = "/home/u/src/app"]: nothing -> record {
-  let blobs = [
-    (blob-row 0x[00 01 02 ff] ".png")
-    (blob-row 0x[03 04 05 fe] ".webp")
-    (blob-row 0x[06 07 08 fd] ".jpg")
-    (blob-row 0x[09 0a 0b fc] ".png")
-    (blob-row 0x[0c 0d 0e fb] ".png")
-  ]
-  let dir = ($root | path join "omp")
-  let blob_root = ($dir | path join "blobs")
-  let directory = ($dir | path join "sessions" (session-encode-here $project))
+  let pool = ($root | path join "source agent/blobs")
+  let directory = ($root | path join "source agent/sessions" (session-encode-here $project))
+  let blobs = (
+    [0x[00 01 02 ff] 0x[03 04 05 fe] 0x[06 07 08 fd] 0x[09 0a 0b fc] 0x[0c 0d 0e fb]]
+    | enumerate
+    | each {|row|
+      {
+        id: ($row.item | hash sha256)
+        data: $row.item
+        suffix: (if $row.index == 1 { ".webp" } else { ".png" })
+      }
+    }
+  )
+  mkdir $pool
+
+  for blob in $blobs {
+    $blob.data | save ($pool | path join $blob.id)
+    $blob.data | save ($pool | path join ($blob.id + $blob.suffix))
+  }
+
   let parent = ($directory | path join "parent.jsonl")
   let child = ($directory | path join "child.jsonl")
   let peer = ($directory | path join "peer.jsonl")
-  mkdir $blob_root
-
-  for blob in $blobs {
-    $blob.data | save ($blob_root | path join $blob.id)
-    $blob.data | save ($blob_root | path join ($blob.id + $blob.suffix))
-  }
-
-  let rows = (parent-rows $project $blob_root $blob_root $blobs)
-  write-jsonl $parent $rows
+  write-jsonl $parent (parent-rows $project $pool $pool $blobs)
   write-jsonl $child [
     {
       type: "session"
@@ -121,14 +97,7 @@ def make-fixture [root: string, project: string = "/home/u/src/app"]: nothing ->
     }
     {
       type: "message"
-      message: {
-        content: [
-          {
-            type: "image"
-            data: $"blob:sha256:($blobs.1.id)"
-          }
-        ]
-      }
+      data: $"blob:sha256:($blobs.1.id)"
     }
   ]
   write-jsonl $peer [
@@ -139,26 +108,17 @@ def make-fixture [root: string, project: string = "/home/u/src/app"]: nothing ->
     }
     {
       type: "message"
-      message: {
-        content: [
-          {
-            type: "text"
-            text: $"Keep blob:sha256:($blobs.1.id)."
-          }
-        ]
-      }
+      data: $"blob:sha256:($blobs.3.id)"
     }
   ]
-
   {
     project: $project
-    root: $dir
-    blob_root: $blob_root
-    directory: $directory
+    pool: $pool
     parent: $parent
     child: $child
     peer: $peer
     blobs: $blobs
+    selected: [$blobs.0 $blobs.1 $blobs.2 $blobs.4]
   }
 }
 
@@ -169,609 +129,296 @@ def blob-names [blobs: list<record>]: nothing -> list<string> {
   | sort
 }
 
-def assert-blobs [root: string, blobs: list<record>] {
+def assert-blobs [pool: string, blobs: list<record>] {
+  assert equal (ls $pool | get name | path basename | sort) (blob-names $blobs)
   for blob in $blobs {
     for name in [$blob.id ($blob.id + $blob.suffix)] {
-      let file = ($root | path join $name)
-      assert ($file | path exists) $name
-      assert equal (open --raw $file | into binary) $blob.data $name
+      assert equal (open --raw ($pool | path join $name) | into binary) $blob.data $name
     }
   }
 }
 
-def "test OMP reference extraction decodes escaped locators and blob paths" [] {
-  let root = (mktemp -d)
-  let source = "/home/u/.omp/agent/blobs"
-  let id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  let escaped_id = (1..64 | each { '\u0061' } | str join)
-  let alias = ($id + ".png")
-  let native_expected = [
-    {
-      id: $id
-      aliases: []
-    }
-  ]
-  let alias_expected = [
-    {
-      id: $id
-      aliases: [$alias]
-    }
-  ]
-  let native = ({
-    type: "message"
-    data: $"blob:sha256:($id)"
-  } | to json --raw)
-  let path = ({
-    type: "message"
-    path: ($source | path join $alias)
-  } | to json --raw)
-  let uri = ({
-    type: "message"
-    path: (file-uri ($source | path join $alias))
-  } | to json --raw)
-  let cases = [
-    {
-      name: "native"
-      content: $native
-      expected: $native_expected
-    }
-    {
-      name: "unicode native"
-      content: (
-        $native
-        | str replace $id $escaped_id
-        | str replace "blob:sha256:" ('\u0062lob\u003a' + 'sha256\u003a')
-      )
-      expected: $native_expected
-    }
-    {
-      name: "escaped absolute path"
-      content: ($path | str replace --all "/" '\/' | str replace $id $escaped_id)
-      expected: $alias_expected
-    }
-    {
-      name: "escaped file URI"
-      content: ($uri | str replace --all "/" '\/' | str replace $id $escaped_id)
-      expected: $alias_expected
-    }
-    {
-      name: "embedded locator with terminal punctuation"
-      content: ({
-        type: "message"
-        text: $"See blob:sha256:($id)."
-      } | to json --raw)
-      expected: $native_expected
-    }
-    {
-      name: "documentary prefix literal"
-      content: ({
-        type: "message"
-        text: 'const BLOB_PREFIX = "blob:sha256:"'
-      } | to json --raw)
-      expected: []
-    }
-  ]
-
-  for case in $cases {
-    let journal = ($root | path join ($case.name + ".jsonl"))
-    $case.content | save $journal
-
-    let found = (references [$journal] [$source])
-
-    assert equal $found $case.expected $case.name
-  }
-}
-
-def "test OMP export carries selected native and historical blob dependencies" [] {
+def "test OMP export carries only selected native and historical blob dependencies" [] {
   let root = (mktemp -d)
   let fixture = (make-fixture $root)
   let bundle = ($root | path join "bundle")
-  let carried = ($fixture.blobs | first 4)
 
-  let run = (with-env (fixture-env $root) {
-    run-cli export $fixture.project $bundle --assistant "omp" --session-ids "parent"
-  })
+  let run = (run-cli $root [
+    "export" $fixture.project $bundle "--assistant" "omp" "--session-ids" "parent"
+  ])
   assert equal $run.exit_code 0 $run.stderr
 
   let entries = (open ($bundle | path join "omp/entries.json"))
-  let files = ($entries.files | where kind == "blobs")
-  assert equal ($files | get -o name | sort) (blob-names $carried)
-  assert equal ($entries.dependencies.sessions | get id | sort) ["child" "parent"]
-  for file in $files {
-    let source = ($fixture.blob_root | path join $file.name)
-    let copy = ($bundle | path join "omp" $file.bundle)
-    assert equal (open --raw $copy | into binary) (open --raw $source | into binary) $file.name
+  assert equal (
+    $entries.files
+    | where kind == "blobs"
+    | get name
+    | sort
+  ) (blob-names $fixture.selected)
+  assert equal (
+    $entries.files
+    | get -o session
+    | compact
+    | sort
+  ) ["child" "parent"]
+  for file in ($entries.files | where kind == "blobs") {
+    assert equal (
+      open --raw ($bundle | path join "omp" $file.bundle) | into binary
+    ) (open --raw ($fixture.pool | path join $file.name) | into binary)
+  }
+
+  for component in ['quote"agent' 'back\slash-agent'] {
+    let pool = ($root | path join $component "blobs")
+    let journal = ($root | path join $"($component).jsonl")
+    let blob = $fixture.blobs.0
+    mkdir $pool
+    $blob.data | save ($pool | path join $blob.id)
+    write-jsonl $journal [
+      {
+        type: "message"
+        path: ($pool | path join $blob.id)
+      }
+    ]
+
+    assert equal (references [$journal] $pool) [$blob.id] $component
   }
 }
 
-def "test OMP import preserves blob bytes and maps only complete dependency paths" [] {
+def "test OMP import maps native blob paths and preserves collision and repeat behavior" [] {
   let root = (mktemp -d)
-  let fixture = (make-fixture ($root | path join "source"))
-  let bundle = ($root | path join "bundle")
+  let source = ($root | path join "source")
   let target = ($root | path join "target")
-  let target_blobs = ($target | path join "omp/blobs")
-  let display = ($fixture.blob_root | path join ($fixture.blobs.2.id + $fixture.blobs.2.suffix))
-  let original = (open --raw $fixture.parent | into string)
-  let encoded = (escape-path-tokens $original [$display] '\u002f')
-  escape-path-tokens $encoded [(file-uri $display)] '\/' | save --force $fixture.parent
-
-  let exported = (with-env (fixture-env ($root | path join "source")) {
-    run-cli export $fixture.project $bundle --assistant "omp" --session-ids "parent"
-  })
+  let fixture = (make-fixture $source)
+  let bundle = ($root | path join "bundle")
+  let pool = ($target | path join "source agent/blobs")
+  let exported = (run-cli $source [
+    "export" $fixture.project $bundle "--assistant" "omp" "--session-ids" "parent"
+  ])
   assert equal $exported.exit_code 0 $exported.stderr
 
-  let imported = (with-env (fixture-env $target) {
-    run-cli import $bundle --assistant "omp" --apply
-  })
+  let imported = (run-cli $target ["import" $bundle "--assistant" "omp" "--apply"])
   assert equal $imported.exit_code 0 $imported.stderr
 
-  let parent = (glob ($target | path join "omp/sessions/*/parent.jsonl") | first)
-  assert-blobs $target_blobs ($fixture.blobs | first 4)
-  assert equal (
-    ls $target_blobs | get name | path basename | sort
-  ) (blob-names ($fixture.blobs | first 4))
+  assert-blobs $pool $fixture.selected
+  let parent = (glob ($target | path join "source agent/sessions/*/parent.jsonl") | first)
   let expected = (
-    parent-rows $fixture.project $target_blobs $fixture.blob_root $fixture.blobs
+    parent-rows $fixture.project $pool $fixture.pool $fixture.blobs
     | each {|row| $row | to json --raw }
     | str join "\n"
   )
   assert equal (open --raw $parent | into string) $expected
-
-  let repeated = (with-env (fixture-env $target) {
-    run-cli import $bundle --assistant "omp" --apply
-  })
+  let repeated = (run-cli $target ["import" $bundle "--assistant" "omp" "--apply"])
   assert equal $repeated.exit_code 0 $repeated.stderr
   assert str contains $repeated.stdout "No changes."
 
   let changed = ($expected | str replace "Prior image" "Local note")
   $changed | save --force $parent
-
-  let conflict = (with-env (fixture-env $target) {
-    run-cli import $bundle --assistant "omp" --apply
-  })
+  let conflict = (run-cli $target ["import" $bundle "--assistant" "omp" "--apply"])
   assert not equal $conflict.exit_code 0
-
   assert equal (open --raw $parent | into string) $changed
-  assert-blobs $target_blobs ($fixture.blobs | first 4)
-}
 
-def "test OMP target imports keep local blob paths under an enclosing project root" [] {
-  let root = (mktemp -d)
-  let source = ($root | path join "source")
-  let fixture = (make-fixture $source $source)
-  let bundle = ($root | path join "bundle")
-  let target = ($root | path join "target")
-  let project = ($root | path join "work/app")
-  let target_blobs = ($target | path join "omp/blobs")
-  mkdir $project
+  for name in [$fixture.blobs.0.id ($fixture.blobs.0.id + $fixture.blobs.0.suffix)] {
+    let other = ($root | path join $name)
+    let other_pool = ($other | path join "source agent/blobs")
+    mkdir $other_pool
+    0x[ff fe fd fc] | save ($other_pool | path join $name)
+    let collision = (run-cli $other ["import" $bundle "--assistant" "omp" "--apply"])
+    assert not equal $collision.exit_code 0 $name
+    assert equal (ls $other_pool | get name | path basename) [$name]
+    assert equal (open --raw ($other_pool | path join $name) | into binary) 0x[ff fe fd fc]
+    assert not (($other | path join "source agent/sessions") | path exists)
+  }
 
-  let exported = (with-env (fixture-env $source) {
-    run-cli export $fixture.project $bundle --assistant "omp" --session-ids "parent"
-  })
+  let enclosing = ($root | path join "enclosing")
+  let nested = (make-fixture $enclosing $enclosing)
+  let mapped_bundle = ($root | path join "mapped-bundle")
+  let mapped_target = ($root | path join "mapped-target")
+  let mapped_project = ($root | path join "work/app")
+  let mapped_pool = ($mapped_target | path join "source agent/blobs")
+  mkdir $mapped_project
+  let exported = (run-cli $enclosing [
+    "export" $enclosing $mapped_bundle "--assistant" "omp" "--session-ids" "parent"
+  ])
   assert equal $exported.exit_code 0 $exported.stderr
 
-  let imported = (with-env (fixture-env $target) {
-    run-cli import $bundle --assistant "omp" --target $project --apply
-  })
+  let imported = (run-cli $mapped_target [
+    "import" $mapped_bundle "--assistant" "omp" "--target" $mapped_project "--apply"
+  ])
   assert equal $imported.exit_code 0 $imported.stderr
 
-  let parent = (glob ($target | path join "omp/sessions/*/parent.jsonl") | first)
-  assert-blobs $target_blobs ($fixture.blobs | first 4)
+  let parent = (glob ($mapped_target | path join "source agent/sessions/*/parent.jsonl") | first)
   let expected = (
-    parent-rows ($project | path expand) $target_blobs $fixture.blob_root $fixture.blobs
+    parent-rows ($mapped_project | path expand) $mapped_pool $nested.pool $nested.blobs
     | each {|row| $row | to json --raw }
     | str join "\n"
   )
   assert equal (open --raw $parent | into string) $expected
+  assert-blobs $mapped_pool $nested.selected
 }
 
-def "test OMP import rejects canonical and alias collisions before any copy" [] {
+def "test OMP transfer rejects missing or corrupt blob bytes before writing" [] {
   let root = (mktemp -d)
-  let fixture = (make-fixture ($root | path join "source"))
-  let bundle = ($root | path join "bundle")
-  let first = $fixture.blobs.0
-  let cases = [$first.id ($first.id + $first.suffix)]
-
-  let exported = (with-env (fixture-env ($root | path join "source")) {
-    run-cli export $fixture.project $bundle --assistant "omp" --session-ids "parent"
-  })
-  assert equal $exported.exit_code 0 $exported.stderr
-
-  for name in $cases {
-    let target = ($root | path join $name)
-    let blobs = ($target | path join "omp/blobs")
-    let conflict = ($blobs | path join $name)
-    mkdir $blobs
-    0x[ff fe fd fc] | save $conflict
-
-    let imported = (with-env (fixture-env $target) {
-      run-cli import $bundle --assistant "omp" --apply
-    })
-    assert not equal $imported.exit_code 0 $name
-
-    assert equal (open --raw $conflict | into binary) 0x[ff fe fd fc] $name
-    assert equal (ls $blobs | get name | path basename) [$name] $name
-    assert not (($target | path join "omp/sessions") | path exists) $name
-    assert not (($target | path join "state") | path exists) $name
-  }
-}
-
-def "test OMP import rejects corrupted carried blob files before session writes" [] {
-  let root = (mktemp -d)
-
-  for kind in ["canonical" "alias"] {
-    let base = ($root | path join $kind)
+  let cases = [
+    [stage fault part];
+    ["source" "missing" "canonical"]
+    ["source" "corrupt" "canonical"]
+    ["source" "corrupt" "alias"]
+    ["bundle" "missing" "canonical"]
+    ["bundle" "missing" "alias"]
+    ["bundle" "corrupt" "canonical"]
+    ["bundle" "corrupt" "alias"]
+    ["bundle" "relative-origin" "canonical"]
+    ["bundle" "wrong-name-origin" "canonical"]
+    ["bundle" "root-origin" "canonical"]
+  ]
+  for case in $cases {
+    let label = ($case | values | str join "-")
+    let base = ($root | path join $label)
     let source = ($base | path join "source")
+    let target = ($base | path join "target")
     let fixture = (make-fixture $source)
     let bundle = ($base | path join "bundle")
-    let target = ($base | path join "target")
-    let name = if $kind == "canonical" {
+    let name = if $case.part == "canonical" {
       $fixture.blobs.0.id
     } else {
       $fixture.blobs.0.id + $fixture.blobs.0.suffix
     }
+    if $case.stage == "source" {
+      let file = ($fixture.pool | path join $name)
+      if $case.fault == "missing" {
+        rm $file
+      } else {
+        0x[ff fe fd fc] | save --force $file
+      }
+    }
 
-    let exported = (with-env (fixture-env $source) {
-      run-cli export $fixture.project $bundle --assistant "omp" --session-ids "parent"
-    })
+    let exported = (run-cli $source [
+      "export" $fixture.project $bundle "--assistant" "omp" "--session-ids" "parent"
+    ])
+    if $case.stage == "source" {
+      assert not equal $exported.exit_code 0 $label
+      assert not ($bundle | path exists) $label
+      continue
+    }
     assert equal $exported.exit_code 0 $exported.stderr
 
-    let entries = (open ($bundle | path join "omp/entries.json"))
+    let manifest = ($bundle | path join "omp/entries.json")
+    let entries = (open $manifest)
     let file = ($entries.files | where name == $name | first)
-    0x[ff fe fd fc] | save --force ($bundle | path join "omp" $file.bundle)
-
-    let imported = (with-env (fixture-env $target) {
-      run-cli import $bundle --assistant "omp" --apply
-    })
-    assert not equal $imported.exit_code 0 $kind
-
-    assert not (($target | path join "omp") | path exists) $kind
-    assert not (($target | path join "state") | path exists) $kind
-  }
-}
-
-def "test OMP dependency repair changes only requested complete blob path tokens" [] {
-  let blob = (blob-row 0x[00 01 02 ff] ".png")
-  let source = "/home/u"
-  let target = "/home/v/.omp/agent/blobs"
-  let name = ($blob.id + $blob.suffix)
-  let original = {
-    cwd: "/home/u/src/app"
-    unrelated: "/home/u/notes.txt"
-    locator: $"blob:sha256:($blob.id)"
-    prose: $"Historical file /home/u/($name)."
-    descendants: [
-      ($source | path join $blob.id "unrelated")
-      ($source | path join $name "unrelated")
-      (file-uri ($source | path join $name "unrelated"))
-    ]
-    files: [
-      ($source | path join $blob.id)
-      ($source | path join $name)
-      (file-uri ($source | path join $name))
-    ]
-  }
-  let expected = ($original | update files [
-    ($target | path join $blob.id)
-    ($target | path join $name)
-    (file-uri ($target | path join $name))
-  ])
-  let request = {
-    version: 1
-    assistant: "omp"
-    path: "/home/u/src/app"
-    source_blob_root: $source
-    sessions: [
-      {
-        id: "selected"
-        blobs: [
-          {
-            id: $blob.id
-            aliases: [$name]
-          }
-        ]
+    let incoming = ($bundle | path join "omp" $file.bundle)
+    if $case.fault == "missing" {
+      rm $incoming
+    } else if $case.fault == "corrupt" {
+      0x[ff fe fd fc] | save --force $incoming
+    } else {
+      let origin = match $case.fault {
+        "relative-origin" => ($"relative/($name)")
+        "wrong-name-origin" => ($fixture.pool | path join "different-name")
+        "root-origin" => ($"/($name)")
       }
-    ]
-  }
-  let original_json = ($original | to json --raw)
-  let expected_json = ($expected | to json --raw)
-  let known_paths = ($original.files | first 2)
-  let encoded = (escape-path-tokens $original_json $known_paths '\u002f')
-  let encoded = (escape-path-tokens $encoded [($original.files | last)] '\/')
-  let encoded_token = (
-    $original.files.0 | to json --raw | str replace --all "/" '\u002f'
-  )
-  let unicode_hash = (
-    $blob.id
-    | split chars
-    | each {|char| '\u00' + ($char | encode utf-8 | encode hex | str lowercase) }
-    | str join
-  )
-  let encoded = (
-    $encoded
-    | str replace $encoded_token ($encoded_token | str replace $blob.id $unicode_hash)
-  )
-  let unchanged = [$original.cwd $original.unrelated]
-  let encoded = (escape-path-tokens $encoded $unchanged '\u002f')
-  let encoded_expected = (escape-path-tokens $expected_json $unchanged '\u002f')
-  let cases = [
-    {
-      name: "only requested dependency paths"
-      request: $request
-      content: $original_json
-      expected: $expected_json
+      $entries
+      | update files {
+        $in | each {|entry|
+          if $entry.name == $name {
+            $entry | upsert origin_path $origin
+          } else {
+            $entry
+          }
+        }
+      }
+      | to json
+      | save --force $manifest
     }
-    {
-      name: "zero dependencies"
-      request: ($request | update sessions.0.blobs [])
-      content: $original_json
-      expected: $original_json
-    }
-    {
-      name: "escaped tokens preserve unrelated bytes"
-      request: $request
-      content: $encoded
-      expected: $encoded_expected
-    }
-  ]
-
-  for case in $cases {
-    let repaired = (rewrite-paths $case.content $case.request $target)
-
-    assert equal $repaired $case.expected $case.name
+    let imported = (run-cli $target ["import" $bundle "--assistant" "omp" "--apply"])
+    assert not equal $imported.exit_code 0 $label
+    assert not (($target | path join "source agent") | path exists) $label
+    assert not (($target | path join "state") | path exists) $label
   }
 }
 
-def "test OMP supplemental transfer repairs accepted sessions after source retirement" [] {
+def "test OMP blob export supplements accepted sessions after source files are gone" [] {
   let root = (mktemp -d)
   let source = ($root | path join "source")
   let target = ($root | path join "target")
   let fixture = (make-fixture $source)
-  let request = ($root | path join "request.json")
+  let ids = ($root | path join "ids.txt")
   let bundle = ($root | path join "bundle")
-  let target_blobs = ($target | path join "omp/blobs")
-  let parent = ($target | path join "omp" ($fixture.parent | path relative-to $fixture.root))
-  let child = ($parent | path dirname | path join "child.jsonl")
-  let display = ($fixture.blob_root | path join ($fixture.blobs.2.id + $fixture.blobs.2.suffix))
-  let content = (open --raw $fixture.parent | into string)
-  let encoded = (escape-path-tokens $content [$display] '\u002f')
-  let original = (escape-path-tokens $encoded [(file-uri $display)] '\/')
-  mkdir ($parent | path dirname)
-  $original | save $parent
-  ^cp $fixture.child $child
-  rm $fixture.parent $fixture.child
+  let pool = ($target | path join "source agent/blobs")
+  let directory = ($target | path join "source agent/sessions/accepted")
+  let parent = ($directory | path join "parent.jsonl")
+  let original = (open --raw $fixture.parent | into string)
+  mkdir $directory
+  ^cp $fixture.parent $parent
+  ^cp $fixture.child ($directory | path join "child.jsonl")
+  rm --recursive ($source | path join "source agent/sessions")
+  $fixture.selected
+  | get id
+  | str join "\n"
+  | save $ids
 
-  let requested = (with-env (fixture-env $target) {
-    (
-      run-cli dependencies $fixture.project $request
-        --assistant "omp"
-        --session-ids "parent"
-        --source-blob-root $fixture.blob_root
-    )
-  })
-  assert equal $requested.exit_code 0 $requested.stderr
-
-  let data = (open $request)
-  assert equal ($data.sessions | get id | sort) ["child" "parent"]
-  assert equal (
-    $data.sessions | get blobs | flatten | get id | uniq | sort
-  ) ($fixture.blobs | first 4 | get id | sort)
-  assert equal (open --raw $parent | into string) $original
-  assert not ($target_blobs | path exists)
-
-  let exported = (with-env (fixture-env $source) {
-    run-cli export $fixture.project $bundle --assistant "omp" --dependencies-from $request
-  })
+  let exported = (run-cli $source ["export-blobs" $ids $bundle])
   assert equal $exported.exit_code 0 $exported.stderr
-
-  let entries = (open ($bundle | path join "omp/entries.json"))
-  assert equal ($entries.files | get kind | uniq) ["blobs"]
-  assert equal ($entries.files | get name | sort) (blob-names ($fixture.blobs | first 4))
-
-  let preview = (with-env (fixture-env $target) {
-    run-cli import $bundle --assistant "omp" --repair-dependencies
-  })
-  assert equal $preview.exit_code 0 $preview.stderr
-  assert equal (open --raw $parent | into string) $original
-  assert not ($target_blobs | path exists)
-
-  let changed = (
-    $original + "\n" + ({
-      type: "message"
-      message: {
-        content: [
-          {
-            type: "image"
-            data: $"blob:sha256:($fixture.blobs.4.id)"
-          }
-        ]
-      }
-    } | to json --raw)
-  )
-  $changed | save --force $parent
-
-  let mismatched = (with-env (fixture-env $target) {
-    run-cli import $bundle --assistant "omp" --repair-dependencies --apply
-  })
-  assert not equal $mismatched.exit_code 0
-
-  assert equal (open --raw $parent | into string) $changed
-  assert not ($target_blobs | path exists)
-  $original | save --force $parent
-
-  let imported = (with-env (fixture-env $target) {
-    run-cli import $bundle --assistant "omp" --repair-dependencies --apply
-  })
+  let imported = (run-cli $target ["import" $bundle "--assistant" "omp" "--apply"])
   assert equal $imported.exit_code 0 $imported.stderr
 
-  assert-blobs $target_blobs ($fixture.blobs | first 4)
+  assert-blobs $pool $fixture.selected
+  assert equal (open --raw $parent | into string) $original
+  let args = ["move" $fixture.pool $pool "--assistant" "omp"]
+  let preview = (run-cli $target $args)
+  assert equal $preview.exit_code 0 $preview.stderr
+  assert equal (open --raw $parent | into string) $original
+
+  let moved = (run-cli $target ($args | append "--apply"))
+  assert equal $moved.exit_code 0 $moved.stderr
   let expected = (
-    parent-rows $fixture.project $target_blobs $fixture.blob_root $fixture.blobs
+    parent-rows $fixture.project ($pool | path expand) $fixture.pool $fixture.blobs
     | each {|row| $row | to json --raw }
     | str join "\n"
   )
   assert equal (open --raw $parent | into string) $expected
-  let repeated = (with-env (fixture-env $target) {
-    run-cli import $bundle --assistant "omp" --repair-dependencies --apply
-  })
+  let repeated = (run-cli $target ($args | append "--apply"))
   assert equal $repeated.exit_code 0 $repeated.stderr
   assert str contains $repeated.stdout "No changes."
-
-  let retired = (with-env (fixture-env $source) {
-    run-cli retire $fixture.project --assistant "omp" --dependencies-from $request --apply
-  })
-  assert equal $retired.exit_code 0 $retired.stderr
-
-  let retained = [$fixture.blobs.1 $fixture.blobs.4]
-  assert equal (
-    ls $fixture.blob_root | get name | path basename | sort
-  ) (blob-names $retained)
-  assert-blobs $fixture.blob_root $retained
-  assert ($fixture.peer | path exists)
-  assert-blobs $target_blobs ($fixture.blobs | first 4)
+  let again = (run-cli $target ["import" $bundle "--assistant" "omp" "--apply"])
+  assert equal $again.exit_code 0 $again.stderr
+  assert str contains $again.stdout "No changes."
 }
 
-def "test OMP selected retirement preserves shared historical dependencies" [] {
+def "test OMP blob ID files trim and deduplicate IDs and reject invalid lines" [] {
   let root = (mktemp -d)
   let fixture = (make-fixture $root)
-  let original = (open --raw $fixture.peer | into string)
+  let ids = ($root | path join "ids.txt")
+  let bundle = ($root | path join "bundle")
+  let id = $fixture.blobs.0.id
+  $"\n ($id) \n($id)\n" | save $ids
 
-  let run = (with-env (fixture-env $root) {
-    run-cli retire $fixture.project --assistant "omp" --session-ids "parent" --apply
-  })
+  let run = (run-cli $root ["export-blobs" $ids $bundle])
   assert equal $run.exit_code 0 $run.stderr
+  let entries = (open ($bundle | path join "omp/entries.json"))
+  assert equal ($entries.files | get name | sort) (blob-names [$fixture.blobs.0])
+
+  for invalid in [($id | str uppercase) "../outside" $"blob:sha256:($id)"] {
+    let target = ($root | path join "invalid-bundle")
+    $"($id)\n($invalid)\n" | save --force $ids
+    let failed = (run-cli $root ["export-blobs" $ids $target])
+    assert not equal $failed.exit_code 0 $invalid
+    assert not ($target | path exists)
+    assert-blobs $fixture.pool $fixture.blobs
+  }
+}
+
+def "test OMP session retirement preserves the global blob pool" [] {
+  let root = (mktemp -d)
+  let fixture = (make-fixture $root)
+  let peer = (open --raw $fixture.peer | into string)
+
+  let retired = (run-cli $root [
+    "retire" $fixture.project "--assistant" "omp" "--session-ids" "parent" "--apply"
+  ])
+  assert equal $retired.exit_code 0 $retired.stderr
 
   assert not ($fixture.parent | path exists)
   assert not ($fixture.child | path exists)
-  assert equal (open --raw $fixture.peer | into string) $original
-  let retained = [$fixture.blobs.1 $fixture.blobs.4]
-  assert equal (
-    ls $fixture.blob_root | get name | path basename | sort
-  ) (blob-names $retained)
-  assert-blobs $fixture.blob_root $retained
-}
-
-def "test OMP retirement rejects unreadable retained references before deleting sessions" [] {
-  let root = (mktemp -d)
-  let fixture = (make-fixture $root)
-  let original = (open --raw $fixture.parent | into string)
-  "\n{invalid" | save --append $fixture.peer
-
-  let run = (with-env (fixture-env $root) {
-    run-cli retire $fixture.project --assistant "omp" --session-ids "parent" --apply
-  })
-  assert not equal $run.exit_code 0
-
-  assert equal (open --raw $fixture.parent | into string) $original
-  assert ($fixture.child | path exists)
-  assert-blobs $fixture.blob_root $fixture.blobs
-  assert not (($root | path join "state") | path exists)
-}
-
-def "test OMP dependency requests reject unsupported schemas and escaping names" [] {
-  let root = (mktemp -d)
-  let fixture = (make-fixture $root)
-  let request = ($root | path join "request.json")
-
-  let requested = (with-env (fixture-env $root) {
-    (
-      run-cli dependencies $fixture.project $request
-        --assistant "omp"
-        --session-ids "parent"
-        --source-blob-root $fixture.blob_root
-    )
-  })
-  assert equal $requested.exit_code 0 $requested.stderr
-
-  let original = (open $request)
-  let cases = [
-    {
-      name: "unknown version"
-      data: ($original | update version 2)
-    }
-    {
-      name: "unknown field"
-      data: ($original | upsert extra true)
-    }
-    {
-      name: "escaping alias"
-      data: ($original | update sessions.0.blobs.0.aliases ["../outside.png"])
-    }
-    {
-      name: "malformed blob id"
-      data: ($original | update sessions.0.blobs.0.id "../outside")
-    }
-    {
-      name: "relative source root"
-      data: ($original | update source_blob_root "blobs")
-    }
-    {
-      name: "different project"
-      data: ($original | update path "/home/u/src/other")
-    }
-  ]
-
-  for case in $cases {
-    let bad = ($root | path join ($case.name + ".json"))
-    let bundle = ($root | path join ($case.name + "-bundle"))
-    $case.data | to json | save $bad
-
-    let run = (with-env (fixture-env $root) {
-      run-cli export $fixture.project $bundle --assistant "omp" --dependencies-from $bad
-    })
-    assert not equal $run.exit_code 0 $case.name
-
-    assert not ($bundle | path exists) $case.name
-    assert-blobs $fixture.blob_root $fixture.blobs
-  }
-}
-
-def "test OMP export rejects invalid locators and incomplete dependency files" [] {
-  let root = (mktemp -d)
-  let cases = [
-    "unknown locator"
-    "malformed exact locator"
-    "missing canonical"
-    "missing referenced alias"
-    "corrupt alias"
-  ]
-
-  for case in $cases {
-    let base = ($root | path join $case)
-    let fixture = (make-fixture $base)
-    let bundle = ($base | path join "bundle")
-    let blob = $fixture.blobs.2
-    let canonical = ($fixture.blob_root | path join $blob.id)
-    let alias = ($fixture.blob_root | path join ($blob.id + $blob.suffix))
-    match $case {
-      "unknown locator" => {
-        let content = (open --raw $fixture.parent | into string)
-        $content
-        | str replace "blob:sha256:" "blob:sha512:"
-        | save --force $fixture.parent
-      }
-      "malformed exact locator" => {
-        let content = (open --raw $fixture.parent | into string)
-        $content
-        | str replace $"blob:sha256:($fixture.blobs.0.id)" $"blob:sha256:($fixture.blobs.0.id)."
-        | save --force $fixture.parent
-      }
-      "missing canonical" => {
-        rm $canonical
-      }
-      "missing referenced alias" => {
-        rm $alias
-      }
-      "corrupt alias" => {
-        0x[ff fe fd fc] | save --force $alias
-      }
-    }
-
-    let run = (with-env (fixture-env $base) {
-      run-cli export $fixture.project $bundle --assistant "omp" --session-ids "parent"
-    })
-    assert not equal $run.exit_code 0 $case
-
-    assert not ($bundle | path exists) $case
-  }
+  assert equal (open --raw $fixture.peer | into string) $peer
+  assert-blobs $fixture.pool $fixture.blobs
 }

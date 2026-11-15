@@ -130,44 +130,6 @@ def selection-ids [exact: bool, value: any]: nothing -> list<string> {
   $ids
 }
 
-def dependency-selection [selected: list<string>, request: any, exact: bool, ids: list<string>] {
-  if $request == null { return }
-  if $selected != ["omp"] {
-    error make --unspanned {msg: "Dependency requests require --assistant omp"}
-  }
-  if $exact or ($ids | is-not-empty) {
-    error make --unspanned {
-      msg: "--dependencies-from is mutually exclusive with --exact and --session-ids"
-    }
-  }
-}
-
-# Write a metadata-only request for the blobs referenced by selected OMP sessions.
-def "main dependencies" [
-  path: string # Recorded local project path, or a parent of it
-  request: string # New JSON request file
-  --assistant (-a): string = "omp" # The supported assistant is omp
-  --source-blob-root: string # Blob directory recorded on the source host
-  --exact # Select exact-cwd sessions and their descendants
-  --session-ids: string # Session IDs under the path, with their descendants
-]: nothing -> nothing {
-  let selected = (parse-assistants $assistant)
-  if $selected != ["omp"] {
-    error make --unspanned {msg: "Dependency requests require --assistant omp"}
-  }
-  let old = (normalize-path $path)
-  let ids = (selection-ids $exact $session_ids)
-  let root = if $source_blob_root == null {
-    null
-  } else {
-    normalize-path $source_blob_root
-  }
-  let data = (omp dependencies $old --source-blob-root $root --exact=$exact --session-ids $ids)
-  $data | to json | save $request
-  ^chmod 600 $request
-  print $"Wrote OMP dependency request to ($request)"
-}
-
 # Write the state recorded for <path> as a bundle directory, unchanged.
 @example "Export a project's state to a bundle" {
   agent-project-move export ~/src/app ~/agent-project-move-bundle
@@ -178,20 +140,13 @@ def "main export" [
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to export
   --exact # Select exact-cwd sessions and their descendants
   --session-ids: string # Session IDs under the path, with their descendants
-  --dependencies-from: string # Export only the OMP blobs named by this dependency request
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
   let old = (normalize-path $path)
   let ids = (selection-ids $exact $session_ids)
-  dependency-selection $selected $dependencies_from $exact $ids
 
   let bundles = ($selected | each {|assistant|
-    (
-      assistant-export-bundle $assistant $old
-        --exact=$exact
-        --session-ids $ids
-        --dependencies-from $dependencies_from
-    )
+    assistant-export-bundle $assistant $old --exact=$exact --session-ids $ids
   })
 
   let counts = (
@@ -234,30 +189,34 @@ def "main export" [
   print $"Exported to ($dir)"
 }
 
+# Export OMP blobs listed as one SHA256 ID per line, without reading session state.
+def "main export-blobs" [
+  ids_file: string # Plain text file containing canonical blob IDs
+  dir: string # Bundle directory
+]: nothing -> nothing {
+  let bundle = (omp export-blobs $ids_file)
+  mkdir $dir
+  write-bundle $dir $bundle
+  print $"Exported to ($dir)"
+}
+
 # Retire selected session trees even when their project directory still exists.
 def "main retire" [
   path: string # Recorded project path, or a parent of selected sessions
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to retire
   --exact # Select exact-cwd sessions and their descendants
   --session-ids: string # Session IDs under the path, with their descendants
-  --dependencies-from: string # Retire requested OMP blobs that current sessions no longer reference
   --apply # Write the planned changes
   --no-backup # Skip creating recovery backups
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
   let old = (normalize-path $path)
   let ids = (selection-ids $exact $session_ids)
-  dependency-selection $selected $dependencies_from $exact $ids
-  if not $exact and ($ids | is-empty) and $dependencies_from == null {
+  if not $exact and ($ids | is-empty) {
     error make --unspanned {msg: "retire requires --exact or --session-ids"}
   }
 
-  let actions = (
-    plan-retire $selected $old
-      --exact=$exact
-      --session-ids $ids
-      --dependencies-from $dependencies_from
-  )
+  let actions = (plan-retire $selected $old --exact=$exact --session-ids $ids)
   apply-all $actions --apply=$apply --no-backup=$no_backup
 }
 
@@ -270,14 +229,10 @@ def "main import" [
   dir: string # Directory written by export
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to import
   --target: string # Project path for incoming state, preserving descendant suffixes
-  --repair-dependencies # Repair selected local OMP blob path tokens from a dependency-only bundle
   --apply # Write the planned changes
   --no-backup # Skip creating recovery backups
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
-  if $repair_dependencies and $selected != ["omp"] {
-    error make --unspanned {msg: "Dependency repair requires --assistant omp"}
-  }
   let bundles = (
     $selected
     | each {|assistant| read-bundle $dir $assistant }
@@ -300,18 +255,14 @@ def "main import" [
     | each {|bundle|
       {
         assistant: $bundle.assistant
-        actions: (
-          assistant-plan-import $bundle.assistant $bundle
-            --target $target
-            --repair-dependencies=$repair_dependencies
-        )
+        actions: (assistant-plan-import $bundle.assistant $bundle --target $target)
       }
     }
   )
 
   for plan in $plans {
     if ($plan.actions | is-empty) {
-      print $"Skipped: ($plan.assistant) already holds this state."
+      print $"Skipped: ($plan.assistant) already holds these sessions."
     }
   }
 

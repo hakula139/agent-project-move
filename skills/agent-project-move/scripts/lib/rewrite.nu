@@ -74,33 +74,6 @@ export def files-with-path [
   | sort
 }
 
-export def rewrite-exact-paths [content: string, mappings: list<record>]: nothing -> string {
-  mut lookup = {}
-  for mapping in $mappings {
-    $lookup = (
-      $lookup
-      | upsert $mapping.old $mapping.new
-      | upsert (file-uri $mapping.old) (file-uri $mapping.new)
-    )
-  }
-  if ($lookup | is-empty) { return $content }
-  let lookup = $lookup
-
-  $content | str replace --all --regex '("(?:\\.|[^"\\])*")' {|token|
-    let path = try {
-      $token | from json
-    } catch {
-      error make --unspanned {msg: "Invalid JSON string while rewriting exact paths"}
-    }
-    let target = ($lookup | get -o $path)
-    if $target == null or $target == $path {
-      $token
-    } else {
-      $target | to json --raw
-    }
-  }
-}
-
 def rewrite-token [content: string, old: string, new: string, root: bool]: nothing -> string {
   # Lookbehinds over a multi-megabyte transcript line exceed the regex engine's backtrack limit,
   # so the preceding character and the delimiter are captured.

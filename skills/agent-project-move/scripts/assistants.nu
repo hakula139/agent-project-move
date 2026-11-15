@@ -66,19 +66,11 @@ export def assistant-export-bundle [
   old: string
   --exact
   --session-ids: list<string> = []
-  --dependencies-from: string
 ]: nothing -> record {
   match $assistant {
     "claude" => { claude export-bundle $old --exact=$exact --session-ids $session_ids }
     "codex" => { codex export-bundle $old --exact=$exact --session-ids $session_ids }
-    "omp" => {
-      (
-        omp export-bundle $old
-          --exact=$exact
-          --session-ids $session_ids
-          --dependencies-from $dependencies_from
-      )
-    }
+    "omp" => { omp export-bundle $old --exact=$exact --session-ids $session_ids }
   }
 }
 
@@ -86,12 +78,11 @@ export def assistant-plan-import [
   assistant: string
   bundle: record
   --target: string
-  --repair-dependencies
 ]: nothing -> list<record> {
   match $assistant {
     "claude" => { claude plan-import $bundle --target $target }
     "codex" => { codex plan-import $bundle --target $target }
-    "omp" => { omp plan-import $bundle --target $target --repair-dependencies=$repair_dependencies }
+    "omp" => { omp plan-import $bundle --target $target }
   }
 }
 
@@ -133,21 +124,13 @@ export def plan-retire [
   path: string
   --exact
   --session-ids: list<string> = []
-  --dependencies-from: string
 ]: nothing -> list<record> {
   $selected
   | each {|assistant|
     match $assistant {
       "claude" => { claude plan-retire $path --exact=$exact --session-ids $session_ids }
       "codex" => { codex plan-retire $path --exact=$exact --session-ids $session_ids }
-      "omp" => {
-        (
-          omp plan-retire $path
-            --exact=$exact
-            --session-ids $session_ids
-            --dependencies-from $dependencies_from
-        )
-      }
+      "omp" => { omp plan-retire $path --exact=$exact --session-ids $session_ids }
     }
   }
   | flatten
