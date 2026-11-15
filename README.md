@@ -5,19 +5,11 @@
 
 Repair the project paths recorded by [Claude Code](https://claude.com/claude-code), [Codex](https://openai.com/codex/), and [OMP](https://omp.sh) after a directory moves, transfer sessions between hosts, and retire selected session copies.
 
-## The problem
-
-Coding assistants record project paths in their session stores. Moving a project or removing a worktree can leave its sessions listed under the old path, and copying a repository to another host leaves its transcripts behind.
-
-`agent-project-move` scans these stores, moves recorded paths, transfers selected sessions between hosts, and retires selected source copies. It prints a plan before changing assistant state, and writes only with `--apply`. Export writes a bundle without changing the source store. See [Assistant stores](docs/reference/stores.md) for the state each adapter handles.
+Moving a project can leave sessions under its old path, and copying a repository to another host leaves transcripts behind. `agent-project-move` previews state changes and applies them only with `--apply`. Export creates a bundle without changing the source store.
 
 ## Install
 
-The repository is a Claude Code and Codex plugin, and `skills/agent-project-move/` is an [Agent Skill](https://agentskills.io) that any skill installer can copy. Every route outside Nix runs the bundled Nushell script with the tools on your own `PATH`, so check the [requirements](#requirements) first.
-
-### Requirements
-
-Native Windows is unsupported. Outside Nix, the command needs the tools listed in the skill's [Requirements](skills/agent-project-move/SKILL.md#requirements), and the skill checks for them and names what is missing. Homebrew and Arch package Nushell, and other platforms install it from the [installation guide](https://www.nushell.sh/book/installation.html).
+Choose a plugin, a standalone [Agent Skill](https://agentskills.io), or the Nix package. Native Windows is unsupported. Outside Nix, install the skill's [required tools](skills/agent-project-move/SKILL.md#requirements), including [Nushell](https://www.nushell.sh/book/installation.html).
 
 ### Claude Code plugin
 
@@ -26,7 +18,7 @@ claude plugin marketplace add hakula139/agent-project-move
 claude plugin install agent-project-move@agent-project-move
 ```
 
-Pin a release with `hakula139/agent-project-move#vX.Y.Z`. The skill answers to `/agent-project-move` and `/agent-project-move:agent-project-move`.
+Pin a release with `hakula139/agent-project-move#vX.Y.Z`.
 
 ### Codex plugin
 
@@ -35,7 +27,7 @@ codex plugin marketplace add hakula139/agent-project-move
 codex plugin add agent-project-move@agent-project-move
 ```
 
-Pin a release with `--ref vX.Y.Z` on `marketplace add`. Codex lists the skill as `agent-project-move:agent-project-move`.
+Pin a release with `--ref vX.Y.Z` on `marketplace add`.
 
 ### Skill directories
 
@@ -75,9 +67,7 @@ Or install it into your profile:
 nix profile install github:hakula139/agent-project-move
 ```
 
-The package wraps the command with `sqlite3`, `ripgrep`, `zstd`, and the coreutils, diffutils, and findutils it needs, so nothing else has to be on `PATH`. It covers `aarch64-darwin`, `aarch64-linux`, and `x86_64-linux`, while other Unix platforms use one of the routes above. Flakes must be enabled, as in `nix --extra-experimental-features 'nix-command flakes' run ...` on a stock install.
-
-The first run may ask to allow the project's Cachix cache. Declining is fine, since the package builds from cache.nixos.org. The overlay and module use the Nushell from the consuming package set when it is 0.116 or later, and devkit's `nixpkgs-unstable` below that.
+The package includes its runtime tools and supports `aarch64-darwin`, `aarch64-linux`, and `x86_64-linux`. Enable Nix flakes before using it. The optional Cachix cache can speed up the first build.
 
 Home Manager users add the flake input and import the module:
 
@@ -92,14 +82,6 @@ programs.agent-project-move.enable = true;
 
 The module installs the command and links the skill into `~/.agents/skills` and `~/.claude/skills`. Set `programs.agent-project-move.skillDirectories` to change the list, or use `overlays.default` to install the package through an overlay.
 
-## Safety model
-
-Before any `--apply`, exit every assistant session working in the affected projects, including your own. Concurrent writes can be lost. See [Concurrent sessions](skills/agent-project-move/SKILL.md#concurrent-sessions) for shared configuration and interrupted runs.
-
-Applied changes create a backup under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/<timestamp>-<pid>/` by default. It contains edited or deleted files, SQLite `.backup` copies, and an ordered `manifest.json`, with mode `0700` on the backup directory. Backups hold the same sensitive content as the stores. Keep them until the migrated sessions open successfully, then delete them. `--no-backup` explicitly skips recovery copies.
-
-Each SQL action is one transaction. The tool operates locally, needs no credentials, opens no network connections, and runs no commands from assistant stores. Incorrect selection or rewriting can still delete state or leave sessions pointing at dead paths. Follow [Restore](skills/agent-project-move/SKILL.md#restore) after a file-phase failure.
-
 ## Usage
 
 Move the project directory first, then preview and apply the recorded-path move:
@@ -111,6 +93,8 @@ agent-project-move move ~/src/app ~/work/app --apply
 ```
 
 Use `-a claude,codex` to select assistants, or omit it for all three. The [skill procedures](skills/agent-project-move/SKILL.md) cover path ordering, [cross-host transfers](skills/agent-project-move/SKILL.md#transfer-between-hosts), [selected source retirement](skills/agent-project-move/SKILL.md#retire), and verification. `agent-project-move --help` lists the commands and options.
+
+Before applying, close affected assistant sessions, including your own, to avoid losing concurrent writes. Applied changes create private recovery backups by default. Keep them until the migrated sessions open successfully. Read the skill's [concurrency and recovery guidance](skills/agent-project-move/SKILL.md#concurrent-sessions) before changing live stores.
 
 ## Tested with
 
@@ -124,13 +108,9 @@ Each assistant changes its local storage without notice. `agent-project-move` is
 
 A newer version can add a database, a table, or a path-bearing column this tool does not know about, and those paths then stay stale after a move. Path values in JSON transcripts are rewritten wherever they appear, so new record kinds are covered. If a move leaves sessions behind, open an issue with the release tag or commit you run and the assistant's version.
 
-## Releases
-
-Releases follow the [versioning policy](RELEASING.md#versioning), and stable releases keep the [stability surface](RELEASING.md#stability-surface) compatible within a minor version.
-
 ## Agent skill
 
-The [skill](skills/agent-project-move/SKILL.md) surveys recorded paths, confirms the plan, applies it, and verifies the result. It uses the command on `PATH` or its bundled script. Start a new assistant session after installation, or run `/reload-plugins` in OMP.
+Start a new assistant session after installation, or run `/reload-plugins` in OMP.
 
 | Assistant   | Explicit invocation                              |
 | ----------- | ------------------------------------------------ |
@@ -146,9 +126,7 @@ The [skill](skills/agent-project-move/SKILL.md) surveys recorded paths, confirms
 | [Design](docs/reference/design.md)                | Selection, rewriting, and apply-order constraints            |
 | [Assistant stores](docs/reference/stores.md)      | What each assistant stores and how a move rewrites it        |
 
-## Development
-
-[`AGENTS.md`](AGENTS.md) is the contributor entry point for people and coding agents alike.
+Contributors start with [`AGENTS.md`](AGENTS.md). Releases follow the [versioning policy](RELEASING.md#versioning) and [stability surface](RELEASING.md#stability-surface).
 
 ## License
 
