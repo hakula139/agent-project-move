@@ -51,10 +51,14 @@ Root: `$PI_CODING_AGENT_DIR`, defaulting to `~/.omp/agent`. Session and archive 
 | ---------------------------------------------------- | --------------------------------------------- |
 | `sessions/<encoded>/`, `archive/sessions/<encoded>/` | Every path value in a session or archive file |
 
-Selection reads the `type: session` header, skipping an optional title slot. `parentSession` can identify a parent by ID or file path, and a session file owns its same-stem artifact directory. A selected child carries its own subtree and linked descendants, while adjacent files belonging to its parent remain in place. Retirement deletes only the selected transcripts and their owned artifacts.
+Selection reads the `type: session` header, skipping an optional title slot. `parentSession` can identify a parent by ID or file path, and a session file owns its same-stem artifact directory. A selected child carries its own subtree and linked descendants, while adjacent files belonging to its parent remain in place. Retirement deletes selected transcripts, their owned artifacts, and their blob dependencies that no remaining session or archive journal references.
 
 A move maps absolute `parentSession` references to relocated session files, including references from sessions whose cwd stays elsewhere.
 
 An import matches an OMP session by its header ID. A known carried parent file path in `parentSession` maps to its actual destination, and an existing session's renamed file also determines where its owned artifacts land. OMP bundles carry no database rows. Re-export older bundles that carry memory or database state before importing.
+
+OMP stores content-addressed blobs under `blobs/`. Native `blob:sha256:<hash>` locators read the file without an extension, while a `<hash>.<extension>` alias supports file viewing. Export collects native locators, absolute blob paths, file URIs, and blob alias filenames in journal strings, including historical prose. It carries each selected canonical file and its available safe aliases unchanged. The SHA-256 of every carried file must match the canonical filename, and an explicitly referenced alias must exist. Import rejects differing destination bytes and maps complete incoming blob path tokens to the target blob directory. Native locators and historical prose stay unchanged.
+
+A versioned dependency request records session IDs, referenced blob IDs, and alias filenames without transcript content. Dependency-only bundles resolve source files from the local blob directory and carry no sessions. A supplemental repair requires the accepted local sessions' references to match the request. Unreadable or invalid retained journals abort dependency retirement. See [Supplement missing OMP blobs](../../skills/agent-project-move/SKILL.md#supplement-missing-omp-blobs) for the procedure.
 
 OMP memory, `history.db`, and `agent.db` stay untouched during every operation. The skill can handle any needed auxiliary state separately.

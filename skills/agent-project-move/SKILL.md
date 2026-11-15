@@ -71,9 +71,9 @@ When Claude project directories merge, unique files are kept. Memory moves as or
    agent-project-move export ~/src/app ~/agent-project-move-bundle
    ```
 
-   By default the export includes child paths. Use `--exact` to select sessions whose recorded cwd equals the path, or `--session-ids <id,id>` to select specific sessions under the path. The options are mutually exclusive. Linked descendants and each selected session's own artifact subtree travel with it. Selecting a child does not select its parent or siblings.
+   By default the export includes child paths. Use `--exact` to select sessions whose recorded cwd equals the path, or `--session-ids <id,id>` to select specific sessions under the path. The options are mutually exclusive. Linked descendants and each selected session's own artifact subtree travel with it. OMP also carries referenced global blobs and their available aliases, including references in historical prose. Selecting a child does not select its parent or siblings.
 
-2. Copy the bundle to the target host over ssh, for example with `rsync -a ~/agent-project-move-bundle <target>:~/`, then run the import there. Add `--target` when the project path differs. It maps the exported root and its descendants, preserving suffixes, and leaves carried outside-root paths unchanged. Only incoming state is mapped, so existing local sessions stay unchanged. Omit the option to keep the original project paths. Existing session IDs require identical transcript content after mapping. Changed content aborts before writing, so reconcile or re-export those sessions before importing again. Missing dependent records still import. Codex rebuilds a thread's history projection on its first resume, after `codex unarchive` for an archived thread, so an imported Codex transcript preview stays empty until then.
+2. Copy the bundle to the target host over ssh, for example with `rsync -a ~/agent-project-move-bundle <target>:~/`, then run the import there. Add `--target` when the project path differs. It maps the exported root and its descendants, preserving suffixes, and leaves carried outside-root paths unchanged, except that complete OMP blob path tokens always map to the local blob directory. Only incoming state is mapped, so existing local sessions stay unchanged. Omit the option to keep the original project paths. Existing session IDs require identical transcript content after mapping. Changed content aborts before writing, so reconcile or re-export those sessions before importing again. Missing dependent records still import. Codex rebuilds a thread's history projection on its first resume, after `codex unarchive` for an archived thread, so an imported Codex transcript preview stays empty until then.
 
    ```bash
    agent-project-move import ~/agent-project-move-bundle --target ~/work/app
@@ -84,9 +84,42 @@ When Claude project directories merge, unique files are kept. Memory moves as or
 
 After verifying the destination sessions and their artifacts, use [Retire](#retire) to remove the selected source state. Use the same path, assistant list, and selection as the export.
 
+### Supplement missing OMP blobs
+
+When the destination already has accepted sessions but their source transcripts are gone, generate a dependency request from the destination sessions. Pass the blob directory recorded on the source host as `--source-blob-root`, and use the original selection's exact mode or session IDs.
+
+```bash
+agent-project-move dependencies /work/app ~/omp-dependencies.json \
+  --assistant omp \
+  --source-blob-root /home/u/.omp/agent/blobs \
+  --session-ids session-a,session-b
+```
+
+Copy the request to the source host and export its dependencies there. The path argument must equal the request's selection path, even when that path does not exist on the source host. `--dependencies-from` replaces `--exact` and `--session-ids` and requires `--assistant omp`. It reads only the requested source blobs, so deleted source transcripts are not needed.
+
+```bash
+agent-project-move export /work/app ~/omp-blob-bundle \
+  --assistant omp \
+  --dependencies-from ~/omp-dependencies.json
+```
+
+Copy that bundle to the destination. Import with `--repair-dependencies` to verify the selected local sessions' references and repair complete source blob path tokens. This mode accepts only dependency-only bundles. Historical prose and native locators remain unchanged. Omit the option when only blob files need importing. Preview the plan, then apply after confirmation.
+
+```bash
+agent-project-move import ~/omp-blob-bundle \
+  --assistant omp \
+  --repair-dependencies
+agent-project-move import ~/omp-blob-bundle \
+  --assistant omp \
+  --repair-dependencies \
+  --apply
+```
+
+Verify blob content, aliases, and native resolution on the destination before retiring any source dependencies. On the source host, preview `retire <request selection path> --assistant omp --dependencies-from <request>`, then apply only after confirmation. This removes requested blob files only when no current source session or archive journal references their IDs. It leaves shared blobs in place. Delete the request and bundle copies after verification.
+
 ## Retire
 
-`retire` removes selected session state after explicit authorization. It requires either `--exact` or `--session-ids`, and follows the export's selection rules. Use IDs when sessions sharing a cwd belong to different projects or only some should be removed. Use `--exact` only when the whole cwd selection is intended. Claude project memory, global configuration, and prompt history stay in place. Other shared project metadata stays while another session references it. Investigate other orphaned state separately and use task-specific scripts when needed.
+`retire` removes selected session state after explicit authorization. Select sessions with either `--exact` or `--session-ids`, following the export's selection rules. Use IDs when sessions sharing a cwd belong to different projects or only some should be removed. Use `--exact` only when the whole cwd selection is intended. For OMP, selected blob dependencies are removed only when no retained session or archive journal references them. The dependency-only mode above uses `--dependencies-from` after source transcripts have already been retired. Claude project memory, global configuration, and prompt history stay in place. Other shared project metadata stays while another session references it. Investigate other orphaned state separately and use task-specific scripts when needed.
 
 ```bash
 agent-project-move retire ~/src/app --exact

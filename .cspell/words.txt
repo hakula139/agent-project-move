@@ -25,9 +25,11 @@ realpath
 rollouts
 shellcheck
 shfmt
+snapcompact
 subpaths
 substituters
 unspanned
+WebP
 workmux
 worktree
 worktrees

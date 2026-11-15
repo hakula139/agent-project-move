@@ -46,11 +46,13 @@ Each file descriptor records its exported source in `origin_path`. This field is
 - A row is inserted unless its unique key already exists. Every other constraint stays fatal, and a failing row aborts that database's whole load.
 - Existing session IDs are checked against their transcripts before skipping copies, including decoded compressed Codex rollouts and OMP IDs from session headers. A differing transcript aborts before writing. Dependent file history and Codex parent edges are reconciled even when the session already exists.
 - A repeated import requires identical transcript content after the import's explicit file mapping. Rewritten paths count as a content difference, so reconcile or re-export moved sessions before importing them again.
-- A carried OMP header's path-valued `parentSession` is mapped to the known imported parent file after any explicit incoming-path mapping. Other header and message bytes stay unchanged, and external parent identities remain opaque.
+- A carried OMP header's path-valued `parentSession` is mapped to the known imported parent file after any explicit incoming-path mapping. Incoming complete blob path tokens map to the local blob directory. Other header and message bytes stay unchanged, and external parent identities remain opaque.
 - Each carried table is checked at plan time: the import aborts before writing when the target lacks a carried column, or requires a not-null column without a default that the bundle does not fill.
 - Codex carries available `project_roots` rows with selected projects. Targeted imports map those paths and reject an existing project ID whose ordered root paths differ. Project metadata and logical agent identities stay unchanged.
 
 A bundle carries no Codex history projection, because rewriting the rollout invalidates its byte offsets.
+
+OMP dependency manifests describe references by session ID, canonical SHA-256 ID, and validated alias basename. They never choose a source read root or an import destination. Source reads resolve under the current OMP blob directory, and imports write under the target's own blob directory. Both export and import validate content addresses before writing. Supplemental imports can explicitly repair complete dependency path tokens in existing sessions after their current references match the request, while ordinary same-ID transcript collision checks remain unchanged.
 
 ## Directory merges
 
