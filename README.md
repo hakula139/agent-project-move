@@ -82,9 +82,19 @@ programs.agent-project-move.enable = true;
 
 The module installs the command and links the skill into `~/.agents/skills` and `~/.claude/skills`. Set `programs.agent-project-move.skillDirectories` to change the list, or use `overlays.default` to install the package through an overlay.
 
+## Agent skill
+
+Start a new assistant session after installation, or run `/reload-plugins` in OMP.
+
+| Assistant   | Explicit invocation                              |
+| ----------- | ------------------------------------------------ |
+| Claude Code | `/agent-project-move`                            |
+| Codex       | `$agent-project-move`, or pick it from `/skills` |
+| OMP         | `/skill:agent-project-move`                      |
+
 ## Usage
 
-Move the project directory first, then preview and apply the recorded-path move:
+With the command installed, move the project directory first, then preview and apply the recorded-path move:
 
 ```bash
 agent-project-move scan
@@ -107,16 +117,6 @@ Each assistant changes its local storage without notice. `agent-project-move` is
 | OMP         | 18.13.2 |
 
 A newer version can add a database, a table, or a path-bearing column this tool does not know about, and those paths then stay stale after a move. Path values in JSON transcripts are rewritten wherever they appear, so new record kinds are covered. If a move leaves sessions behind, open an issue with the release tag or commit you run and the assistant's version.
-
-## Agent skill
-
-Start a new assistant session after installation, or run `/reload-plugins` in OMP.
-
-| Assistant   | Explicit invocation                              |
-| ----------- | ------------------------------------------------ |
-| Claude Code | `/agent-project-move`                            |
-| Codex       | `$agent-project-move`, or pick it from `/skills` |
-| OMP         | `/skill:agent-project-move`                      |
 
 ## Documentation
 

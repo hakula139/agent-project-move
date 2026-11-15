@@ -21,6 +21,15 @@ export def bundle-table [bundle: record, table: string]: nothing -> record {
   }
 }
 
+export def require-empty-directory [directory: string]: nothing -> nothing {
+  if ($directory | path exists) and (ls --all $directory | is-not-empty) {
+    error make --unspanned {
+      msg: $"Export directory is not empty: ($directory)"
+      help: "Choose a new or empty directory for the bundle."
+    }
+  }
+}
+
 export def write-bundle [directory: string, bundle: record]: nothing -> nothing {
   let base = ($directory | path join $bundle.assistant)
   mkdir $base
@@ -60,6 +69,9 @@ export def read-bundle [directory: string, assistant: string]: nothing -> any {
   if not ($entries | path exists) { return null }
 
   let data = (open $entries)
+  if $data.assistant != $assistant {
+    error make --unspanned {msg: $"Bundle assistant does not match ($assistant)"}
+  }
   let files = (
     $data.files
     | each {|file|

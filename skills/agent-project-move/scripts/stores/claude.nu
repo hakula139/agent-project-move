@@ -231,13 +231,6 @@ def session-records [owner_hint?: string]: nothing -> list<record> {
   }
 }
 
-export def recorded-paths []: nothing -> list<string> {
-  session-records
-  | get -o cwd
-  | where {|cwd| valid-path $cwd }
-  | uniq
-}
-
 export def scan []: nothing -> list<record> {
   session-records
   | where {|record| valid-path $record.cwd }
