@@ -46,6 +46,7 @@ export def rg-lines [args: list<string>]: nothing -> list<string> {
       help: "Check that ripgrep can read the searched directories."
     }
   }
+  if ($run.stdout | describe) != "string" { return [] }
   $run.stdout
   | lines
   | where {|line| $line != "" }
@@ -70,7 +71,20 @@ export def files-with-path [
     | each {|pattern| ["-g" $pattern] }
     | flatten
   )
-  rg-lines ["-z" "-P" "-l" "--hidden" "--no-ignore" ...$globs "-e" (path-pattern $old) "--" ...$existing]
+  let flags = [
+    "-a"
+    "-z"
+    "-P"
+    "-l"
+    "--hidden"
+    "--no-ignore"
+    ...$globs
+    "-e"
+    (path-pattern $old)
+    "--"
+    ...$existing
+  ]
+  rg-lines $flags
   | sort
 }
 

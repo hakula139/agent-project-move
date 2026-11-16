@@ -164,7 +164,13 @@ def make-codex [root: string, project: string]: nothing -> record {
     let cwd = (sql-quote $row.cwd)
     let rollout = (sql-quote $file)
     let parent = (sql-quote (if $row.id == "other-child" { $row.parent } else { null }))
-    let insert = $"INSERT INTO threads VALUES \(($id), ($cwd), ($rollout), 'shared', ($parent), 1, 1000\); INSERT INTO dependent VALUES \(($id)\);"
+    let insert = (
+      $"
+      INSERT INTO threads VALUES \(($id), ($cwd), ($rollout), 'shared', ($parent), 1, 1000\);
+      INSERT INTO dependent VALUES \(($id)\);
+      "
+      | str dedent
+    )
     $insert | ^sqlite3 $db
   }
 
@@ -190,10 +196,11 @@ def make-codex [root: string, project: string]: nothing -> record {
     | str dedent
   )
   $projection_schema | ^sqlite3 $history
+  let values = "('parent'), ('child'), ('other-child'), ('retained'), ('nested')"
   for table in [
     "thread_history_projection_state" "thread_turns" "thread_items" "thread_realtime_items"
   ] {
-    $"INSERT INTO ($table) VALUES \('parent'\), \('child'\), \('other-child'\), \('retained'\), \('nested'\);"
+    $"INSERT INTO ($table) VALUES ($values);"
     | ^sqlite3 $history
   }
 
@@ -211,8 +218,15 @@ def clear-codex-sessions [fixture: record] {
     | path join "sessions"
   )
 
-  "DELETE FROM dependent; DELETE FROM thread_spawn_edges; DELETE FROM threads; DELETE FROM projects;"
-  | ^sqlite3 $fixture.db
+  (
+    "
+    DELETE FROM dependent;
+    DELETE FROM thread_spawn_edges;
+    DELETE FROM threads;
+    DELETE FROM projects;
+    "
+    | str dedent
+  ) | ^sqlite3 $fixture.db
   rm --recursive $sessions
 }
 
@@ -672,8 +686,19 @@ def make-target-codex [root: string, project: string]: nothing -> record {
     | to json --raw
     | sql-quote $in
   )
-  $"INSERT INTO projects VALUES \('shared', 'Example', ($metadata), 2, 1001, 2002\); INSERT INTO project_roots VALUES \('shared', 0, (sql-quote $project)\), \('shared', 1, (sql-quote ($project + '/worktree'))\); UPDATE threads SET sandbox_policy = ($policy), agent_path = (sql-quote ($project + '/logical-agent'));"
-  | ^sqlite3 $fixture.db
+  let root_path = (sql-quote $project)
+  let worktree_path = (sql-quote ($project + "/worktree"))
+  let agent_path = (sql-quote ($project + "/logical-agent"))
+  (
+    $"
+    INSERT INTO projects VALUES \('shared', 'Example', ($metadata), 2, 1001, 2002\);
+    INSERT INTO project_roots VALUES
+      \('shared', 0, ($root_path)\),
+      \('shared', 1, ($worktree_path)\);
+    UPDATE threads SET sandbox_policy = ($policy), agent_path = ($agent_path);
+    "
+    | str dedent
+  ) | ^sqlite3 $fixture.db
 
   let plain = ($fixture.compressed | str replace --regex '\.zst$' '')
   write-jsonl $plain [
@@ -723,8 +748,20 @@ def "test selected Codex moves bound rows and rollouts to the session closure" [
     let sessions = ($root | path join "codex/sessions")
     let child = ($sessions | path join "child.jsonl")
     let child_rows = [
-      {type: "session_meta", payload: {id: "child", cwd: "/other/worker"}}
-      {type: "response_item", payload: {path: $"($project)/child.txt", prose: $"Mention ($project)"}}
+      {
+        type: "session_meta"
+        payload: {
+          id: "child"
+          cwd: "/other/worker"
+        }
+      }
+      {
+        type: "response_item"
+        payload: {
+          path: $"($project)/child.txt"
+          prose: $"Mention ($project)"
+        }
+      }
     ]
     rm $child
     write-jsonl $child $child_rows
@@ -739,14 +776,21 @@ def "test selected Codex moves bound rows and rollouts to the session closure" [
       ["retained" "nested" "other-child"]
       | each {|id|
         let file = ($sessions | path join $"($id).jsonl")
-        {file: $file, bytes: (open --raw $file | into binary)}
+        {
+          file: $file
+          bytes: (open --raw $file | into binary)
+        }
       }
       | collect
     )
     let expected_parent = [
       {
         type: "session_meta"
-        payload: {id: "parent", cwd: $target, timestamp: "2026-01-01T00:00:00.123456789Z"}
+        payload: {
+          id: "parent"
+          cwd: $target
+          timestamp: "2026-01-01T00:00:00.123456789Z"
+        }
       }
       {
         type: "response_item"
@@ -798,11 +842,12 @@ def "test selected Codex moves bound rows and rollouts to the session closure" [
     assert equal (open --raw $desktop | into binary) $desktop_bytes
     let stable = (open --raw $fixture.db | hash sha256)
 
+    let args = [
+      "move" $project $target "--assistant" "codex"
+      "--session-ids" "parent,child,unknown" "--apply" "--no-backup"
+    ]
     let repeated = (with-env (fixture-env $root) {
-      (
-        run-cli move $project $target --assistant "codex"
-          --session-ids "parent,child,unknown" --apply --no-backup
-      )
+      run-cli ...$args
     })
     assert equal $repeated.exit_code 0 $repeated.stderr
     assert str contains $repeated.stdout "No changes."
@@ -839,8 +884,17 @@ def "test targeted Codex imports map incoming paths and preserve local state" []
   let metadata = (sqlite-rows $fixture.db "SELECT * FROM projects")
   let timestamp = (with-env {TZ: "UTC"} { ^stat -c "%y" $fixture.compressed })
 
-  "DELETE FROM dependent WHERE thread_id != 'retained'; DELETE FROM thread_spawn_edges; DELETE FROM threads WHERE id != 'retained'; UPDATE projects SET id = 'live'; UPDATE project_roots SET project_id = 'live'; UPDATE threads SET project_id = 'live';"
-  | ^sqlite3 $destination.db
+  (
+    "
+    DELETE FROM dependent WHERE thread_id != 'retained';
+    DELETE FROM thread_spawn_edges;
+    DELETE FROM threads WHERE id != 'retained';
+    UPDATE projects SET id = 'live';
+    UPDATE project_roots SET project_id = 'live';
+    UPDATE threads SET project_id = 'live';
+    "
+    | str dedent
+  ) | ^sqlite3 $destination.db
 
   let opaque = (
     {source: $project}
@@ -852,8 +906,14 @@ def "test targeted Codex imports map incoming paths and preserve local state" []
     | to json --raw
     | sql-quote $in
   )
-  $"UPDATE projects SET metadata = ($opaque); UPDATE threads SET sandbox_policy = ($policy), agent_path = (sql-quote ($project + '/local-agent'));"
-  | ^sqlite3 $destination.db
+  let local_agent = (sql-quote ($project + "/local-agent"))
+  (
+    $"
+    UPDATE projects SET metadata = ($opaque);
+    UPDATE threads SET sandbox_policy = ($policy), agent_path = ($local_agent);
+    "
+    | str dedent
+  ) | ^sqlite3 $destination.db
 
   let sessions = ($local | path join "codex/sessions")
   for file in (glob ($sessions | path join "*")) {
@@ -885,8 +945,17 @@ def "test targeted Codex imports map incoming paths and preserve local state" []
   }
 
   with-env (fixture-env $local) {
-    $"INSERT INTO projects VALUES \('shared', 'Local', '{}', 9, 3003, 4004\); INSERT INTO project_roots VALUES \('shared', 0, (sql-quote ($target + '/worktree'))\), \('shared', 1, (sql-quote $target)\);"
-    | ^sqlite3 $destination.db
+    let target_sql = (sql-quote $target)
+    let worktree_sql = (sql-quote ($target + "/worktree"))
+    (
+      $"
+      INSERT INTO projects VALUES \('shared', 'Local', '{}', 9, 3003, 4004\);
+      INSERT INTO project_roots VALUES
+        \('shared', 0, ($worktree_sql)\),
+        \('shared', 1, ($target_sql)\);
+      "
+      | str dedent
+    ) | ^sqlite3 $destination.db
     let conflicting = (open --raw $destination.db | hash sha256)
 
     let refused = (
@@ -898,8 +967,13 @@ def "test targeted Codex imports map incoming paths and preserve local state" []
     assert equal (open --raw $destination.db | hash sha256) $conflicting
     assert not (($sessions | path join "parent.jsonl.zst") | path exists)
 
-    "DELETE FROM project_roots WHERE project_id = 'shared'; DELETE FROM projects WHERE id = 'shared';"
-    | ^sqlite3 $destination.db
+    (
+      "
+      DELETE FROM project_roots WHERE project_id = 'shared';
+      DELETE FROM projects WHERE id = 'shared';
+      "
+      | str dedent
+    ) | ^sqlite3 $destination.db
     let before = (open --raw $destination.db | hash sha256)
 
     let preview = (run-cli import $directory --assistant "codex" --target $target --no-backup)
@@ -1196,7 +1270,13 @@ def "test selected Claude moves preserve peers and shared project state" [] {
     let parent = ($fixture.dir | path join "parent.jsonl")
     let retained = ($fixture.dir | path join "retained.jsonl")
     rm $retained
-    write-jsonl $retained [{type: "user", sessionId: "retained", cwd: $project}]
+    write-jsonl $retained [
+      {
+        type: "user"
+        sessionId: "retained"
+        cwd: $project
+      }
+    ]
     let child = (open --raw $fixture.child | from json)
     $child
     | upsert cwd $"($project)/worker"
@@ -1210,7 +1290,12 @@ def "test selected Claude moves preserve peers and shared project state" [] {
       | path join "projects" (encode-path "/other/external") "parent/subagents/agent-external.jsonl"
     )
     write-jsonl $external [
-      {type: "assistant", sessionId: "external", cwd: "/other/external", path: $project}
+      {
+        type: "assistant"
+        sessionId: "external"
+        cwd: "/other/external"
+        path: $project
+      }
     ]
     let unchanged = (
       [
@@ -1224,7 +1309,12 @@ def "test selected Claude moves preserve peers and shared project state" [] {
         ($fixture.config | path join "file-history/parent/file@v1")
         ($fixture.config | path join "file-history/child/child@v1")
       ]
-      | each {|file| {file: $file, bytes: (open --raw $file | into binary)} }
+      | each {|file|
+        {
+          file: $file
+          bytes: (open --raw $file | into binary)
+        }
+      }
       | collect
     )
     let parent_bytes = (open --raw $parent | into string)
@@ -1236,7 +1326,10 @@ def "test selected Claude moves preserve peers and shared project state" [] {
     let artifacts = (
       $artifact_names
       | each {|name|
-        {name: $name, bytes: (open --raw ($fixture.dir | path join $name) | into binary)}
+        {
+          name: $name
+          bytes: (open --raw ($fixture.dir | path join $name) | into binary)
+        }
       }
       | collect
     )
@@ -1244,11 +1337,12 @@ def "test selected Claude moves preserve peers and shared project state" [] {
       mkdir $destination
       "conflicting transcript" | save ($destination | path join "parent.jsonl")
 
+      let args = [
+        "move" $project $target "--assistant" "claude"
+        "--session-ids" $selected "--apply" "--no-backup"
+      ]
       let rejected = (with-env (fixture-env $root) {
-        (
-          run-cli move $project $target --assistant "claude"
-            --session-ids $selected --apply --no-backup
-        )
+        run-cli ...$args
       })
       assert not equal $rejected.exit_code 0
 
@@ -1273,7 +1367,14 @@ def "test selected Claude moves preserve peers and shared project state" [] {
       | merge {
         cwd: $"($target)/worker"
         message: {
-          content: [{type: "tool_use", id: "read-child", name: "Read", input: {file_path: $target}}]
+          content: [
+            {
+              type: "tool_use"
+              id: "read-child"
+              name: "Read"
+              input: {file_path: $target}
+            }
+          ]
         }
       }
     )
@@ -1290,7 +1391,10 @@ def "test selected Claude moves preserve peers and shared project state" [] {
         open --raw ($destination | path join "parent.jsonl")
       ) ($parent_bytes | str replace ($project | to json --raw) ($target | to json --raw))
       assert equal (open --raw $external | from json) {
-        type: "assistant", sessionId: "external", cwd: "/other/external", path: $target
+        type: "assistant"
+        sessionId: "external"
+        cwd: "/other/external"
+        path: $target
       }
     } else {
       assert equal (open --raw $parent) $parent_bytes
@@ -1298,7 +1402,10 @@ def "test selected Claude moves preserve peers and shared project state" [] {
         $'{ "cwd": "($project)", "sessionId": "artifact" }'
       )
       assert equal (open --raw $external | from json) {
-        type: "assistant", sessionId: "external", cwd: "/other/external", path: $project
+        type: "assistant"
+        sessionId: "external"
+        cwd: "/other/external"
+        path: $project
       }
     }
     for original in $unchanged {
@@ -1398,7 +1505,9 @@ def "test Claude selected parents carry subagents and preserve shared project st
     assert not (($fixture.config | path join "file-history/child") | path exists)
     assert (($fixture.dir | path join "retained.jsonl") | path exists)
     assert (($fixture.nested | path join "nested.jsonl") | path exists)
-    assert equal ($shared | each {|name| open --raw ($fixture.dir | path join $name) }) $shared_contents
+    assert equal (
+      $shared | each {|name| open --raw ($fixture.dir | path join $name) }
+    ) $shared_contents
     assert equal ($state | each {|name| open --raw ($fixture.config | path join $name) }) $originals
 
     let final = (run-cli retire "/other/retained" --assistant "claude" --exact --apply --no-backup)
@@ -1406,7 +1515,9 @@ def "test Claude selected parents carry subagents and preserve shared project st
 
     assert not (($fixture.dir | path join "retained.jsonl") | path exists)
     assert (($fixture.nested | path join "nested.jsonl") | path exists)
-    assert equal ($shared | each {|name| open --raw ($fixture.dir | path join $name) }) $shared_contents
+    assert equal (
+      $shared | each {|name| open --raw ($fixture.dir | path join $name) }
+    ) $shared_contents
     assert equal ($state | each {|name| open --raw ($fixture.config | path join $name) }) $originals
 
     let excluded = (
@@ -1773,20 +1884,44 @@ def "test selected OMP moves map nested and flat descendants while preserving pe
     $root | path join "omp/sessions" (session-encode-here "/other/external") "outside.jsonl"
   )
   write-jsonl $flat [
-    {type: "session", id: "flat", cwd: "/other/flat", parentSession: $fixture.parent}
-    {type: "message", path: $"($project)/flat.txt"}
+    {
+      type: "session"
+      id: "flat"
+      cwd: "/other/flat"
+      parentSession: $fixture.parent
+    }
+    {
+      type: "message"
+      path: $"($project)/flat.txt"
+    }
   ]
   write-jsonl $external [
-    {type: "session", id: "external", cwd: "/other/external", parentSession: $fixture.parent}
-    {type: "message", path: $"($project)/external.txt"}
+    {
+      type: "session"
+      id: "external"
+      cwd: "/other/external"
+      parentSession: $fixture.parent
+    }
+    {
+      type: "message"
+      path: $"($project)/external.txt"
+    }
   ]
   mkdir ($fixture.dir | path join "flat")
   "flat artifact" | save ($fixture.dir | path join "flat/notes.md")
   let retained = ($fixture.dir | path join "retained.jsonl")
   rm $retained
   write-jsonl $retained [
-    {type: "session", id: "retained", cwd: $project}
-    {type: "message", path: $"($project)/peer.txt", parent: $fixture.parent}
+    {
+      type: "session"
+      id: "retained"
+      cwd: $project
+    }
+    {
+      type: "message"
+      path: $"($project)/peer.txt"
+      parent: $fixture.parent
+    }
   ]
   let retained_bytes = (open --raw $retained | into binary)
   let globals = (
@@ -1795,7 +1930,10 @@ def "test selected OMP moves map nested and flat descendants while preserving pe
       let file = ($root | path join $name)
       mkdir ($file | path dirname)
       $project | save $file
-      {file: $file, bytes: (open --raw $file | into binary)}
+      {
+        file: $file
+        bytes: (open --raw $file | into binary)
+      }
     }
     | collect
   )
@@ -1830,7 +1968,11 @@ def "test selected OMP moves map nested and flat descendants while preserving pe
           $expected = ($expected | str replace $original $replacement)
         }
       }
-      {source: $file, target: $moved, expected: $expected}
+      {
+        source: $file
+        target: $moved
+        expected: $expected
+      }
     }
     | collect
   )
@@ -1851,11 +1993,12 @@ def "test selected OMP moves map nested and flat descendants while preserving pe
     assert equal (open --raw $original.file | into binary) $original.bytes $original.file
   }
 
+  let args = [
+    "move" $project $target "--assistant" "omp"
+    "--session-ids" "parent,external,unknown" "--apply" "--no-backup"
+  ]
   let repeated = (with-env (fixture-env $root) {
-    (
-      run-cli move $project $target --assistant "omp"
-        --session-ids "parent,external,unknown" --apply --no-backup
-    )
+    run-cli ...$args
   })
   assert equal $repeated.exit_code 0 $repeated.stderr
   assert str contains $repeated.stdout "No changes."
@@ -2667,4 +2810,360 @@ def "test selective CLI rejects ambiguous session selections" [] {
       assert ($run.exit_code != 0) ($args | str join " ")
     }
   }
+}
+
+def "test OMP moves preserve archives, explicit parentSession precedence, and non-UTF-8 errors" [] {
+  let root = (mktemp -d | path expand)
+  let project = "/home/u/src/app"
+  let target = ($root | path join "moved")
+  mkdir $target
+
+  let session_dir = ($root | path join "omp/sessions" (session-encode-here $project))
+  let archive_dir = ($root | path join "omp/archive/sessions" (session-encode-here $project))
+  let target_session_dir = ($root | path join "omp/sessions" (session-encode-here $target))
+  let target_archive_dir = ($root | path join "omp/archive/sessions" (session-encode-here $target))
+  let other_dir = ($root | path join "omp/sessions" (session-encode-here "/o"))
+
+  let container = ($session_dir | path join "00000000000000000000_container.jsonl")
+  let external_parent = ($other_dir | path join "p.jsonl")
+  let nested = ($session_dir | path join "00000000000000000000_container/nested.jsonl")
+  let archived = ($archive_dir | path join "archived.jsonl")
+
+  write-jsonl $container [
+    {
+      type: "session"
+      id: "container"
+      cwd: $project
+    }
+  ]
+  write-jsonl $external_parent [
+    {
+      type: "session"
+      id: "real-parent"
+      cwd: "/o"
+    }
+  ]
+  write-jsonl $nested [
+    {
+      type: "session"
+      id: "nested"
+      cwd: "/other/worker"
+      parentSession: $external_parent
+    }
+    {
+      type: "message"
+      path: $"($project)/worker.txt"
+    }
+  ]
+  write-jsonl $archived [
+    {
+      type: "session"
+      id: "archived"
+      cwd: $project
+      parentSession: $external_parent
+    }
+  ]
+  let nested_bytes = (open --raw $nested | into binary)
+
+  let args = [
+    "move" $project $target "--assistant" "omp"
+    "--session-ids" "container,archived" "--apply"
+  ]
+  let selected_move = (with-env (fixture-env $root) {
+    run-cli ...$args
+  })
+  assert equal $selected_move.exit_code 0 $selected_move.stderr
+
+  let backup_dir = (
+    ls ($root | path join "state/agent-project-move")
+    | get name
+    | first
+  )
+  let manifest = (open ($backup_dir | path join "manifest.json"))
+  assert equal (
+    $manifest
+    | where path == $archived
+    | get store
+  ) [
+    "archives"
+    "archives"
+  ]
+  let relocated_nested = (
+    $target_session_dir
+    | path join "00000000000000000000_container/nested.jsonl"
+  )
+  assert equal (open --raw $relocated_nested | into binary) $nested_bytes
+  assert (($target_session_dir | path join "00000000000000000000_container.jsonl") | path exists)
+  assert equal (
+    open --raw ($target_archive_dir | path join "archived.jsonl")
+    | from json
+  ) {
+    type: "session"
+    id: "archived"
+    cwd: $target
+    parentSession: $external_parent
+  }
+
+  let explicit_bundle = ($root | path join "explicit-bundle")
+  with-env (fixture-env $root) {
+    let exported = (
+      run-cli export "/o" $explicit_bundle --assistant "omp" --session-ids "real-parent"
+    )
+    assert equal $exported.exit_code 0 $exported.stderr
+  }
+  assert equal (
+    open ($explicit_bundle | path join "omp/entries.json")
+    | get files
+    | get session
+    | sort
+  ) [
+    "archived"
+    "nested"
+    "real-parent"
+  ]
+
+  let default_root = (mktemp -d | path expand)
+  let default_target = ($default_root | path join "moved")
+  mkdir $default_target
+  let default_dir = ($default_root | path join "omp/sessions" (session-encode-here $project))
+  let outside_parent = ($project | path join "untracked-parent.jsonl")
+  let session_file = ($default_dir | path join "main.jsonl")
+  write-jsonl $session_file [
+    {
+      type: "session"
+      id: "main"
+      cwd: $project
+      parentSession: $outside_parent
+    }
+  ]
+
+  let default_move = (with-env (fixture-env $default_root) {
+    run-cli move $project $default_target --assistant "omp" --apply --no-backup
+  })
+  assert equal $default_move.exit_code 0 $default_move.stderr
+
+  let moved_main = (
+    $default_root
+    | path join "omp/sessions" (session-encode-here $default_target) "main.jsonl"
+  )
+  assert equal (open --raw $moved_main | from json) {
+    type: "session"
+    id: "main"
+    cwd: $default_target
+    parentSession: $outside_parent
+  }
+
+  let binary_root = (mktemp -d | path expand)
+  let binary_dir = ($binary_root | path join "omp/sessions" (session-encode-here $project))
+  let valid_parent = ($binary_dir | path join "valid.jsonl")
+  let bad_child = ($binary_dir | path join "valid/corrupt.jsonl")
+  write-jsonl $valid_parent [
+    {
+      type: "session"
+      id: "valid"
+      cwd: $project
+    }
+  ]
+  mkdir ($bad_child | path dirname)
+  (
+    (
+      {
+        type: "session"
+        id: "corrupt"
+        cwd: $project
+        parentSession: "valid"
+      }
+      | to json --raw
+      | into binary
+    )
+    | bytes add --end 0x[0a 80 0a]
+  ) | save $bad_child
+
+  let bad_bytes = (open --raw $bad_child | into binary)
+  for args in [
+    ["move" $project $default_target "--session-ids" "valid"]
+    ["move" $project $default_target "--apply" "--no-backup"]
+  ] {
+    let refused = (with-env (fixture-env $binary_root) {
+      run-cli ...$args --assistant "omp"
+    })
+    assert not equal $refused.exit_code 0 ($args | str join " ")
+    assert str contains $refused.stderr "Refusing to edit the binary file"
+    assert equal (open --raw $bad_child | into binary) $bad_bytes
+  }
+}
+
+def "test Codex rejects directory rollout paths and backs up single-quote database paths" [] {
+  let root = (mktemp -d | path expand)
+  let project = "/home/u/src/app"
+  let target = ($root | path join "moved")
+  mkdir $target
+  let fixture = (make-codex $root $project)
+
+  let retained_rollout = ($root | path join "codex/sessions/retained.jsonl")
+  rm $retained_rollout
+  mkdir $retained_rollout
+  rm $fixture.compressed
+  mkdir $fixture.compressed
+  let db_before = (open --raw $fixture.db | hash sha256)
+
+  for id in ["retained" "parent"] {
+    let move_rejected = (with-env (fixture-env $root) {
+      run-cli move $project $target --assistant "codex" --session-ids $id --apply --no-backup
+    })
+    assert not equal $move_rejected.exit_code 0 $id
+    assert str contains $move_rejected.stderr "no rollout file" $id
+
+    let bundle_dir = ($root | path join $"bundle-($id)")
+    let export_rejected = (with-env (fixture-env $root) {
+      run-cli export $project $bundle_dir --assistant "codex" --session-ids $id
+    })
+    assert not equal $export_rejected.exit_code 0 $id
+  }
+  assert equal (open --raw $fixture.db | hash sha256) $db_before
+
+  let quoted_root = ($root | path join "owner's-home")
+  let quoted_fixture = (make-target-codex $quoted_root $project)
+  let saved = (apply-codex $quoted_root $quoted_fixture.db ["move" $project $target] true)
+  let saved_db = ($saved | path join ($quoted_fixture.db | str trim --left --char "/"))
+  let saved_history = ($saved | path join ($quoted_fixture.history | str trim --left --char "/"))
+  assert ($saved_db | path exists)
+  assert ($saved_history | path exists)
+  let logged = (
+    open --raw ($quoted_root | path join "sqlite-backups.jsonl")
+    | lines
+    | each {|line| $line | from json | last }
+  )
+  assert equal $logged [
+    $".backup ($saved_history | to json --raw)"
+    $".backup ($saved_db | to json --raw)"
+  ]
+}
+
+def "test Claude carries subagent meta sidecars and resolves parentAgentId hierarchies" [] {
+  let root = (mktemp -d | path expand)
+  let project = "/home/u/src/app"
+  let target = ($root | path join "moved")
+  mkdir $target
+  let fixture = (make-claude $root $project)
+  let subagents = ($fixture.dir | path join "parent/subagents")
+
+  {
+    agentType: "implementer"
+    spawnDepth: 1
+  }
+  | to json --raw
+  | save ($subagents | path join "agent-child.meta.json")
+
+  let grandchild = ($subagents | path join "agent-grandchild.jsonl")
+  write-jsonl $grandchild [
+    {
+      type: "assistant"
+      sessionId: "grandchild"
+      cwd: "/other/grandchild"
+      path: $"($project)/deep.txt"
+    }
+  ]
+  {
+    agentType: "reviewer"
+    parentAgentId: "child"
+    spawnDepth: 2
+  }
+  | to json --raw
+  | save ($subagents | path join "agent-grandchild.meta.json")
+
+  let sibling = ($subagents | path join "agent-sibling.jsonl")
+  write-jsonl $sibling [
+    {
+      type: "assistant"
+      sessionId: "sibling"
+      cwd: "/other/sibling"
+      path: $"($project)/sibling.txt"
+    }
+  ]
+  {
+    agentType: "researcher"
+    spawnDepth: 1
+  }
+  | to json --raw
+  | save ($subagents | path join "agent-sibling.meta.json")
+
+  let child_transcript = (open --raw $fixture.child | from json)
+  $child_transcript
+  | upsert cwd $"($project)/worker"
+  | to json --raw
+  | save --force $fixture.child
+
+  let bundle = ($root | path join "bundle")
+  with-env (fixture-env $root) {
+    let exported = (run-cli export $project $bundle --assistant "claude" --session-ids "child")
+    assert equal $exported.exit_code 0 $exported.stderr
+  }
+
+  let exported_names = (
+    open ($bundle | path join "claude/entries.json")
+    | get files
+    | where kind == "projects"
+    | get name
+    | sort
+  )
+  assert equal $exported_names [
+    "parent/subagents/agent-child.jsonl"
+    "parent/subagents/agent-child.meta.json"
+    "parent/subagents/agent-grandchild.jsonl"
+    "parent/subagents/agent-grandchild.meta.json"
+  ]
+
+  let import_root = ($root | path join "imported")
+  with-env (fixture-env $import_root) {
+    let imported = (
+      run-cli import $bundle --assistant "claude" --target $target --apply --no-backup
+    )
+    assert equal $imported.exit_code 0 $imported.stderr
+
+    let imported_dir = ($import_root | path join "claude/projects" (encode-path $target))
+    assert (
+      ($imported_dir | path join "parent/subagents/agent-grandchild.meta.json")
+      | path exists
+    )
+    assert equal (
+      open --raw ($imported_dir | path join "parent/subagents/agent-grandchild.jsonl")
+      | from json
+      | get path
+    ) $"($target)/deep.txt"
+
+    let retired = (
+      run-cli retire $target --assistant "claude" --session-ids "child" --apply --no-backup
+    )
+    assert equal $retired.exit_code 0 $retired.stderr
+
+    for name in $exported_names {
+      assert not (($imported_dir | path join $name) | path exists) $name
+    }
+  }
+
+  let sibling_bytes = (open --raw $sibling | into binary)
+  let sibling_meta_bytes = (
+    open --raw ($subagents | path join "agent-sibling.meta.json") | into binary
+  )
+
+  let moved = (with-env (fixture-env $root) {
+    run-cli move $project $target --assistant "claude" --session-ids "child" --apply --no-backup
+  })
+  assert equal $moved.exit_code 0 $moved.stderr
+
+  let destination = ($fixture.config | path join "projects" (encode-path $target))
+  for name in $exported_names {
+    assert (($destination | path join $name) | path exists) $name
+    assert not (($fixture.dir | path join $name) | path exists) $name
+  }
+  assert equal (
+    open --raw ($destination | path join "parent/subagents/agent-grandchild.jsonl")
+    | from json
+    | get path
+  ) $"($target)/deep.txt"
+  assert equal (open --raw $sibling | into binary) $sibling_bytes
+  assert equal (
+    open --raw ($subagents | path join "agent-sibling.meta.json") | into binary
+  ) $sibling_meta_bytes
 }

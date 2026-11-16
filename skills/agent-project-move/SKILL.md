@@ -26,7 +26,7 @@ Selection includes child paths by default. `--session-ids <id,id>` selects sessi
 
 ## Concurrent sessions
 
-Close sessions writing affected state before applying. Your own session counts: when its cwd is under either move path, or the plan edits a shared document it uses, such as `~/.claude.json`, hand the user the exact apply command to run after exiting the assistant.
+Close sessions writing affected state before applying. Your own session counts: when its cwd is under either move path, or the plan rewrites its transcript, hand the user the exact apply command to run after exiting the assistant.
 
 A SQL-phase failure can be replanned and rerun. After a file-phase failure, [restore](#restore) before replanning, because rewritten transcripts may no longer identify the directories still needing relocation. A run without a backup needs an independent recovery copy.
 
@@ -40,7 +40,7 @@ Move the project directory first, then preview `move <old> <new>` and apply with
 
 Paths match case-sensitively at `<old>` or `<old>/`. Case-only moves are refused. A missing destination draws a warning because sessions need it to resume. When a child moves outside its parent's destination, repair the child's mapping before the parent's.
 
-With `--session-ids`, only selected transcripts are rewritten. Their owned artifacts move when their physical project owner is under `<old>`. Shared project state stays in place.
+With `--session-ids`, only sessions recorded under `<old>` and their linked descendants are selected. Selected transcripts are rewritten, their owned artifacts move when their physical project owner is under `<old>`, and shared project state stays in place.
 
 ## Transfer between hosts
 
@@ -61,10 +61,10 @@ Retirement removes selected transcripts and owned artifacts. Claude project memo
 Use the directory printed after `Backed up to`. It mirrors absolute paths and contains an ordered `manifest.json`.
 
 1. Close assistant writers.
-2. Reverse `rename` and `rmdir` actions in reverse manifest order. Move each `to` back to `path` and recreate removed directories.
-3. Restore each database through SQLite's `.backup` command from its mirrored backup path to its original path.
-4. Copy other backed-up files and directories to their original paths, skipping databases already restored.
-5. Remove files created by the import, listed by the manifest's `copy` actions and their `to` paths.
+2. Reverse `rename` and `rmdir` actions in reverse manifest order, skipping entries that did not run. Move each `to` back to `path` and recreate removed directories.
+3. Restore each database listed in `sql` actions through SQLite's `.backup` command from its mirrored backup path to its original path.
+4. Copy other backed-up files and directories (`edit` and `delete` actions) to their original paths, skipping databases already restored.
+5. Remove files created by an import, listed by the manifest's `copy` actions and their `to` paths.
 6. Run `scan` and check the restored paths.
 
 ## Verify

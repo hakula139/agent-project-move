@@ -4,12 +4,15 @@
 # Selected attachments in OMP's content-addressed blob store.
 # ==================================================================================================
 
-use ../lib/actions.nu [same-content]
+use ../lib/actions.nu [read-utf8 same-content]
 use ../lib/paths.nu [files-under valid-path]
 use ../lib/rewrite.nu [file-uri json-escape]
 
 const HASH = '^[a-f0-9]{64}$'
 const NAME = '^[a-f0-9]{64}(?:\.[a-z0-9][a-z0-9._-]{0,31})?$'
+const PROSE_ALIAS = (
+  '(?<![A-Za-z0-9_])(?<name>[a-f0-9]{64}\.[a-z0-9][a-z0-9._-]{0,31})(?![A-Za-z0-9_.-])'
+)
 
 def pool-files [root: string]: nothing -> list<record> {
   files-under $root
@@ -35,12 +38,12 @@ export def references [files: list<string>, root: string]: nothing -> list<strin
   let absolute = ('(?:' + $roots + ')/(?<id>[a-f0-9]{64})\b')
   mut ids = []
   for file in $files {
-    let text = (open --raw $file | into string)
+    let text = (read-utf8 $file)
     let native = ($text | parse --regex '\bblob:sha256:(?<id>[a-f0-9]{64})\b' | get id)
     let paths = ($text | parse --regex $absolute | get id)
     let names = (
       $text
-      | parse --regex '(?<![A-Za-z0-9_])(?<name>[a-f0-9]{64}\.[a-z0-9][a-z0-9._-]{0,31})(?![A-Za-z0-9_.-])'
+      | parse --regex $PROSE_ALIAS
       | get name
       | each {|name|
         if $name in $aliases { $name } else { $name | str trim --right --char "." }

@@ -12,22 +12,31 @@ use ../lib/actions.nu [
   same-content
   session-merge-actions
 ]
-use ../lib/paths.nu [files-under outermost-paths path-map path-match valid-path]
+use ../lib/paths.nu [
+  files-under
+  glob-under
+  home-dir
+  outermost-paths
+  path-map
+  path-match
+  valid-path
+]
 use ../lib/rewrite.nu [files-with-path json-value rewrite-text rg-lines]
 use ../lib/selection.nu [select-sessions]
 
 const ENCODED_MAX = 200
+const TRANSCRIPT_NAME = '^(?:[^/]+|[^/]+/subagents/agent-[^/]+)\.jsonl$'
 
 # --------------------------------------------------------------------------------------------------
 # Locations
 # --------------------------------------------------------------------------------------------------
 
 def root []: nothing -> string {
-  $env.CLAUDE_CONFIG_DIR? | default --empty ($env.HOME | path join ".claude")
+  $env.CLAUDE_CONFIG_DIR? | default --empty (home-dir | path join ".claude")
 }
 
 def global-config []: nothing -> string {
-  ($env.CLAUDE_CONFIG_DIR? | default --empty $env.HOME) | path join ".claude.json"
+  ($env.CLAUDE_CONFIG_DIR? | default --empty (home-dir)) | path join ".claude.json"
 }
 
 def projects-dir []: nothing -> string { root | path join "projects" }
@@ -162,25 +171,71 @@ export def encode-path [path: string]: nothing -> string {
 def config-paths []: nothing -> list<string> {
   let file = (global-config)
   if not ($file | path exists) { return [] }
-  open $file
-  | get -o projects
-  | default {}
-  | columns
+  let config = try {
+    open --raw $file
+    | into string
+    | from json
+  } catch {
+    return []
+  }
+  if not ($config | describe | str starts-with "record") { return [] }
+  let projects = ($config | get -o projects)
+  if not ($projects | describe | str starts-with "record") { return [] }
+  $projects | columns
+}
+
+def subagent-parent [file: string, fallback: string]: nothing -> string {
+  let meta_file = ($file | str replace --regex '\.jsonl$' ".meta.json")
+  if not ($meta_file | path exists) or ($meta_file | path type) != "file" {
+    return $fallback
+  }
+  let meta = try {
+    open --raw $meta_file
+    | into string
+    | from json
+  } catch {
+    return $fallback
+  }
+  if not ($meta | describe | str starts-with "record") {
+    return $fallback
+  }
+  let parent_id = ($meta | get -o parentAgentId)
+  if ($parent_id | describe) == "string" and $parent_id != "" {
+    $parent_id
+  } else {
+    $fallback
+  }
+}
+
+def session-sidecars [file: string]: nothing -> list<string> {
+  let meta = ($file | str replace --regex '\.jsonl$' ".meta.json")
+  if ($meta | path exists) and ($meta | path type) == "file" {
+    [$meta]
+  } else {
+    []
+  }
 }
 
 def session-records [owner_hint?: string]: nothing -> list<record> {
   mut rows = []
   for dir in (project-dirs) {
     let files = (
-      (glob ($dir | path join "*.jsonl"))
-      ++ (glob ($dir | path join "*/subagents/agent-*.jsonl"))
+      (glob-under $dir "*.jsonl")
+      ++ (glob-under $dir "*/subagents/agent-*.jsonl")
       | sort
     )
     for file in $files {
       let cwds = (
-        rg-lines ["-o" "--no-messages" '"cwd":"[^"]*"' $file]
-        | parse --regex '^"cwd":"(?<cwd>[^"]*)"$'
-        | each {|entry| json-value $entry.cwd }
+        rg-lines ["-a" "-o" "--no-messages" '"cwd":"(?:\\.|[^"\\])*"' "--" $file]
+        | parse --regex '^"cwd":"(?<cwd>(?:\\.|[^"\\])*)"$'
+        | each {|entry|
+          try {
+            json-value $entry.cwd
+          } catch {
+            null
+          }
+        }
+        | compact
         | uniq
       )
 
@@ -191,7 +246,7 @@ def session-records [owner_hint?: string]: nothing -> list<record> {
       )
 
       let parent = if ($relative | length) > 1 {
-        $relative | first
+        subagent-parent $file ($relative | first)
       } else {
         null
       }
@@ -218,7 +273,12 @@ def session-records [owner_hint?: string]: nothing -> list<record> {
     ($rows | get -o cwd) ++ (config-paths) ++ [$owner_hint]
     | where {|cwd| valid-path $cwd }
     | uniq
-    | each {|cwd| {cwd: $cwd, name: (encode-path $cwd)}}
+    | each {|cwd|
+      {
+        cwd: $cwd
+        name: (encode-path $cwd)
+      }
+    }
   )
 
   $rows
@@ -254,8 +314,14 @@ def session-project-files [records: list<record>]: nothing -> list<record> {
   $records
   | each {|record|
     let subtree = ($record.file | str replace --regex '\.jsonl$' "")
-    [$record.file] ++ (files-under $subtree)
-    | each {|file| {file: $file, directory: $record.directory, owner: $record.owner}}
+    [$record.file] ++ (session-sidecars $record.file) ++ (files-under $subtree)
+    | each {|file|
+      {
+        file: $file
+        directory: $record.directory
+        owner: $record.owner
+      }
+    }
   }
   | flatten
   | uniq
@@ -285,6 +351,7 @@ export def plan-move [
         {
           source_path: $row.file
           target: ($directory | path join ($row.file | path relative-to $row.directory))
+          sidecars: [".meta.json"]
         }
       }
       | uniq
@@ -345,6 +412,12 @@ def session-deletions [records: list<record>]: nothing -> list<record> {
     | uniq
   )
 
+  let sidecars = (
+    $files
+    | each {|file| session-sidecars $file }
+    | flatten
+  )
+
   let subtrees = (
     $files
     | each {|file| $file | str replace --regex '\.jsonl$' "" }
@@ -359,7 +432,7 @@ def session-deletions [records: list<record>]: nothing -> list<record> {
     | where {|path| $path | path exists }
   )
 
-  $files ++ $subtrees ++ $history
+  $files ++ $sidecars ++ $subtrees ++ $history
   | outermost-paths $in
   | each {|path| action "claude" "sessions" "delete" $path "session state" }
 }
@@ -382,7 +455,9 @@ export def export-bundle [
   --exact
   --session-ids: list<string> = []
 ]: nothing -> record {
-  let selected = (select-sessions (session-records $old) $old --exact=$exact --session-ids $session_ids)
+  let selected = (
+    select-sessions (session-records $old) $old --exact=$exact --session-ids $session_ids
+  )
   mut files = (
     session-project-files $selected
     | each {|item|
@@ -439,27 +514,28 @@ def imported-elsewhere [projects: list<string>, file: record]: nothing -> bool {
   }
 }
 
+def owns-project-entry [transcript: string, entry: string]: nothing -> bool {
+  let stem = ($transcript | str replace --regex '\.jsonl$' "")
+  (
+    $entry == $transcript
+    or $entry == $"($stem).meta.json"
+    or (path-match $stem $entry)
+  )
+}
+
 export def plan-import [bundle: record, --target: string]: nothing -> list<record> {
   let root = (root)
   let projects = (project-dirs)
   let transcripts = (
     $bundle.files
-    | where {|file|
-      (
-        $file.kind == "projects"
-        and ($file.name =~ '^(?:[^/]+|[^/]+/subagents/agent-[^/]+)\.jsonl$')
-      )
-    }
+    | where {|file| $file.kind == "projects" and ($file.name =~ $TRANSCRIPT_NAME) }
   )
   let carried = (
     $bundle.files
     | where {|file|
       $file.kind == "file-history" or (
         $file.kind == "projects" and ($transcripts | any {|session|
-          $session.project == $file.project and (
-            $session.name == $file.name
-            or (path-match ($session.name | str replace --regex '\.jsonl$' "") $file.name)
-          )
+          $session.project == $file.project and (owns-project-entry $session.name $file.name)
         })
       )
     }
@@ -486,7 +562,11 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
       } else {
         $file.project
       }
-      $file | merge {project: $project, expected: $expected, transform: $transform}
+      $file | merge {
+        project: $project
+        expected: $expected
+        transform: $transform
+      }
     }
   )
 
@@ -501,9 +581,10 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
         $files
         | where {|session|
           (
-            $session.kind == "projects" and $session.project == $file.project
-            and ($session.name =~ '^(?:[^/]+|[^/]+/subagents/agent-[^/]+)\.jsonl$')
-            and (path-match ($session.name | str replace --regex '\.jsonl$' "") $file.name)
+            $session.kind == "projects"
+            and $session.project == $file.project
+            and ($session.name =~ $TRANSCRIPT_NAME)
+            and (owns-project-entry $session.name $file.name)
           )
         }
         | any {|session|
@@ -529,7 +610,8 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
         help: "Compare the two files. Delete or rename the local file if the bundle's copy should win, then rerun the import."
       }
     }
-    copy-action "claude" $file.kind $file.bundle $target "import session file" --transform $file.transform
+    let description = "import session file"
+    copy-action "claude" $file.kind $file.bundle $target $description --transform $file.transform
   }
   | compact
 }

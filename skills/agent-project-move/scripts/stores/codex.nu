@@ -8,12 +8,12 @@ use ../lib/actions.nu [
   action
   column-actions
   copy-action
-  decompress-file
   edit-action
+  read-utf8
   sql-action
 ]
 use ../lib/bundle.nu [bundle-table]
-use ../lib/paths.nu [path-map valid-path]
+use ../lib/paths.nu [home-dir path-map valid-path]
 use ../lib/rewrite.nu [files-with-path rewrite-text]
 use ../lib/selection.nu [select-sessions]
 use ../lib/sqlite.nu [
@@ -33,17 +33,17 @@ const PROJECTION_TABLES = ["thread_history_projection_state" "thread_turns" "thr
 # --------------------------------------------------------------------------------------------------
 
 def root []: nothing -> string {
-  $env.CODEX_HOME? | default --empty ($env.HOME | path join ".codex")
+  $env.CODEX_HOME? | default --empty (home-dir | path join ".codex")
 }
 
 # The state database, or null before Codex has created one.
 def state-db []: nothing -> any {
-  latest-db (root | path join "state_*.sqlite") "threads"
+  latest-db (root) "state_*.sqlite" "threads"
 }
 
 # The thread history database, or null before Codex has created one.
 def history-db []: nothing -> any {
-  latest-db (root | path join "thread_history_*.sqlite") "thread_items"
+  latest-db (root) "thread_history_*.sqlite" "thread_items"
 }
 
 def plain-rollout-path [path: string]: nothing -> string {
@@ -56,8 +56,9 @@ def plain-rollout-path [path: string]: nothing -> string {
 }
 
 def rollout-file [path: string]: nothing -> any {
+  if ($path | describe) != "string" { return null }
   let plain = (plain-rollout-path $path)
-  if ($plain | path exists) {
+  if ($plain | path exists) and ($plain | path type) == "file" {
     return {
       file: $plain
       compressed: false
@@ -69,7 +70,7 @@ def rollout-file [path: string]: nothing -> any {
   } else {
     $path
   }
-  if ($compressed | path exists) {
+  if ($compressed | path exists) and ($compressed | path type) == "file" {
     return {
       file: $compressed
       compressed: true
@@ -117,6 +118,52 @@ export def scan []: nothing -> list<record> {
       )
     }
   }
+}
+
+# --------------------------------------------------------------------------------------------------
+# Session selection
+# --------------------------------------------------------------------------------------------------
+
+def selected-threads [
+  state: string
+  rows: list<record>
+  old: string
+  --exact
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
+  let edges = if (table-columns $state "thread_spawn_edges" | is-not-empty) {
+    sqlite-rows $state "SELECT * FROM thread_spawn_edges"
+  } else {
+    []
+  }
+
+  let linked = (
+    $rows
+    | each {|row|
+      let edge = (
+        $edges
+        | where child_thread_id == $row.id
+        | first
+      )
+
+      let parent = if $edge != null {
+        $edge.parent_thread_id
+      } else {
+        $row
+        | get -o attached_thread_parent_id
+        | default ($row | get -o parent_thread_id)
+      }
+
+      $row | upsert parent $parent
+    }
+  )
+
+  let ids = (
+    select-sessions $linked $old --exact=$exact --session-ids $session_ids
+    | get -o id
+  )
+
+  $rows | where {|row| $row.id in $ids }
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -202,52 +249,6 @@ export def plan-move [
 }
 
 # --------------------------------------------------------------------------------------------------
-# Session selection
-# --------------------------------------------------------------------------------------------------
-
-def selected-threads [
-  state: string
-  rows: list<record>
-  old: string
-  --exact
-  --session-ids: list<string> = []
-]: nothing -> list<record> {
-  let edges = if (table-columns $state "thread_spawn_edges" | is-not-empty) {
-    sqlite-rows $state "SELECT * FROM thread_spawn_edges"
-  } else {
-    []
-  }
-
-  let linked = (
-    $rows
-    | each {|row|
-      let edge = (
-        $edges
-        | where child_thread_id == $row.id
-        | first
-      )
-
-      let parent = if $edge != null {
-        $edge.parent_thread_id
-      } else {
-        $row
-        | get -o attached_thread_parent_id
-        | default ($row | get -o parent_thread_id)
-      }
-
-      $row | upsert parent $parent
-    }
-  )
-
-  let ids = (
-    select-sessions $linked $old --exact=$exact --session-ids $session_ids
-    | get -o id
-  )
-
-  $rows | where {|row| $row.id in $ids }
-}
-
-# --------------------------------------------------------------------------------------------------
 # Retirement
 # --------------------------------------------------------------------------------------------------
 
@@ -266,10 +267,11 @@ def delete-threads [state: string, threads: list<record>]: nothing -> list<recor
   }
 
   if ($ids | is-not-empty) {
-    let condition = $"id IN \((sql-list $ids)\)"
-    let delete = $"DELETE FROM threads WHERE ($condition)"
+    let id_list = (sql-list $ids)
+    let delete = $"DELETE FROM threads WHERE id IN \(($id_list)\)"
     let edges = if (table-columns $state "thread_spawn_edges" | is-not-empty) {
-      [$"DELETE FROM thread_spawn_edges WHERE child_thread_id IN \((sql-list $ids)\) OR parent_thread_id IN \((sql-list $ids)\)"]
+      let edge_where = $"child_thread_id IN \(($id_list)\) OR parent_thread_id IN \(($id_list)\)"
+      [$"DELETE FROM thread_spawn_edges WHERE ($edge_where)"]
     } else {
       []
     }
@@ -304,7 +306,8 @@ export def plan-retire [
   )
 
   if ($projects | is-not-empty) {
-    let statement = $"DELETE FROM projects WHERE id IN \((sql-list $projects)\) AND NOT EXISTS \(SELECT 1 FROM threads WHERE threads.project_id = projects.id\)"
+    let unused = "NOT EXISTS (SELECT 1 FROM threads WHERE threads.project_id = projects.id)"
+    let statement = $"DELETE FROM projects WHERE id IN \((sql-list $projects)\) AND ($unused)"
     let description = "remove unreferenced projects"
     $actions = ($actions | append (
       sql-action "codex" "projects" $state [$statement] $description --rows-first --foreign-keys
@@ -429,11 +432,7 @@ def rollout-target [file: record]: nothing -> string {
 }
 
 def rollout-content [path: string, compressed: bool]: nothing -> string {
-  if $compressed {
-    decompress-file $path
-  } else {
-    open --raw $path
-  }
+  read-utf8 $path --compressed=$compressed
 }
 
 export def plan-import [bundle: record, --target: string]: nothing -> list<record> {

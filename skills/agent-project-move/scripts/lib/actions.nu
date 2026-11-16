@@ -5,7 +5,7 @@
 # ==================================================================================================
 
 use ./output.nu [plural print-table]
-use ./paths.nu [outermost-paths]
+use ./paths.nu [home-dir outermost-paths]
 use ./rewrite.nu [file-uri json-escape rewrite-text]
 use ./sqlite.nu [path-condition run-sql sql-quote sqlite-rows]
 
@@ -53,7 +53,7 @@ export def copy-action [
   }
 }
 
-export def rename-action [
+def rename-action [
   assistant: string
   store: string
   source: string
@@ -269,13 +269,34 @@ export def session-merge-actions [
   let paths = (
     $targets
     | each {|item|
-      [
-        {source: $item.source_path, target: $item.target}
+      let item_store = ($item | get -o store | default $store)
+      let stem_source = ($item.source_path | str replace --regex '\.jsonl$' "")
+      let stem_target = ($item.target | str replace --regex '\.jsonl$' "")
+      let base = [
         {
-          source: ($item.source_path | str replace --regex '\.jsonl$' "")
-          target: ($item.target | str replace --regex '\.jsonl$' "")
+          store: $item_store
+          source: $item.source_path
+          target: $item.target
+        }
+        {
+          store: $item_store
+          source: $stem_source
+          target: $stem_target
         }
       ]
+      let sidecars = (
+        $item
+        | get -o sidecars
+        | default []
+        | each {|suffix|
+          {
+            store: $item_store
+            source: $"($stem_source)($suffix)"
+            target: $"($stem_target)($suffix)"
+          }
+        }
+      )
+      $base ++ $sidecars
     }
     | flatten
     | where {|item| $item.source != $item.target and ($item.source | path exists) }
@@ -285,12 +306,12 @@ export def session-merge-actions [
   $paths
   | where {|item| $item.source in $sources }
   | each {|item|
-    merge-actions $assistant $store $item.source $item.target "move selected session state"
+    merge-actions $assistant $item.store $item.source $item.target "move selected session state"
   }
   | flatten
 }
 
-export def decompress-file [path: string]: nothing -> string {
+export def decompress-file [path: string]: nothing -> any {
   let run = (^zstd -dc $path | complete)
   if $run.exit_code != 0 {
     error make --unspanned {
@@ -300,6 +321,21 @@ export def decompress-file [path: string]: nothing -> string {
   }
 
   $run.stdout
+}
+
+export def read-utf8 [path: string, --compressed]: nothing -> string {
+  let content = if $compressed {
+    decompress-file $path
+  } else {
+    open --raw $path
+  }
+  if ($content | describe) != "string" {
+    error make --unspanned {
+      msg: $"Refusing to edit the binary file ($path)"
+      help: "Convert the file to UTF-8, or move it by hand."
+    }
+  }
+  $content
 }
 
 def compress-file [content: string, target: string]: nothing -> nothing {
@@ -342,18 +378,7 @@ def write-file [path: string, content: any, --compress, --reference: string]: no
 
 def edit-file [path: string, transform: closure]: nothing -> nothing {
   let compress = ($path | str ends-with ".zst")
-  let content = if $compress {
-    decompress-file $path
-  } else {
-    open --raw $path
-  }
-  if ($content | describe) != "string" {
-    error make --unspanned {
-      msg: $"Refusing to edit the binary file ($path)"
-      help: "Convert the file to UTF-8, or move it by hand."
-    }
-  }
-
+  let content = (read-utf8 $path --compressed=$compress)
   let updated = (do $transform $content)
   if $updated == $content { return }
   write-file $path $updated --compress=$compress
@@ -372,11 +397,7 @@ def execute-action [action: record]: nothing -> nothing {
         ^cp --preserve=mode,timestamps $action.path $action.to
       } else {
         let compressed = ($action | get -o compressed | default false)
-        let content = if $compressed {
-          decompress-file $action.path
-        } else {
-          open --raw $action.path
-        }
+        let content = (read-utf8 $action.path --compressed=$compressed)
         let updated = (do $transform $content)
         write-file $action.to $updated --compress=$compressed --reference $action.path
       }
@@ -411,7 +432,7 @@ def backup-path [root: string, path: string]: nothing -> nothing {
 }
 
 def backup-root []: nothing -> string {
-  let base = ($env.XDG_STATE_HOME? | default --empty ($env.HOME | path join ".local/state"))
+  let base = ($env.XDG_STATE_HOME? | default --empty (home-dir | path join ".local/state"))
   $base | path join "agent-project-move"
 }
 
@@ -477,7 +498,7 @@ def backup-all [actions: list<record>]: nothing -> string {
   for db in $databases {
     let destination = ($backup_dir | path join ($db | str replace --regex "^/" ""))
     mkdir ($destination | path dirname)
-    let run = (^sqlite3 $db $".backup '($destination)'" | complete)
+    let run = (^sqlite3 $db $".backup ($destination | to json --raw)" | complete)
     if $run.exit_code != 0 {
       error make --unspanned {
         msg: $"SQLite backup failed on ($db): ($run.stderr | str trim)"
@@ -521,13 +542,14 @@ export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> n
     | print-table
 
     let count = ($ordered | length)
+    let unit = (plural $count "action" "actions")
     let backup = if $no_backup {
       "No backup will be created."
     } else {
       $"A backup goes to (backup-root) first."
     }
 
-    print $"Dry run: ($count) (plural $count 'action' 'actions') planned, nothing written. Rerun with --apply to write the plan. ($backup)"
+    print $"Dry run: ($count) ($unit) planned, nothing written. Rerun with --apply to write the plan. ($backup)"
     return
   }
 
