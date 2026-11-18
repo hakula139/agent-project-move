@@ -9,10 +9,13 @@ use ../lib/actions.nu [
   copy-action
   edit-action
   merge-actions
+  read-utf8
   same-content
+  session-merge-actions
 ]
 use ../lib/paths.nu [
   files-under
+  home-dir
   outermost-paths
   path-map
   path-match
@@ -27,7 +30,7 @@ use ./omp-blobs.nu
 # --------------------------------------------------------------------------------------------------
 
 def agent-dir []: nothing -> string {
-  $env.PI_CODING_AGENT_DIR? | default --empty ($env.HOME | path join ".omp/agent")
+  $env.PI_CODING_AGENT_DIR? | default --empty (home-dir | path join ".omp/agent")
 }
 
 def session-root []: nothing -> string { agent-dir | path join "sessions" }
@@ -73,7 +76,7 @@ def session-encode [path: string, home: string, tmp: string]: nothing -> string 
 
 export def session-encode-here [path: string]: nothing -> string {
   let tmp = ($env.TMPDIR? | default --empty "/tmp")
-  session-encode $path $env.HOME $tmp
+  session-encode $path (home-dir) $tmp
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -86,7 +89,8 @@ def session-header [file: string]: nothing -> any {
   | lines
   | each {|line|
     try {
-      $line | from json
+      let row = ($line | from json)
+      if ($row | describe | str starts-with "record") { $row } else { null }
     } catch {
       null
     }
@@ -133,18 +137,29 @@ def session-records []: nothing -> list<record> {
   | each {|row|
     let file = $row.file
     let parent = ($row | get -o parent)
-    let linked = (
+    let explicit = if $parent != null {
+      $inventory
+      | where {|candidate| $candidate.id == $parent or $candidate.file == $parent }
+      | sort-by {|candidate| $candidate.file | str length }
+      | last
+    } else {
+      null
+    }
+    let linked = if $explicit != null {
+      $explicit
+    } else if $parent == null {
       $inventory
       | where {|candidate|
-        let candidate_file = $candidate.file
         (
-          ($parent != null and ($candidate.id == $parent or $candidate_file == $parent))
-          or (path-match ($candidate_file | str replace --regex '\.jsonl$' "") $file)
+          $candidate.file != $file
+          and (path-match ($candidate.file | str replace --regex '\.jsonl$' "") $file)
         )
       }
       | sort-by {|candidate| $candidate.file | str length }
       | last
-    )
+    } else {
+      null
+    }
 
     let main = (
       $inventory
@@ -213,11 +228,47 @@ def remap-parent [content: string, new: string]: nothing -> string {
       | parse --regex '(?<prefix>"parentSession"\s*:\s*)(?<value>"(?:\\.|[^"\\])*")'
       | first
     )
+    if $field == null { return $line }
     let original = ($field.prefix + $field.value)
     let mapped = ($field.prefix + ($new | to json --raw))
     $line | str replace $original $mapped
   }
   | str join "\n"
+}
+
+def parent-target [file: string, targets: list<record>]: nothing -> any {
+  let original = (session-header $file | get -o parentSession)
+  let mapped = (
+    $targets
+    | where source_path == $original
+    | first
+    | get -o target
+  )
+  if $mapped != null {
+    $mapped
+  } else if (valid-path $original) {
+    $original
+  } else {
+    null
+  }
+}
+
+def journal-edit-action [
+  kind: string
+  file: string
+  targets: list<record>
+  old: string
+  new: string
+]: nothing -> any {
+  let content = (read-utf8 $file)
+  let parent = (parent-target $file $targets)
+  let rewrite = {|text|
+    let rewritten = (rewrite-text $text $old $new)
+    if $parent == null { $rewritten } else { remap-parent $rewritten $parent }
+  }
+  if (do $rewrite $content) != $content {
+    edit-action "omp" $kind $file $rewrite "rewrite session paths"
+  }
 }
 
 def session-actions [
@@ -254,40 +305,75 @@ def session-actions [
       if $source == $target { continue }
       $targets = (
         $targets
-        ++ ($records | where {|row| path-match $source $row.file } | each {|row|
-          {source_path: $row.file, target: (path-map $source $target $row.file)}
-        })
+        ++ (
+          $records
+          | where {|row| path-match $source $row.file }
+          | each {|row|
+            {
+              source_path: $row.file
+              target: (path-map $source $target $row.file)
+            }
+          }
+        )
       )
     }
   }
 
   let targets = $targets
-  let parents = (
+  let parent_files = (
     $records
-    | each {|row|
-      let parent = (session-header $row.file | get -o parentSession)
-      let target = ($targets | where source_path == $parent | first)
-      if $target != null { {file: $row.file, parent: $target.target} }
+    | where {|row|
+      let original = (session-header $row.file | get -o parentSession)
+      $targets | any {|entry| $entry.source_path == $original }
     }
+    | get -o file
   )
+  let archive_prefix = (archive-root)
   let session_files = (files-with-path $old [(session-root) (archive-root)])
   let edits = (
-    $session_files ++ ($parents | get -o file)
+    $session_files ++ $parent_files
     | uniq
     | each {|file|
-      let parent = ($parents | where file == $file | first | get -o parent)
-      let rewrite = {|content|
-        let rewritten = (rewrite-text $content $old $new)
-        if $parent == null { $rewritten } else { remap-parent $rewritten $parent }
-      }
-      edit-action "omp" "sessions" $file $rewrite "rewrite session paths"
+      let kind = if (path-match $archive_prefix $file) { "archives" } else { "sessions" }
+      journal-edit-action $kind $file $targets $old $new
     }
+    | compact
   )
   $edits ++ $merges
 }
 
-export def plan-move [old: string, new: string]: nothing -> list<record> {
+export def plan-move [
+  old: string
+  new: string
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
   let records = (session-records)
+  if ($session_ids | is-not-empty) {
+    let selected = (select-sessions $records $old --session-ids $session_ids)
+    let targets = (
+      $selected
+      | each {|row|
+        let directory = if (path-match $old $row.owner) {
+          let project = (path-map $old $new $row.owner)
+          $row.directory | path dirname | path join (session-encode-here $project)
+        } else {
+          $row.directory
+        }
+        {
+          store: $row.kind
+          source_path: $row.file
+          target: ($directory | path join ($row.file | path relative-to $row.directory))
+        }
+      }
+      | uniq
+    )
+    let edits = (
+      $selected
+      | each {|row| journal-edit-action $row.kind $row.file $targets $old $new }
+      | compact
+    )
+    return ($edits ++ (session-merge-actions "omp" "sessions" $targets))
+  }
   let recorded = (
     ($records | get -o cwd) ++ ($records | get -o owner)
     | where {|path| (valid-path $path) and (path-match $old $path) }
@@ -442,11 +528,20 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
 
   let blob_sources = (
     $bundle.files
-    | where {|file| $file.kind in ["sessions" "archives"] and (
-      $file.name | str ends-with ".jsonl"
-    ) }
+    | where {|file|
+      (
+        $file.kind in ["sessions" "archives"]
+        and ($file.name | str ends-with ".jsonl")
+      )
+    }
     | get -o bundle
-    | where {|file| $blob_roots | any {|root| (files-with-path $root [$file]) | is-not-empty } }
+    | where {|file|
+      let raw = (open --raw $file)
+      (
+        (($raw | describe) == "string")
+        and ($blob_roots | any {|root| (files-with-path $root [$file]) | is-not-empty })
+      )
+    }
   )
   let local_inventory = (session-records)
 

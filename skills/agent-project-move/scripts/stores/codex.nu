@@ -8,12 +8,12 @@ use ../lib/actions.nu [
   action
   column-actions
   copy-action
-  decompress-file
   edit-action
+  read-utf8
   sql-action
 ]
 use ../lib/bundle.nu [bundle-table]
-use ../lib/paths.nu [path-map valid-path]
+use ../lib/paths.nu [home-dir path-map valid-path]
 use ../lib/rewrite.nu [files-with-path rewrite-text]
 use ../lib/selection.nu [select-sessions]
 use ../lib/sqlite.nu [
@@ -33,17 +33,17 @@ const PROJECTION_TABLES = ["thread_history_projection_state" "thread_turns" "thr
 # --------------------------------------------------------------------------------------------------
 
 def root []: nothing -> string {
-  $env.CODEX_HOME? | default --empty ($env.HOME | path join ".codex")
+  $env.CODEX_HOME? | default --empty (home-dir | path join ".codex")
 }
 
 # The state database, or null before Codex has created one.
 def state-db []: nothing -> any {
-  latest-db (root | path join "state_*.sqlite") "threads"
+  latest-db (root) "state_*.sqlite" "threads"
 }
 
 # The thread history database, or null before Codex has created one.
 def history-db []: nothing -> any {
-  latest-db (root | path join "thread_history_*.sqlite") "thread_items"
+  latest-db (root) "thread_history_*.sqlite" "thread_items"
 }
 
 def plain-rollout-path [path: string]: nothing -> string {
@@ -56,8 +56,9 @@ def plain-rollout-path [path: string]: nothing -> string {
 }
 
 def rollout-file [path: string]: nothing -> any {
+  if ($path | describe) != "string" { return null }
   let plain = (plain-rollout-path $path)
-  if ($plain | path exists) {
+  if ($plain | path exists) and ($plain | path type) == "file" {
     return {
       file: $plain
       compressed: false
@@ -69,13 +70,25 @@ def rollout-file [path: string]: nothing -> any {
   } else {
     $path
   }
-  if ($compressed | path exists) {
+  if ($compressed | path exists) and ($compressed | path type) == "file" {
     return {
       file: $compressed
       compressed: true
     }
   }
   null
+}
+
+def required-rollout [row: record]: nothing -> record {
+  let path = ($row | get -o rollout_path)
+  if ($path | describe) != "string" {
+    error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout path"}
+  }
+  let resolved = (rollout-file $path)
+  if $resolved == null {
+    error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout file"}
+  }
+  $resolved
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -105,68 +118,6 @@ export def scan []: nothing -> list<record> {
       )
     }
   }
-}
-
-# --------------------------------------------------------------------------------------------------
-# Move
-# --------------------------------------------------------------------------------------------------
-
-def projection-actions [db: any, ids: list<string>]: nothing -> list<record> {
-  if ($db == null) or ($ids | is-empty) { return [] }
-
-  let id_list = (sql-list $ids)
-  $PROJECTION_TABLES
-  | each {|table|
-    let statement = $"DELETE FROM ($table) WHERE thread_id IN \(($id_list)\)"
-    sql-action "codex" "thread-history" $db [$statement] $"reset ($table)" --derived
-  }
-}
-
-export def plan-move [old: string, new: string]: nothing -> list<record> {
-  let state = (state-db)
-  if $state == null { return [] }
-
-  let home = (root)
-  let rewrite = {|content| rewrite-text $content $old $new }
-  let rollouts = (files-with-path $old [
-    ($home | path join "sessions")
-    ($home | path join "archived_sessions")
-  ])
-
-  let threads = (sqlite-rows $state "SELECT * FROM threads")
-  let edited_ids = (
-    $threads
-    | where {|row|
-      let path = ($row | get -o rollout_path)
-      (
-        (($path | describe) == "string")
-        and ($rollouts | any {|file| (plain-rollout-path $file) == (plain-rollout-path $path)})
-      )
-    }
-    | get id
-  )
-
-  mut actions = (
-    column-actions "codex" [
-      {
-        db: $state
-        table: "threads"
-        column: "cwd"
-      }
-      {
-        db: $state
-        table: "threads"
-        column: "sandbox_policy"
-        json: true
-      }
-    ] $old $new
-  )
-
-  for file in $rollouts {
-    $actions = ($actions | append (edit-action "codex" "rollouts" $file $rewrite "rewrite cwd"))
-  }
-
-  $actions ++ (projection-actions (history-db) $edited_ids)
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -216,6 +167,88 @@ def selected-threads [
 }
 
 # --------------------------------------------------------------------------------------------------
+# Move
+# --------------------------------------------------------------------------------------------------
+
+def projection-actions [db: any, ids: list<string>]: nothing -> list<record> {
+  if ($db == null) or ($ids | is-empty) { return [] }
+
+  let id_list = (sql-list $ids)
+  $PROJECTION_TABLES
+  | each {|table|
+    let statement = $"DELETE FROM ($table) WHERE thread_id IN \(($id_list)\)"
+    sql-action "codex" "thread-history" $db [$statement] $"reset ($table)" --derived
+  }
+}
+
+export def plan-move [
+  old: string
+  new: string
+  --session-ids: list<string> = []
+]: nothing -> list<record> {
+  let state = (state-db)
+  if $state == null { return [] }
+
+  let home = (root)
+  let rewrite = {|content| rewrite-text $content $old $new }
+  let inventory = (sqlite-rows $state "SELECT * FROM threads")
+  let selective = ($session_ids | is-not-empty)
+  let threads = if $selective {
+    selected-threads $state $inventory $old --session-ids $session_ids
+  } else {
+    $inventory
+  }
+  if $selective and ($threads | is-empty) { return [] }
+  let rollouts = if $selective {
+    $threads
+    | each {|row| required-rollout $row | get file }
+    | uniq
+    | files-with-path $old $in
+  } else {
+    files-with-path $old [
+      ($home | path join "sessions")
+      ($home | path join "archived_sessions")
+    ]
+  }
+  let predicate = if $selective { $"id IN \((sql-list ($threads | get id))\)" } else { null }
+  let edited_ids = (
+    $threads
+    | where {|row|
+      let path = ($row | get -o rollout_path)
+      (
+        (($path | describe) == "string")
+        and ($rollouts | any {|file| (plain-rollout-path $file) == (plain-rollout-path $path)})
+      )
+    }
+    | get id
+  )
+
+  mut actions = (
+    column-actions "codex" [
+      {
+        db: $state
+        table: "threads"
+        column: "cwd"
+        where: $predicate
+      }
+      {
+        db: $state
+        table: "threads"
+        column: "sandbox_policy"
+        json: true
+        where: $predicate
+      }
+    ] $old $new
+  )
+
+  for file in $rollouts {
+    $actions = ($actions | append (edit-action "codex" "rollouts" $file $rewrite "rewrite cwd"))
+  }
+
+  $actions ++ (projection-actions (history-db) $edited_ids)
+}
+
+# --------------------------------------------------------------------------------------------------
 # Retirement
 # --------------------------------------------------------------------------------------------------
 
@@ -234,10 +267,11 @@ def delete-threads [state: string, threads: list<record>]: nothing -> list<recor
   }
 
   if ($ids | is-not-empty) {
-    let condition = $"id IN \((sql-list $ids)\)"
-    let delete = $"DELETE FROM threads WHERE ($condition)"
+    let id_list = (sql-list $ids)
+    let delete = $"DELETE FROM threads WHERE id IN \(($id_list)\)"
     let edges = if (table-columns $state "thread_spawn_edges" | is-not-empty) {
-      [$"DELETE FROM thread_spawn_edges WHERE child_thread_id IN \((sql-list $ids)\) OR parent_thread_id IN \((sql-list $ids)\)"]
+      let edge_where = $"child_thread_id IN \(($id_list)\) OR parent_thread_id IN \(($id_list)\)"
+      [$"DELETE FROM thread_spawn_edges WHERE ($edge_where)"]
     } else {
       []
     }
@@ -272,7 +306,8 @@ export def plan-retire [
   )
 
   if ($projects | is-not-empty) {
-    let statement = $"DELETE FROM projects WHERE id IN \((sql-list $projects)\) AND NOT EXISTS \(SELECT 1 FROM threads WHERE threads.project_id = projects.id\)"
+    let unused = "NOT EXISTS (SELECT 1 FROM threads WHERE threads.project_id = projects.id)"
+    let statement = $"DELETE FROM projects WHERE id IN \((sql-list $projects)\) AND ($unused)"
     let description = "remove unreferenced projects"
     $actions = ($actions | append (
       sql-action "codex" "projects" $state [$statement] $description --rows-first --foreign-keys
@@ -305,14 +340,7 @@ export def export-bundle [
 
   mut files = []
   for row in $threads {
-    let rollout = ($row | get -o rollout_path)
-    if ($rollout | describe) != "string" {
-      error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout path"}
-    }
-    let resolved = (rollout-file $rollout)
-    if $resolved == null {
-      error make --unspanned {msg: $"Selected Codex session ($row.id) has no rollout file"}
-    }
+    let resolved = (required-rollout $row)
     let name = ($resolved.file | path relative-to (root))
     $files = ($files | append {
       kind: "rollouts"
@@ -404,11 +432,7 @@ def rollout-target [file: record]: nothing -> string {
 }
 
 def rollout-content [path: string, compressed: bool]: nothing -> string {
-  if $compressed {
-    decompress-file $path
-  } else {
-    open --raw $path
-  }
+  read-utf8 $path --compressed=$compressed
 }
 
 export def plan-import [bundle: record, --target: string]: nothing -> list<record> {

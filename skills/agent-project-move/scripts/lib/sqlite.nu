@@ -4,6 +4,8 @@
 # Queries and row statements over the assistants' SQLite databases.
 # ==================================================================================================
 
+use ./paths.nu [glob-under]
+
 export def sql-quote [value: any]: nothing -> string {
   let kind = ($value | describe)
   if $value == null {
@@ -61,9 +63,9 @@ def sqlite-has-table [db: string, table: string]: nothing -> bool {
 }
 
 # The highest-numbered database of one family that carries the expected table.
-export def latest-db [pattern: string, table: string]: nothing -> any {
+export def latest-db [dir: string, pattern: string, table: string]: nothing -> any {
   let candidates = (
-    glob $pattern
+    glob-under $dir $pattern
     | each {|db|
       let version = (
         $db
@@ -134,8 +136,9 @@ export def check-columns [
 
   let missing = ($columns | where {|column| $column not-in $local })
   if ($missing | is-not-empty) {
+    let names = ($missing | str join ", ")
     error make --unspanned {
-      msg: $"This host's ($store) has no column ($missing | str join ', ') in ($table), which the bundle contains"
+      msg: $"This host's ($store) has no column ($names) in ($table), which the bundle contains"
       help: $"Update ($store) on this host to the source host's version, start it once, then rerun the import."
     }
   }

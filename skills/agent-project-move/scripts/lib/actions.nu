@@ -5,7 +5,7 @@
 # ==================================================================================================
 
 use ./output.nu [plural print-table]
-use ./paths.nu [outermost-paths]
+use ./paths.nu [home-dir outermost-paths]
 use ./rewrite.nu [file-uri json-escape rewrite-text]
 use ./sqlite.nu [path-condition run-sql sql-quote sqlite-rows]
 
@@ -53,7 +53,7 @@ export def copy-action [
   }
 }
 
-export def rename-action [
+def rename-action [
   assistant: string
   store: string
   source: string
@@ -83,16 +83,27 @@ export def sql-action [
   }
 }
 
+def condition-with-predicate [matching: string, predicate: any]: nothing -> string {
+  if $predicate == null {
+    $matching
+  } else {
+    $"\(($matching)\) AND \(($predicate)\)"
+  }
+}
+
 def json-column-statements [
   db: string
   table: string
   column: string
   old: string
   new: string
+  --where: string
 ]: nothing -> list<string> {
   let plain = (sql-quote (json-escape $old))
   let uri = (sql-quote (json-escape (file-uri $old)))
-  let query = $"SELECT rowid AS rid, ($column) AS value FROM ($table) WHERE instr\(($column), ($plain)\) > 0 OR instr\(($column), ($uri)\) > 0"
+  let matching = $"\(instr\(($column), ($plain)\) > 0 OR instr\(($column), ($uri)\) > 0\)"
+  let condition = (condition-with-predicate $matching $where)
+  let query = $"SELECT rowid AS rid, ($column) AS value FROM ($table) WHERE ($condition)"
 
   sqlite-rows $db $query
   | each {|row|
@@ -101,7 +112,9 @@ def json-column-statements [
     if $updated == $value {
       null
     } else {
-      $"UPDATE ($table) SET ($column) = (sql-quote $updated) WHERE rowid = ($row.rid | into string) AND ($column) = (sql-quote $value)"
+      let matching = $"rowid = ($row.rid | into string) AND ($column) = (sql-quote $value)"
+      let condition = (condition-with-predicate $matching $where)
+      $"UPDATE ($table) SET ($column) = (sql-quote $updated) WHERE ($condition)"
     }
   }
   | compact
@@ -112,8 +125,10 @@ export def column-statements [
   column: string
   old: string
   new: string
+  --where: string
 ]: nothing -> list<string> {
-  let condition = (path-condition $column [$old])
+  let matching = (path-condition $column [$old])
+  let condition = (condition-with-predicate $matching $where)
   let offset = if $new == "/" { 2 } else { 1 }
   let value = $"(sql-quote $new) || substr\(($column), length\((sql-quote $old)\) + ($offset)\)"
   [$"UPDATE ($table) SET ($column) = ($value) WHERE ($condition)"]
@@ -135,9 +150,11 @@ export def column-actions [
 
     let table = $spec.table
     let column = $spec.column
-    let condition = (path-condition $column [$old])
+    let predicate = ($spec | get -o where)
+    let matching = (path-condition $column [$old])
+    let condition = (condition-with-predicate $matching $predicate)
     let statements = if ($spec | get -o json | default false) {
-      json-column-statements $db $table $column $old $new
+      json-column-statements $db $table $column $old $new --where $predicate
     } else {
       let exists = (
         sqlite-rows $db $"SELECT EXISTS \(SELECT 1 FROM ($table) WHERE ($condition)\) AS found"
@@ -147,7 +164,7 @@ export def column-actions [
       if $exists == 0 {
         []
       } else {
-        column-statements $table $column $old $new
+        column-statements $table $column $old $new --where $predicate
       }
     }
 
@@ -244,7 +261,57 @@ export def merge-actions [
   $actions | append (action $assistant $store "rmdir" $source "remove emptied source directory")
 }
 
-export def decompress-file [path: string]: nothing -> string {
+export def session-merge-actions [
+  assistant: string
+  store: string
+  targets: list<record>
+]: nothing -> list<record> {
+  let paths = (
+    $targets
+    | each {|item|
+      let item_store = ($item | get -o store | default $store)
+      let stem_source = ($item.source_path | str replace --regex '\.jsonl$' "")
+      let stem_target = ($item.target | str replace --regex '\.jsonl$' "")
+      let base = [
+        {
+          store: $item_store
+          source: $item.source_path
+          target: $item.target
+        }
+        {
+          store: $item_store
+          source: $stem_source
+          target: $stem_target
+        }
+      ]
+      let sidecars = (
+        $item
+        | get -o sidecars
+        | default []
+        | each {|suffix|
+          {
+            store: $item_store
+            source: $"($stem_source)($suffix)"
+            target: $"($stem_target)($suffix)"
+          }
+        }
+      )
+      $base ++ $sidecars
+    }
+    | flatten
+    | where {|item| $item.source != $item.target and ($item.source | path exists) }
+    | uniq
+  )
+  let sources = ($paths | get -o source | outermost-paths $in)
+  $paths
+  | where {|item| $item.source in $sources }
+  | each {|item|
+    merge-actions $assistant $item.store $item.source $item.target "move selected session state"
+  }
+  | flatten
+}
+
+export def decompress-file [path: string]: nothing -> any {
   let run = (^zstd -dc $path | complete)
   if $run.exit_code != 0 {
     error make --unspanned {
@@ -254,6 +321,21 @@ export def decompress-file [path: string]: nothing -> string {
   }
 
   $run.stdout
+}
+
+export def read-utf8 [path: string, --compressed]: nothing -> string {
+  let content = if $compressed {
+    decompress-file $path
+  } else {
+    open --raw $path
+  }
+  if ($content | describe) != "string" {
+    error make --unspanned {
+      msg: $"Refusing to edit the binary file ($path)"
+      help: "Convert the file to UTF-8, or move it by hand."
+    }
+  }
+  $content
 }
 
 def compress-file [content: string, target: string]: nothing -> nothing {
@@ -296,18 +378,7 @@ def write-file [path: string, content: any, --compress, --reference: string]: no
 
 def edit-file [path: string, transform: closure]: nothing -> nothing {
   let compress = ($path | str ends-with ".zst")
-  let content = if $compress {
-    decompress-file $path
-  } else {
-    open --raw $path
-  }
-  if ($content | describe) != "string" {
-    error make --unspanned {
-      msg: $"Refusing to edit the binary file ($path)"
-      help: "Convert the file to UTF-8, or move it by hand."
-    }
-  }
-
+  let content = (read-utf8 $path --compressed=$compress)
   let updated = (do $transform $content)
   if $updated == $content { return }
   write-file $path $updated --compress=$compress
@@ -326,11 +397,7 @@ def execute-action [action: record]: nothing -> nothing {
         ^cp --preserve=mode,timestamps $action.path $action.to
       } else {
         let compressed = ($action | get -o compressed | default false)
-        let content = if $compressed {
-          decompress-file $action.path
-        } else {
-          open --raw $action.path
-        }
+        let content = (read-utf8 $action.path --compressed=$compressed)
         let updated = (do $transform $content)
         write-file $action.to $updated --compress=$compressed --reference $action.path
       }
@@ -365,7 +432,7 @@ def backup-path [root: string, path: string]: nothing -> nothing {
 }
 
 def backup-root []: nothing -> string {
-  let base = ($env.XDG_STATE_HOME? | default --empty ($env.HOME | path join ".local/state"))
+  let base = ($env.XDG_STATE_HOME? | default --empty (home-dir | path join ".local/state"))
   $base | path join "agent-project-move"
 }
 
@@ -431,7 +498,7 @@ def backup-all [actions: list<record>]: nothing -> string {
   for db in $databases {
     let destination = ($backup_dir | path join ($db | str replace --regex "^/" ""))
     mkdir ($destination | path dirname)
-    let run = (^sqlite3 $db $".backup '($destination)'" | complete)
+    let run = (^sqlite3 $db $".backup ($destination | to json --raw)" | complete)
     if $run.exit_code != 0 {
       error make --unspanned {
         msg: $"SQLite backup failed on ($db): ($run.stderr | str trim)"
@@ -475,13 +542,14 @@ export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> n
     | print-table
 
     let count = ($ordered | length)
+    let unit = (plural $count "action" "actions")
     let backup = if $no_backup {
       "No backup will be created."
     } else {
       $"A backup goes to (backup-root) first."
     }
 
-    print $"Dry run: ($count) (plural $count 'action' 'actions') planned, nothing written. Rerun with --apply to write the plan. ($backup)"
+    print $"Dry run: ($count) ($unit) planned, nothing written. Rerun with --apply to write the plan. ($backup)"
     return
   }
 

@@ -4,6 +4,8 @@
 # The export bundle format shared by every store and the entry point.
 # ==================================================================================================
 
+use ./paths.nu [safe-relative-path]
+
 def sha1-hex [text: string]: nothing -> string {
   $text
   | ^sha1sum
@@ -69,14 +71,42 @@ export def read-bundle [directory: string, assistant: string]: nothing -> any {
   if not ($entries | path exists) { return null }
 
   let data = (open $entries)
-  if $data.assistant != $assistant {
+  if ($data | get -o assistant) != $assistant {
     error make --unspanned {msg: $"Bundle assistant does not match ($assistant)"}
   }
   let files = (
     $data.files
     | each {|file|
-      let path = ($base | path join $file.bundle)
-      if not ($path | path exists) {
+      let relative = ($file | get -o bundle)
+      let name = ($file | get -o name)
+      if not (safe-relative-path $relative) or not (safe-relative-path $name) {
+        error make --unspanned {
+          msg: $"Invalid relative path in ($entries)"
+          help: "Re-export the bundle from a trusted source host, then rerun the import."
+        }
+      }
+      if ($file | get -o kind) == "file-history" and (
+        not (safe-relative-path ($file | get -o session))
+        or (($file | get -o session) | str contains "/")
+      ) {
+        error make --unspanned {
+          msg: $"Invalid session path in ($entries)"
+          help: "Re-export the bundle from a trusted source host, then rerun the import."
+        }
+      }
+      let parts = ($relative | split row "/")
+      mut current = $base
+      for part in $parts {
+        $current = ($current | path join $part)
+        if ($current | path exists --no-symlink) and ($current | path type) == "symlink" {
+          error make --unspanned {
+            msg: $"Bundle refuses symlink entry ($current)"
+            help: "Re-export the bundle from a trusted source host, then rerun the import."
+          }
+        }
+      }
+      let path = ($base | path join $relative)
+      if not ($path | path exists) or ($path | path type) != "file" {
         error make --unspanned {
           msg: $"Bundle incomplete: missing ($path)"
           help: "Recopy the bundle from the source host, then rerun the import."

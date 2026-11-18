@@ -1,24 +1,24 @@
 # Assistant stores
 
-Store adapters read local state and return planned actions without writing. These formats can change with assistant releases. See [Tested with](../../README.md#tested-with) for checked versions and [Design](design.md) for shared rewrite constraints.
+See [Tested with](../../README.md#tested-with) for checked assistant versions, [Design](design.md) for shared constraints, and the [skill](../../skills/agent-project-move/SKILL.md) for procedures and selection rules.
 
 ## Claude Code
 
 Root: `$CLAUDE_CONFIG_DIR`, defaulting to `~/.claude`. Project keys in `$CLAUDE_CONFIG_DIR/.claude.json`, or `~/.claude.json` when the variable is unset, help resolve physical project ownership and are only read.
 
-A `projects/<encoded-cwd>/` directory moves when its name encodes the source path or a descendant. Recorded cwds can identify visited projects without identifying that physical owner. A move rewrites top-level session transcripts and `<parent>/subagents/agent-*.jsonl` transcripts, including references in directories that stay in place. [Project merges](../../skills/agent-project-move/SKILL.md#project-merges) handle destination collisions.
+A default move merges `projects/<encoded-cwd>/` directories owned under the source path and rewrites top-level and `<parent>/subagents/agent-*.jsonl` transcripts, including references in directories that stay in place. Subagent `.meta.json` sidecars supply nested `parentAgentId` links and travel with their transcripts. Selected moves relocate only selected transcripts, `.meta.json` sidecars, and same-stem artifact subtrees. See [project merges](../../skills/agent-project-move/SKILL.md#project-merges) for collisions.
 
-Session filenames identify sessions. Selected transcripts travel with their same-stem artifact subtrees and `file-history/<session>/` directories. A child-only selection leaves its parent's other files in place. Other artifact bytes stay unchanged. Retirement leaves project directories, shared memory, global configuration, and prompt history in place.
+Export carries `.meta.json` sidecars, same-stem artifacts, and `file-history/<session>/`. Local moves leave file history in place. Retirement leaves project directories, shared memory, global configuration, and prompt history intact.
 
 ## Codex
 
 Root: `$CODEX_HOME`, defaulting to `~/.codex`. The active database is the highest-numbered `state_<N>.sqlite` containing `threads`.
 
-Moves rewrite thread cwds, JSON sandbox paths, and rollout paths in `sessions/` and `archived_sessions/`, including compressed `.zst` rollouts. Rewritten rollouts lose their derived `thread_history_<N>.sqlite` projections. Codex rebuilds those only on resume, after `codex unarchive` for archived threads. Until then, transcript previews remain empty.
+Moves rewrite thread cwds, JSON sandbox paths, and rollouts in `sessions/` and `archived_sessions/`, including `.zst`. Rewritten rollouts lose their `thread_history_<N>.sqlite` projections until resume, after `codex unarchive` for archived threads. Previews remain empty until then.
 
-Selection follows spawn relationships toward descendants. Export preserves selected children's incoming parent identities. Retirement removes selected thread state and removes project metadata only when unreferenced.
+Selection follows spawn relationships. Selected moves and exports require existing canonical rollout files, and selected moves preserve project metadata and spawn relationships. Export preserves incoming parent identities. Retirement removes project metadata only when unreferenced.
 
-Export carries available `project_roots`. Targeted imports map incoming cwd, sandbox paths, and project roots, while rollout paths follow the copied files. Existing project IDs must have identical ordered root paths after mapping. Project metadata and logical `agent_path` identities stay unchanged.
+Export carries `project_roots` when available. Existing project IDs require identical ordered roots after mapping. Other project metadata and logical `agent_path` identities stay unchanged.
 
 Desktop workspace state in `.codex-global-state.json` stays unchanged and may need a separate path update. Codex may request project trust after a move or import.
 
@@ -26,8 +26,8 @@ Desktop workspace state in `.codex-global-state.json` stays unchanged and may ne
 
 Root: `$PI_CODING_AGENT_DIR`, defaulting to `~/.omp/agent`. Sessions live in home-relative encoded directories under `sessions/` and `archive/sessions/`.
 
-The session header supplies the ID and optional `parentSession`, which can be an ID or a file path. Each session file owns its same-stem artifact directory. Moves update absolute parent references even in sessions whose cwd stays elsewhere. Imports use known parent files' actual destinations and preserve external parent identities. An existing session's filename determines its imported artifact destination.
+The header supplies the ID and optional `parentSession` ID or file path. Each journal owns its same-stem artifact directory. Default moves update absolute parent references across journals. Selected moves update only selected journals and relocate their owned paths, preserving unselected parent identities. Imports map known parent files to their destinations and preserve external identities. Existing filenames determine imported artifact destinations.
 
-The global `blobs/` pool stores canonical SHA-256 files without extensions. Native `blob:sha256:<hash>` locators use those files, while `<hash>.<extension>` aliases support file viewing. Export finds native locators, absolute blob paths, file URIs, and existing alias filenames in journal strings, including historical prose. It carries referenced canonical files and available aliases unchanged, validating their bytes against the canonical hash. Import rejects differing destination bytes and maps complete incoming blob path tokens to the local pool. Native locators and prose references retain their spelling.
+The global `blobs/` pool holds canonical SHA-256 files for `blob:sha256:<hash>` locators and `<hash>.<extension>` aliases for file viewing. Export carries referenced canonical files and available aliases, validating their hashes. Import rejects differing bytes and maps complete blob path tokens to the local pool. Native locators and prose references retain their spelling.
 
-Retirement removes selected session files and owned artifacts, leaving the global blob pool intact. OMP memory, `history.db`, and `agent.db` stay untouched in every operation. Bundles carry no database rows. Re-export older bundles containing memory or database state before importing them.
+Retirement leaves the blob pool intact. OMP memory, `history.db`, and `agent.db` stay untouched in every operation. Re-export older bundles containing memory or database state before importing them.

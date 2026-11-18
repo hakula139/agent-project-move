@@ -77,32 +77,6 @@ def "main scan" [
   }
 }
 
-# Move state under <old> to <new>. Prints the plan, and writes only with --apply.
-@example "Preview a move, then apply it" {
-  agent-project-move move ~/src/app ~/work/app
-  agent-project-move move ~/src/app ~/work/app --apply
-}
-def "main move" [
-  old: string # Recorded project path, or a parent of it
-  new: string # New project path
-  --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to move
-  --apply # Write the planned changes
-  --no-backup # Skip creating recovery backups
-]: nothing -> nothing {
-  let selected = (parse-assistants $assistant)
-  # `<old>` keeps the given spelling, because matching is an exact case-sensitive string test.
-  # `<new>` is canonicalized, so state records the spelling the working directory reports.
-  let old = (normalize-path $old)
-  let new = (normalize-path $new --physical)
-
-  check-destination $old $new
-  if not ($new | path exists) {
-    print $"($new) does not exist. Move the directory first so sessions can resume there."
-  }
-  let actions = (plan-move $selected $old $new)
-  apply-all $actions --apply=$apply --no-backup=$no_backup
-}
-
 def selection-ids [exact: bool, value: any]: nothing -> list<string> {
   if $exact and $value != null {
     error make --unspanned {msg: "--exact and --session-ids are mutually exclusive"}
@@ -120,6 +94,34 @@ def selection-ids [exact: bool, value: any]: nothing -> list<string> {
     error make --unspanned {msg: "--session-ids requires at least one session ID"}
   }
   $ids
+}
+
+# Move state under <old> to <new>. Prints the plan, and writes only with --apply.
+@example "Preview a move, then apply it" {
+  agent-project-move move ~/src/app ~/work/app
+  agent-project-move move ~/src/app ~/work/app --apply
+}
+def "main move" [
+  old: string # Recorded project path, or a parent of it
+  new: string # New project path
+  --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to move
+  --session-ids: string # Session IDs under <old>, with their descendants
+  --apply # Write the planned changes
+  --no-backup # Skip creating recovery backups
+]: nothing -> nothing {
+  let selected = (parse-assistants $assistant)
+  let ids = (selection-ids false $session_ids)
+  # `<old>` keeps the given spelling, because matching is an exact case-sensitive string test.
+  # `<new>` is canonicalized, so state records the spelling the working directory reports.
+  let old = (normalize-path $old)
+  let new = (normalize-path $new --physical)
+
+  check-destination $old $new
+  if not ($new | path exists) {
+    print $"($new) does not exist. Move the directory first so sessions can resume there."
+  }
+  let actions = (plan-move $selected $old $new --session-ids $ids)
+  apply-all $actions --apply=$apply --no-backup=$no_backup
 }
 
 # Write the state recorded for <path> as a bundle directory, unchanged.
@@ -160,7 +162,9 @@ def "main export" [
     }
   )
   for count in $counts {
-    print $"($count.assistant): ($count.files) (plural $count.files 'file' 'files'), ($count.rows) (plural $count.rows 'row' 'rows')"
+    let files_label = $"($count.files) (plural $count.files 'file' 'files')"
+    let rows_label = $"($count.rows) (plural $count.rows 'row' 'rows')"
+    print $"($count.assistant): ($files_label), ($rows_label)"
   }
 
   let carried = (
