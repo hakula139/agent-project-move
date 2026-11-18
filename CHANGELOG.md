@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-18
+
+### Breaking changes
+
+- _(omp)_ Remove the standalone `export-blobs` command. If source session files are unavailable, follow the skill to copy attachments from `~/.omp/agent/blobs/` and verify their SHA-256 digests ([#40](https://github.com/hakula139/agent-project-move/pull/40))
+
+### Added
+
+- Select individual sessions with `move --session-ids` or match a single working directory with `move --exact`. Both selectors include linked descendants even when their working directories are elsewhere. Unrelated sessions in shared project directories stay in place ([#36](https://github.com/hakula139/agent-project-move/pull/36), [#40](https://github.com/hakula139/agent-project-move/pull/40))
+
+### Fixed
+
+- _(codex)_ Preserve `guardian_review_feedback` rows and SQLite BLOB bytes across export and import so the destination retains feedback after source retirement. Use v0.5.0 on both hosts to transfer feedback. Imports still accept older bundles with plain JSON spawn edges ([#40](https://github.com/hakula139/agent-project-move/pull/40))
+- Reject nonempty export destinations, mismatched assistant manifests, missing canonical Codex rollouts, rollout paths that point to directories, non-UTF-8 transcripts, unsafe bundle paths, and incompatible destination SQLite schemas before writing ([#35](https://github.com/hakula139/agent-project-move/pull/35), [#36](https://github.com/hakula139/agent-project-move/pull/36), [#40](https://github.com/hakula139/agent-project-move/pull/40))
+- _(claude)_ Follow nested `parentAgentId` chains when selecting subagents and carry their `.meta.json` sidecars with their transcripts ([#36](https://github.com/hakula139/agent-project-move/pull/36))
+- _(nix)_ Reuse the flake's locked package in `overlays.default` and `homeModules.default` on matching native platforms. Build with the caller's package set for alternate C libraries, static builds, and cross compilation ([#39](https://github.com/hakula139/agent-project-move/pull/39))
+
+[0.5.0]: https://github.com/hakula139/agent-project-move/compare/v0.4.0...v0.5.0
+
 ## [0.4.0] - 2026-11-15
 
 ### Breaking changes
