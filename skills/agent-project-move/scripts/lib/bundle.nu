@@ -6,13 +6,6 @@
 
 use ./paths.nu [safe-relative-path]
 
-def sha1-hex [text: string]: nothing -> string {
-  $text
-  | ^sha1sum
-  | split row " "
-  | first
-}
-
 export def bundle-table [bundle: record, table: string]: nothing -> record {
   $bundle.tables
   | where table == $table
@@ -44,7 +37,7 @@ export def write-bundle [directory: string, bundle: record]: nothing -> nothing 
     $bundle.files
     | each {|file|
       let key = $"($file.kind)|($file.project)|($file.name)"
-      let name = $"(sha1-hex $key)-($file.name | path basename)"
+      let name = $"($key | hash sha256 | str substring 0..<40)-($file.name | path basename)"
       let relative = ("files" | path join $name)
       let target = ($base | path join $relative)
 
@@ -53,7 +46,6 @@ export def write-bundle [directory: string, bundle: record]: nothing -> nothing 
 
       $file
       | reject source
-      | upsert origin_path $file.source
       | upsert bundle $relative
     }
   )

@@ -36,25 +36,34 @@ export def parse-assistants [value: string]: nothing -> list<string> {
   $names
 }
 
-def assistant-scan [assistant: string]: nothing -> list<record> {
-  match $assistant {
-    "claude" => { claude scan }
-    "codex" => { codex scan }
-    "omp" => { omp scan }
+export def scan-all [selected: list<string>]: nothing -> list<record> {
+  $selected
+  | each {|assistant|
+    match $assistant {
+      "claude" => { claude scan }
+      "codex" => { codex scan }
+      "omp" => { omp scan }
+    }
   }
+  | flatten
 }
 
-def assistant-plan-move [
-  assistant: string
+export def plan-move [
+  selected: list<string>
   old: string
   new: string
+  --exact
   --session-ids: list<string> = []
 ]: nothing -> list<record> {
-  match $assistant {
-    "claude" => { claude plan-move $old $new --session-ids $session_ids }
-    "codex" => { codex plan-move $old $new --session-ids $session_ids }
-    "omp" => { omp plan-move $old $new --session-ids $session_ids }
+  $selected
+  | each {|assistant|
+    match $assistant {
+      "claude" => { claude plan-move $old $new --exact=$exact --session-ids $session_ids }
+      "codex" => { codex plan-move $old $new --exact=$exact --session-ids $session_ids }
+      "omp" => { omp plan-move $old $new --exact=$exact --session-ids $session_ids }
+    }
   }
+  | flatten
 }
 
 export def assistant-export-bundle [
@@ -80,23 +89,6 @@ export def assistant-plan-import [
     "codex" => { codex plan-import $bundle --target $target }
     "omp" => { omp plan-import $bundle --target $target }
   }
-}
-
-export def scan-all [selected: list<string>]: nothing -> list<record> {
-  $selected
-  | each {|assistant| assistant-scan $assistant }
-  | flatten
-}
-
-export def plan-move [
-  selected: list<string>
-  old: string
-  new: string
-  --session-ids: list<string> = []
-]: nothing -> list<record> {
-  $selected
-  | each {|assistant| assistant-plan-move $assistant $old $new --session-ids $session_ids }
-  | flatten
 }
 
 export def plan-retire [

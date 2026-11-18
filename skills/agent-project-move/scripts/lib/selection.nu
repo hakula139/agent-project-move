@@ -2,7 +2,24 @@
 # Agent Project Move: Session Selection
 # ==================================================================================================
 
-use ./paths.nu [path-match]
+use ./paths.nu [max-mtime path-match valid-path]
+
+export def scan-sessions [assistant: string]: list<record> -> list<record> {
+  $in
+  | where {|row| valid-path $row.cwd }
+  | group-by cwd
+  | transpose cwd items
+  | each {|group|
+    let files = ($group.items | get file | uniq)
+    {
+      assistant: $assistant
+      path: $group.cwd
+      sessions: ($files | length)
+      last_used: (max-mtime $files)
+    }
+  }
+  | sort-by path
+}
 
 export def select-sessions [
   rows: list<record>

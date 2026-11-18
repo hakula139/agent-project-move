@@ -20,13 +20,29 @@ use ../lib/sqlite.nu [
   check-columns
   latest-db
   sql-list
+  sqlite-encoding
   sqlite-insert-if-new
+  sqlite-literal-rows
+  sqlite-reconcile-literals
   sqlite-rows
   table-columns
 ]
 
 # The projection state goes first, since its AFTER DELETE trigger clears thread_realtime_items.
 const PROJECTION_TABLES = ["thread_history_projection_state" "thread_turns" "thread_items"]
+
+const TRANSFER_TABLES = [
+  {
+    table: "thread_spawn_edges"
+    thread_column: "child_thread_id"
+    key: "child_thread_id"
+  }
+  {
+    table: "guardian_review_feedback"
+    thread_column: "thread_id"
+    key: "id"
+  }
+]
 
 # --------------------------------------------------------------------------------------------------
 # Locations
@@ -38,12 +54,12 @@ def root []: nothing -> string {
 
 # The state database, or null before Codex has created one.
 def state-db []: nothing -> any {
-  latest-db (root) "state_*.sqlite" "threads"
+  latest-db (root) "state_*.sqlite" ["threads"]
 }
 
 # The thread history database, or null before Codex has created one.
 def history-db []: nothing -> any {
-  latest-db (root) "thread_history_*.sqlite" "thread_items"
+  latest-db (root) "thread_history_*.sqlite" $PROJECTION_TABLES
 }
 
 def plain-rollout-path [path: string]: nothing -> string {
@@ -132,7 +148,7 @@ def selected-threads [
   --session-ids: list<string> = []
 ]: nothing -> list<record> {
   let edges = if (table-columns $state "thread_spawn_edges" | is-not-empty) {
-    sqlite-rows $state "SELECT * FROM thread_spawn_edges"
+    sqlite-rows $state "SELECT child_thread_id, parent_thread_id FROM thread_spawn_edges"
   } else {
     []
   }
@@ -175,6 +191,7 @@ def projection-actions [db: any, ids: list<string>]: nothing -> list<record> {
 
   let id_list = (sql-list $ids)
   $PROJECTION_TABLES
+  | where {|table| table-columns $db $table | is-not-empty }
   | each {|table|
     let statement = $"DELETE FROM ($table) WHERE thread_id IN \(($id_list)\)"
     sql-action "codex" "thread-history" $db [$statement] $"reset ($table)" --derived
@@ -184,6 +201,7 @@ def projection-actions [db: any, ids: list<string>]: nothing -> list<record> {
 export def plan-move [
   old: string
   new: string
+  --exact
   --session-ids: list<string> = []
 ]: nothing -> list<record> {
   let state = (state-db)
@@ -192,9 +210,9 @@ export def plan-move [
   let home = (root)
   let rewrite = {|content| rewrite-text $content $old $new }
   let inventory = (sqlite-rows $state "SELECT * FROM threads")
-  let selective = ($session_ids | is-not-empty)
+  let selective = $exact or ($session_ids | is-not-empty)
   let threads = if $selective {
-    selected-threads $state $inventory $old --session-ids $session_ids
+    selected-threads $state $inventory $old --exact=$exact --session-ids $session_ids
   } else {
     $inventory
   }
@@ -399,19 +417,20 @@ export def export-bundle [
     })
   }
 
-  if (table-columns $db "thread_spawn_edges" | is-not-empty) {
-    let ids = ($threads | get -o id)
-    let edges = (
-      sqlite-rows $db "SELECT * FROM thread_spawn_edges"
-      | where {|row| $row.child_thread_id in $ids }
-    )
-    $tables = ($tables | append {
-      db: "state"
-      table: "thread_spawn_edges"
-      columns: (table-columns $db "thread_spawn_edges")
-      rows: $edges
-      key: ["child_thread_id"]
-    })
+  let ids = (sql-list ($threads | get -o id))
+  for spec in $TRANSFER_TABLES {
+    let columns = (table-columns $db $spec.table)
+    if ($columns | is-not-empty) {
+      let condition = $"($spec.thread_column) IN \(($ids)\)"
+      $tables = ($tables | append {
+        db: "state"
+        table: $spec.table
+        columns: $columns
+        rows: (sqlite-literal-rows $db $spec.table $columns $condition)
+        key: [$spec.key]
+        encoding: "sql-literals"
+      })
+    }
   }
 
   {
@@ -419,6 +438,7 @@ export def export-bundle [
     old: $old
     files: $files
     tables: $tables
+    state_encoding: (sqlite-encoding $db)
   }
 }
 
@@ -435,6 +455,34 @@ def rollout-content [path: string, compressed: bool]: nothing -> string {
   read-utf8 $path --compressed=$compressed
 }
 
+def dependent-statements [
+  db: string
+  tables: list<record>
+  encoding: string
+]: nothing -> list<string> {
+  if ($tables | any {|spec| ($spec.entry | get -o encoding) == "sql-literals" }) {
+    let local = (sqlite-encoding $db)
+    if $encoding != $local {
+      error make --unspanned {
+        msg: $"Codex bundle uses SQLite text encoding ($encoding), but this host uses ($local)"
+      }
+    }
+  }
+
+  $tables
+  | each {|spec|
+    let table = $spec.entry
+    check-columns $db $spec.table $table.columns "Codex"
+    let encoding = ($table | get -o encoding)
+    let legacy = $encoding == null and $spec.table == "thread_spawn_edges"
+    if not $legacy and $encoding != "sql-literals" {
+      error make --unspanned {msg: $"Invalid SQLite encoding for ($spec.table) in the bundle"}
+    }
+    sqlite-reconcile-literals $db $spec.table $table.columns $spec.key $table.rows --legacy=$legacy
+  }
+  | flatten
+}
+
 export def plan-import [bundle: record, --target: string]: nothing -> list<record> {
   let rewrite = if $target == null {
     null
@@ -446,8 +494,16 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
   let projects = (bundle-table $bundle "projects")
   let roots = (bundle-table $bundle "project_roots")
   let threads = (bundle-table $bundle "threads")
-  let edges = (bundle-table $bundle "thread_spawn_edges")
-  if $state_db == null and (($projects.rows | is-not-empty) or ($threads.rows | is-not-empty)) {
+  let dependents = (
+    $TRANSFER_TABLES
+    | each {|spec| $spec | insert entry (bundle-table $bundle $spec.table) }
+    | where {|spec| $spec.entry.rows | is-not-empty }
+  )
+  let has_rows = (
+    [$projects.rows $roots.rows $threads.rows $dependents]
+    | any {|rows| $rows | is-not-empty }
+  )
+  if $state_db == null and $has_rows {
     error make --unspanned {
       msg: "Codex import found no state database"
       help: "Start Codex once on this host, then rerun the import."
@@ -461,9 +517,6 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
   }
   if ($roots.rows | is-not-empty) {
     check-columns $state_db "project_roots" $roots.columns "Codex"
-  }
-  if ($edges.rows | is-not-empty) {
-    check-columns $state_db "thread_spawn_edges" $edges.columns "Codex"
   }
 
   let local_threads = if $state_db == null {
@@ -514,9 +567,13 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
 
       let equal = $expected == (rollout-content $to $compress)
       if $equal { continue }
+      let help = (
+        "Compare the two files. Delete or rename the local file if the bundle's copy should win,"
+        + " then rerun the import."
+      )
       error make --unspanned {
         msg: $"($to) already exists with content that differs from the bundle's copy"
-        help: "Compare the two files. Delete or rename the local file if the bundle's copy should win, then rerun the import."
+        help: $help
       }
     }
     let label = "import rollout"
@@ -616,36 +673,14 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
     | each {|row| sqlite-insert-if-new "threads" $threads.columns $row }
   )
 
-  let local_edges = if ($edges.rows | is-empty) {
+  let dependent_statements = if ($dependents | is-empty) {
     []
   } else {
-    sqlite-rows $state_db "SELECT * FROM thread_spawn_edges"
+    let encoding = ($bundle | get -o state_encoding | default "unspecified")
+    dependent-statements $state_db $dependents $encoding
   }
-
-  let edge_statements = (
-    $edges.rows
-    | each {|row|
-      let local = (
-        $local_edges
-        | where child_thread_id == $row.child_thread_id
-        | first
-      )
-
-      if $local == null {
-        sqlite-insert-if-new "thread_spawn_edges" $edges.columns $row
-      } else if $local.parent_thread_id != $row.parent_thread_id {
-        error make --unspanned {
-          msg: $"Existing thread ($row.child_thread_id) has a different parent"
-        }
-      } else {
-        null
-      }
-    }
-    | compact
-  )
-
   let statements = (
-    $project_statements ++ $root_statements ++ $thread_statements ++ $edge_statements
+    $project_statements ++ $root_statements ++ $thread_statements ++ $dependent_statements
   )
   if ($statements | is-not-empty) {
     let load = (sql-action "codex" "state" $state_db $statements "import state")

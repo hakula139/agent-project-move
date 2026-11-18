@@ -16,8 +16,6 @@
 
 let
   cfg = config.programs.agent-project-move;
-  systemExpr = "\${pkgs.stdenv.hostPlatform.system}";
-  defaultPackage = "agent-project-move.packages.${systemExpr}.agent-project-move";
 in
 {
   # ------------------------------------------------------------------------------------------------
@@ -29,7 +27,7 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       default = packageFor pkgs;
-      defaultText = lib.literalExpression defaultPackage;
+      defaultText = lib.literalMD "agent-project-move from this flake";
       description = "Package that provides the `agent-project-move` command.";
     };
 

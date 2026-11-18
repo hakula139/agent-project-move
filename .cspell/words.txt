@@ -9,7 +9,6 @@ direnv
 findutils
 gnubin
 hakula
-headerless
 libexec
 mktemp
 musl
@@ -28,11 +27,9 @@ shellcheck
 shfmt
 snapcompact
 stdenv
-subpaths
 substituters
+testlib
 unspanned
 WebP
-workmux
 worktree
-worktrees
 zstd

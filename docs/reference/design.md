@@ -8,7 +8,7 @@ A recorded cwd selects sessions independently of physical project ownership, whi
 
 Rewrites match paths case-sensitively and use the destination's native spelling. JSON rewrites match path tokens in keys or values, including file URIs. Unrelated bytes and binary artifacts stay unchanged.
 
-Import destinations follow the target store's layout and actual copied files. A bundle's `origin_path` records provenance for incoming path mapping and never chooses a destination root.
+Import destinations follow the target store's layout and actual copied files. OMP uses the source blob pool path in the bundle to rewrite incoming references to the destination pool.
 
 ## Derived state and interruption
 
@@ -20,4 +20,4 @@ Derived data is invalidated before source rewrites erase its selection evidence.
 
 Only incoming state receives import path mappings. Existing session IDs require identical mapped transcript content, comparing rollouts after decompression. Dependent artifacts are reconciled even when the session exists.
 
-Database rows with existing unique keys are skipped. Other constraint failures abort that database's load. Planning rejects carried columns absent from the destination schema and missing required destination columns without defaults.
+Import skips database rows with existing unique keys after any store-specific collision checks. Other constraint failures abort that database's load. Planning rejects carried columns absent from the destination schema and missing required destination columns without defaults.
