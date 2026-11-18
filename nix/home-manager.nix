@@ -4,18 +4,20 @@
 
 {
   devkit,
-  mkAgentProjectMove,
+  packageFor,
 }:
 
 {
   config,
-  lib,
   pkgs,
+  lib,
   ...
 }:
 
 let
   cfg = config.programs.agent-project-move;
+  systemExpr = "\${pkgs.stdenv.hostPlatform.system}";
+  defaultPackage = "agent-project-move.packages.${systemExpr}.agent-project-move";
 in
 {
   # ------------------------------------------------------------------------------------------------
@@ -26,8 +28,8 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = mkAgentProjectMove pkgs;
-      defaultText = lib.literalMD "agent-project-move built from this flake";
+      default = packageFor pkgs;
+      defaultText = lib.literalExpression defaultPackage;
       description = "Package that provides the `agent-project-move` command.";
     };
 

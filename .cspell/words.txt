@@ -12,6 +12,7 @@ hakula
 headerless
 libexec
 mktemp
+musl
 nixfmt
 nixos
 nixpkgs
@@ -26,6 +27,7 @@ rollouts
 shellcheck
 shfmt
 snapcompact
+stdenv
 subpaths
 substituters
 unspanned
