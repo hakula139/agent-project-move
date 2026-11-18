@@ -50,7 +50,10 @@ export def check-destination [old: string, new: string]: nothing -> nothing {
   if ($old | str lowercase) == ($new | str lowercase) {
     error make --unspanned {
       msg: "A move that changes only letter case is not supported"
-      help: $"Go through a temporary name: rename the directory to ($old).tmp, run 'move ($old) ($old).tmp', then rename it to ($new) and run 'move ($old).tmp ($new)'."
+      help: (
+        $"Rename the directory to ($old).tmp and run 'move ($old) ($old).tmp'."
+        + $" Then rename it to ($new) and run 'move ($old).tmp ($new)'."
+      )
     }
   }
   if (path-match $old $new) {
@@ -82,6 +85,28 @@ export def outermost-paths [paths: list<string>]: nothing -> list<string> {
   | where {|path|
     not ($unique | any {|other| $other != $path and (path-match $other $path) })
   }
+}
+
+export def jsonl-stem []: string -> string {
+  $in | str replace --regex '\.jsonl$' ""
+}
+
+export def max-mtime [files: list<string>]: nothing -> datetime {
+  let run = (
+    $files
+    | append ""
+    | str join (char nul)
+    | ^xargs -0 stat -L -c "%Y" --
+    | complete
+  )
+  if $run.exit_code != 0 {
+    error make --unspanned {msg: $"Cannot read file modification times: ($run.stderr | str trim)"}
+  }
+  $run.stdout
+  | lines
+  | into int
+  | math max
+  | into datetime --format "%s"
 }
 
 export def files-under [dir: string]: nothing -> list<string> {

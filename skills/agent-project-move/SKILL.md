@@ -16,13 +16,13 @@ Planning is read-only. `move`, `import`, and `retire` write only with `--apply`,
 
 Resolve `agent-project-move` to an absolute command, or use `nu --no-config-file <skill directory>/scripts/agent-project-move.nu` with the script's absolute path when absent. Preserve the working directory for relative arguments. Give the user the same absolute command, because their terminal's `PATH` may differ.
 
-Nix provides the runtime tools. Otherwise check for Nushell 0.116 or later, SQLite 3.33 or later, ripgrep with PCRE2, zstd, POSIX `find` and `cmp`, and GNU coreutils. On macOS the command uses Homebrew's GNU coreutils without changing the user's `PATH`. Native Windows is unsupported.
+Nix provides the runtime tools. Otherwise check for Nushell 0.116 or later, SQLite 3.33 or later, ripgrep with PCRE2, zstd, POSIX `find` and `cmp`, `xargs` with `-0` support, and GNU coreutils. On macOS the command looks for Homebrew's coreutils if GNU `stat` is missing from `PATH`. Native Windows is unsupported.
 
 ## Survey
 
 Run `scan` and establish path mappings or session selection from the user's request and local repositories. Ask about unresolved destinations or missing write authority. Review each dry run before applying already-authorized work. `--help` describes commands and options.
 
-Selection includes child paths by default. `--session-ids <id,id>` selects sessions recorded under the given root and their linked descendants, including descendants whose cwd is elsewhere. Ancestors and siblings stay in place. Export and retirement also accept `--exact` to select equal-cwd sessions and their linked descendants.
+Selection includes child paths by default. For `move`, `export`, and `retire`, use `--exact` to select sessions whose cwd equals the given path, or `--session-ids <id,id>` to choose individual sessions under that path. Both selectors include linked descendants even when their cwd is elsewhere.
 
 ## Concurrent sessions
 
@@ -40,15 +40,15 @@ Move the project directory first, then preview `move <old> <new>` and apply with
 
 Paths match case-sensitively at `<old>` or `<old>/`. Case-only moves are refused. A missing destination draws a warning because sessions need it to resume. When a child moves outside its parent's destination, repair the child's mapping before the parent's.
 
-With `--session-ids`, only sessions recorded under `<old>` and their linked descendants are selected. Selected transcripts are rewritten, their owned artifacts move when their physical project owner is under `<old>`, and shared project state stays in place.
+With `--exact` or `--session-ids`, the move rewrites the selected transcripts and moves their artifacts when the owning project is under `<old>`. Shared project state stays in place.
 
 ## Transfer between hosts
 
-1. Export the selection into a private bundle directory. Export leaves the source unchanged and carries owned artifacts, including referenced OMP blobs and available aliases.
+1. For Codex transfers, install the same build with guardian review feedback support on both hosts to preserve feedback and spawn relationships. Export the selection into a private bundle directory. Export leaves the source unchanged and carries owned artifacts, including referenced OMP blobs and available aliases after SHA-256 verification.
 2. Copy the bundle to the destination and preview `import <bundle>`. Use `--target <path>` to map incoming paths under the exported root. Complete OMP blob paths map to the local pool. Existing session IDs require identical transcript content after mapping. Reconcile collisions or re-export changed sessions before applying.
 3. Apply and [verify](#verify) before retiring source copies or deleting bundles. Codex previews remain empty until resume. Archived threads need `codex unarchive` first.
 
-For missing OMP blobs, `export-blobs <ids-file> <bundle>` creates a blob-only bundle from the local pool, accepting one canonical lowercase SHA-256 ID per line. Establish the IDs from actual references, import normally, and verify native resolution on the destination.
+To recover a missing OMP blob, take its SHA-256 ID from the session reference and copy `~/.omp/agent/blobs/<sha256>*` to the destination blob pool, using `$PI_CODING_AGENT_DIR/blobs` on hosts with a custom root. Run `sha256sum` on each copied file and check that the digest matches the ID, then open the attachment in OMP.
 
 ## Retire
 

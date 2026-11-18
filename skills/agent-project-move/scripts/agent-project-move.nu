@@ -23,25 +23,46 @@ use ./assistants.nu [
   plan-retire
   scan-all
 ]
-use ./stores/omp.nu
 
-# The stores call GNU stat, realpath, mv, and cp, which Homebrew keeps unprefixed only in gnubin.
-if $nu.os-info.name == "macos" and (which brew | is-not-empty) {
-  let prefix = (^brew --prefix coreutils | complete)
-  let gnubin = (
-    $prefix.stdout
-    | str trim
-    | path join "libexec/gnubin"
+def has-gnu-stat []: nothing -> bool {
+  let stat = (which stat | first | get -o path)
+  if $stat == null { return false }
+  # The Nix wrapper prepends the coreutils bin directory.
+  if $stat =~ '^/nix/store/[^/]+-coreutils-[^/]+/bin/stat$' { return true }
+  (^stat --version | complete).stdout | str starts-with "stat (GNU coreutils)"
+}
+
+def homebrew-gnubin []: nothing -> any {
+  let standard = (
+    [
+      "/opt/homebrew/opt/coreutils/libexec/gnubin"
+      "/usr/local/opt/coreutils/libexec/gnubin"
+    ]
+    | where {|dir| $dir | path exists }
+    | first
   )
-  if $prefix.exit_code == 0 and ($gnubin | path exists) {
+  if $standard != null { return $standard }
+  if (which brew | is-empty) { return null }
+
+  let prefix = (^brew --prefix coreutils | complete)
+  if $prefix.exit_code == 0 {
+    $prefix.stdout | str trim | path join "libexec/gnubin"
+  }
+}
+
+# Homebrew keeps the unprefixed GNU tools in gnubin.
+if $nu.os-info.name == "macos" and (not (has-gnu-stat)) {
+  let gnubin = (homebrew-gnubin)
+  if $gnubin != null and ($gnubin | path exists) {
     $env.PATH = ($env.PATH | prepend $gnubin)
   }
 }
 
 # Move, export, import, and retire assistant state recorded for project paths.
 #
-# Every plan is a dry run. Applied changes create a backup under
-# `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/`, unless `--no-backup` is given.
+# Move, import, and retire preview changes by default and write only with --apply.
+# Applied changes create a backup under `${XDG_STATE_HOME:-~/.local/state}/agent-project-move/`,
+# unless `--no-backup` is given.
 def main [...rest: string] {
   if ($rest | is-empty) {
     help main
@@ -105,12 +126,13 @@ def "main move" [
   old: string # Recorded project path, or a parent of it
   new: string # New project path
   --assistant (-a): string = $ALL_ASSISTANTS # Comma-separated assistants to move
+  --exact # Select exact-cwd sessions and their descendants
   --session-ids: string # Session IDs under <old>, with their descendants
   --apply # Write the planned changes
   --no-backup # Skip creating recovery backups
 ]: nothing -> nothing {
   let selected = (parse-assistants $assistant)
-  let ids = (selection-ids false $session_ids)
+  let ids = (selection-ids $exact $session_ids)
   # `<old>` keeps the given spelling, because matching is an exact case-sensitive string test.
   # `<new>` is canonicalized, so state records the spelling the working directory reports.
   let old = (normalize-path $old)
@@ -120,7 +142,7 @@ def "main move" [
   if not ($new | path exists) {
     print $"($new) does not exist. Move the directory first so sessions can resume there."
   }
-  let actions = (plan-move $selected $old $new --session-ids $ids)
+  let actions = (plan-move $selected $old $new --exact=$exact --session-ids $ids)
   apply-all $actions --apply=$apply --no-backup=$no_backup
 }
 
@@ -186,18 +208,6 @@ def "main export" [
   print $"Exported to ($dir)"
 }
 
-# Export OMP blobs listed as one SHA256 ID per line, without reading session state.
-def "main export-blobs" [
-  ids_file: string # Plain text file containing canonical blob IDs
-  dir: string # New or empty bundle directory
-]: nothing -> nothing {
-  require-empty-directory $dir
-  let bundle = (omp export-blobs $ids_file)
-  mkdir $dir
-  write-bundle $dir $bundle
-  print $"Exported to ($dir)"
-}
-
 # Retire selected session trees even when their project directory still exists.
 def "main retire" [
   path: string # Recorded project path, or a parent of selected sessions
@@ -244,7 +254,10 @@ def "main import" [
   if ($bundles | is-empty) {
     error make --unspanned {
       msg: $"No bundle found under ($dir) for ($selected | str join ', ')"
-      help: $"Pass the directory you gave to 'export'. It holds one subdirectory per assistant, such as ($dir)/claude/entries.json."
+      help: (
+        "Pass the directory you gave to 'export'."
+        + $" It holds one subdirectory per assistant, such as ($dir)/claude/entries.json."
+      )
     }
   }
 

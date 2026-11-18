@@ -5,7 +5,7 @@
 # ==================================================================================================
 
 use ./output.nu [plural print-table]
-use ./paths.nu [home-dir outermost-paths]
+use ./paths.nu [home-dir jsonl-stem outermost-paths path-map path-match]
 use ./rewrite.nu [file-uri json-escape rewrite-text]
 use ./sqlite.nu [path-condition run-sql sql-quote sqlite-rows]
 
@@ -261,6 +261,33 @@ export def merge-actions [
   $actions | append (action $assistant $store "rmdir" $source "remove emptied source directory")
 }
 
+export def session-move-targets [
+  rows: list<record>
+  old: string
+  new: string
+  encode: closure
+  --sidecars: list<string> = []
+]: nothing -> list<record> {
+  $rows
+  | each {|row|
+    let target = if (path-match $old $row.owner) {
+      let project = (path-map $old $new $row.owner)
+      $row.directory | path dirname | path join (do $encode $project) (
+        $row.file | path relative-to $row.directory
+      )
+    } else {
+      $row.file
+    }
+    {
+      store: ($row | get -o kind)
+      source_path: $row.file
+      target: $target
+      sidecars: $sidecars
+    }
+  }
+  | uniq
+}
+
 export def session-merge-actions [
   assistant: string
   store: string
@@ -270,8 +297,8 @@ export def session-merge-actions [
     $targets
     | each {|item|
       let item_store = ($item | get -o store | default $store)
-      let stem_source = ($item.source_path | str replace --regex '\.jsonl$' "")
-      let stem_target = ($item.target | str replace --regex '\.jsonl$' "")
+      let stem_source = ($item.source_path | jsonl-stem)
+      let stem_target = ($item.target | jsonl-stem)
       let base = [
         {
           store: $item_store
@@ -549,7 +576,10 @@ export def apply-all [actions: list<record>, --apply, --no-backup]: nothing -> n
       $"A backup goes to (backup-root) first."
     }
 
-    print $"Dry run: ($count) ($unit) planned, nothing written. Rerun with --apply to write the plan. ($backup)"
+    print (
+      $"Dry run: ($count) ($unit) planned, nothing written."
+      + $" Rerun with --apply to write the plan. ($backup)"
+    )
     return
   }
 

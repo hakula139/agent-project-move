@@ -4,97 +4,74 @@
 # Selected attachments in OMP's content-addressed blob store.
 # ==================================================================================================
 
-use ../lib/actions.nu [read-utf8 same-content]
+use ../lib/actions.nu [read-utf8]
 use ../lib/paths.nu [files-under valid-path]
-use ../lib/rewrite.nu [file-uri json-escape]
 
-const HASH = '^[a-f0-9]{64}$'
 const NAME = '^[a-f0-9]{64}(?:\.[a-z0-9][a-z0-9._-]{0,31})?$'
-const PROSE_ALIAS = (
-  '(?<![A-Za-z0-9_])(?<name>[a-f0-9]{64}\.[a-z0-9][a-z0-9._-]{0,31})(?![A-Za-z0-9_.-])'
-)
+# Match complete runs without lookaround, which can exhaust the backtracking limit on long lines.
+const REFERENCE = '(?<locator>\bblob:sha256:)?(?<id>[a-f0-9]{64,})'
 
-def pool-files [root: string]: nothing -> list<record> {
-  files-under $root
-  | where {|file| ($file | path dirname) == $root and ($file | path basename) =~ $NAME }
-  | each {|file|
-    let name = ($file | path basename)
-    {
-      id: ($name | str substring 0..<64)
-      name: $name
-      path: $file
-    }
+def blob-id [name: string]: nothing -> string {
+  $name | str substring 0..<64
+}
+
+def check-hash [file: string, id: string]: nothing -> nothing {
+  if (open --raw $file | hash sha256) != $id {
+    error make --unspanned {msg: $"OMP blob content does not match its ID ($id): ($file)"}
   }
 }
 
-# Read references in OMP's native JSONL spelling, including existing alias names in prose.
-export def references [files: list<string>, root: string]: nothing -> list<string> {
-  let aliases = (pool-files $root | get name | where {|name| $name !~ $HASH })
-  let roots = (
-    [$root (file-uri $root)]
-    | each {|path| json-escape $path | str escape-regex }
-    | str join "|"
+# Match known pool IDs anywhere in the journal. Explicit locators also detect missing blobs.
+export def export-files [journals: list<string>, root: string]: nothing -> list<record> {
+  let inventory = (
+    files-under $root
+    | where {|file| ($file | path dirname) == $root }
+    | path basename
+    | where {|name| $name =~ $NAME }
+    | group-by {|name| blob-id $name }
   )
-  let absolute = ('(?:' + $roots + ')/(?<id>[a-f0-9]{64})\b')
-  mut ids = []
-  for file in $files {
-    let text = (read-utf8 $file)
-    let native = ($text | parse --regex '\bblob:sha256:(?<id>[a-f0-9]{64})\b' | get id)
-    let paths = ($text | parse --regex $absolute | get id)
-    let names = (
-      $text
-      | parse --regex $PROSE_ALIAS
-      | get name
-      | each {|name|
-        if $name in $aliases { $name } else { $name | str trim --right --char "." }
-      }
-      | where {|name| $name in $aliases }
-      | each {|name| $name | str substring 0..<64 }
-    )
-    $ids = ($ids ++ $native ++ $paths ++ $names)
-  }
-  $ids | uniq | sort
-}
-
-def content-hash [file: string]: nothing -> string {
-  ^sha256sum --zero -- $file | split row " " | first
-}
-
-# Resolve selected IDs to verified canonical files and every safe alias in the local pool.
-export def resolve-files [ids: list<string>, root: string]: nothing -> list<record> {
-  for id in $ids {
-    if $id !~ $HASH {
-      error make --unspanned {msg: "Invalid OMP blob ID"}
+  let ids = (
+    $journals
+    | each {|file|
+      read-utf8 $file
+      | parse --regex $REFERENCE
+      | where {|ref| ($ref.id | str length) == 64 }
+      | where {|ref| $ref.locator != null or ($inventory | get -o $ref.id) != null }
+      | get id
     }
-  }
-  let inventory = (pool-files $root)
-  mut files = []
-  for id in ($ids | uniq | sort) {
-    let canonical = ($root | path join $id)
-    if not ($inventory | any {|file| $file.name == $id }) {
+    | flatten
+    | uniq
+    | sort
+  )
+
+  $ids
+  | each {|id|
+    let names = ($inventory | get -o $id | default [])
+    if $id not-in $names {
       error make --unspanned {msg: $"Missing canonical OMP blob ($id)"}
     }
-    if (content-hash $canonical) != $id {
-      error make --unspanned {msg: $"OMP blob content does not match its ID ($id)"}
-    }
-    for file in ($inventory | where id == $id | sort-by name) {
-      if not (same-content $canonical $file.path) {
-        error make --unspanned {msg: $"OMP blob alias differs from its canonical file ($file.name)"}
-      }
-      $files = ($files | append {
+    $names
+    | sort
+    | each {|name|
+      let source = ($root | path join $name)
+      check-hash $source $id
+      {
         kind: "blobs"
         project: ""
-        name: $file.name
-        source: $file.path
-      })
+        name: $name
+        source: $source
+      }
     }
   }
-  $files
+  | collect
+  | flatten
 }
 
 # Validate external blob descriptors and bytes before any import action is applied.
-export def verify-files [files: list<record>]: nothing -> nothing {
-  let blobs = ($files | where kind == "blobs")
+export def import-roots [bundle: record]: nothing -> list<string> {
+  let blobs = ($bundle.files | where kind == "blobs")
+  if ($blobs | is-empty) { return [] }
+
   let names = ($blobs | get name)
   if ($names | uniq | length) != ($names | length) {
     error make --unspanned {msg: "Duplicate OMP blob filename in bundle"}
@@ -103,19 +80,31 @@ export def verify-files [files: list<record>]: nothing -> nothing {
     if $file.name !~ $NAME or $file.project != "" {
       error make --unspanned {msg: "Invalid OMP blob descriptor"}
     }
-    let origin = ($file | get -o origin_path)
-    if not (valid-path $origin) {
-      error make --unspanned {msg: "Invalid OMP blob origin path"}
-    }
-    if ($origin | path basename) != $file.name or ($origin | path dirname) == "/" {
-      error make --unspanned {msg: "Invalid OMP blob origin path"}
-    }
-    let id = ($file.name | str substring 0..<64)
+    let id = (blob-id $file.name)
     if $id not-in $names {
       error make --unspanned {msg: $"Missing canonical OMP blob ($id) in bundle"}
     }
-    if (content-hash $file.bundle) != $id {
-      error make --unspanned {msg: $"OMP blob content does not match its ID ($id)"}
-    }
+    check-hash $file.bundle $id
   }
+
+  let roots = if "blob_root" in $bundle {
+    [$bundle.blob_root]
+  } else {
+    # Older bundles recorded the source path on each blob entry.
+    $blobs
+    | each {|file|
+      let origin = ($file | get -o origin_path)
+      if not (valid-path $origin) or ($origin | path basename) != $file.name {
+        error make --unspanned {msg: "Invalid OMP blob origin path"}
+      }
+      $origin | path dirname
+    }
+    | collect
+    | uniq
+  }
+
+  if not ($roots | all {|root| (valid-path $root) and $root != "/" }) {
+    error make --unspanned {msg: "Invalid OMP blob root"}
+  }
+  $roots
 }

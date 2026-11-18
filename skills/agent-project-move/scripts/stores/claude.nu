@@ -11,18 +11,20 @@ use ../lib/actions.nu [
   merge-actions
   same-content
   session-merge-actions
+  session-move-targets
 ]
 use ../lib/paths.nu [
   files-under
   glob-under
   home-dir
+  jsonl-stem
   outermost-paths
   path-map
   path-match
   valid-path
 ]
 use ../lib/rewrite.nu [files-with-path json-value rewrite-text rg-lines]
-use ../lib/selection.nu [select-sessions]
+use ../lib/selection.nu [scan-sessions select-sessions]
 
 const ENCODED_MAX = 200
 const TRANSCRIPT_NAME = '^(?:[^/]+|[^/]+/subagents/agent-[^/]+)\.jsonl$'
@@ -48,15 +50,6 @@ def project-dirs []: nothing -> list<string> {
   | where type == "dir"
   | get name
   | sort
-}
-
-def file-mtime [file: string]: nothing -> datetime {
-  (^stat
-    -L
-    -c "%Y"
-    -- $file)
-  | str trim
-  | into datetime --format "%s"
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -185,7 +178,7 @@ def config-paths []: nothing -> list<string> {
 }
 
 def subagent-parent [file: string, fallback: string]: nothing -> string {
-  let meta_file = ($file | str replace --regex '\.jsonl$' ".meta.json")
+  let meta_file = $"($file | jsonl-stem).meta.json"
   if not ($meta_file | path exists) or ($meta_file | path type) != "file" {
     return $fallback
   }
@@ -208,7 +201,7 @@ def subagent-parent [file: string, fallback: string]: nothing -> string {
 }
 
 def session-sidecars [file: string]: nothing -> list<string> {
-  let meta = ($file | str replace --regex '\.jsonl$' ".meta.json")
+  let meta = $"($file | jsonl-stem).meta.json"
   if ($meta | path exists) and ($meta | path type) == "file" {
     [$meta]
   } else {
@@ -254,7 +247,7 @@ def session-records [owner_hint?: string]: nothing -> list<record> {
       let id = (
         $file
         | path basename
-        | str replace --regex '\.jsonl$' ""
+        | jsonl-stem
         | str replace --regex "^agent-" ""
       )
 
@@ -293,27 +286,13 @@ def session-records [owner_hint?: string]: nothing -> list<record> {
 }
 
 export def scan []: nothing -> list<record> {
-  session-records
-  | where {|record| valid-path $record.cwd }
-  | group-by cwd
-  | transpose cwd items
-  | each {|group|
-    let files = ($group.items | get file | uniq)
-    let timestamps = ($files | each {|file| file-mtime $file } | sort)
-    {
-      assistant: "claude"
-      path: $group.cwd
-      sessions: ($files | length)
-      last_used: ($timestamps | last)
-    }
-  }
-  | sort-by path
+  session-records | scan-sessions "claude"
 }
 
 def session-project-files [records: list<record>]: nothing -> list<record> {
   $records
   | each {|record|
-    let subtree = ($record.file | str replace --regex '\.jsonl$' "")
+    let subtree = ($record.file | jsonl-stem)
     [$record.file] ++ (session-sidecars $record.file) ++ (files-under $subtree)
     | each {|file|
       {
@@ -334,71 +313,49 @@ def session-project-files [records: list<record>]: nothing -> list<record> {
 export def plan-move [
   old: string
   new: string
+  --exact
   --session-ids: list<string> = []
 ]: nothing -> list<record> {
   let inventory = (session-records $old)
-  if ($session_ids | is-not-empty) {
-    let selected = (select-sessions $inventory $old --session-ids $session_ids)
-    let unknown = ($selected | where owner == null | first)
-    if $unknown != null {
-      error make --unspanned {msg: $"Cannot locate the project owner of ($unknown.file)"}
-    }
-    let targets = (
-      $selected
-      | where {|row| path-match $old $row.owner }
-      | each {|row|
-        let directory = (projects-dir | path join (encode-path (path-map $old $new $row.owner)))
-        {
-          source_path: $row.file
-          target: ($directory | path join ($row.file | path relative-to $row.directory))
-          sidecars: [".meta.json"]
-        }
-      }
-      | uniq
-    )
-    let rewrite = {|content| rewrite-text $content $old $new }
-    let edits = (
-      $selected
-      | get -o file
-      | uniq
-      | files-with-path $old $in --glob ["*.jsonl"]
-      | each {|file| edit-action "claude" "projects" $file $rewrite "rewrite paths" }
-    )
-    return ($edits ++ (session-merge-actions "claude" "projects" $targets))
+  let selective = $exact or ($session_ids | is-not-empty)
+  let rows = if $selective {
+    select-sessions $inventory $old --exact=$exact --session-ids $session_ids
+  } else {
+    $inventory
   }
   let unknown = (
-    $inventory
-    | where {|record| $record.owner == null and (path-match $old $record.cwd) }
+    $rows
+    | where {|row| $row.owner == null and ($selective or (path-match $old $row.cwd)) }
     | first
   )
   if $unknown != null {
     error make --unspanned {msg: $"Cannot locate the project owner of ($unknown.file)"}
   }
-  let selected = (
-    $inventory
-    | where {|record| $record.owner != null and (path-match $old $record.owner) }
-    | select directory owner
-    | uniq
-  )
   let rewrite = {|content| rewrite-text $content $old $new }
-  let project_files = (
-    $inventory
+  let edits = (
+    $rows
     | get -o file
     | uniq
     | files-with-path $old $in --glob ["*.jsonl"]
-  )
-  mut actions = (
-    $project_files
     | each {|file| edit-action "claude" "projects" $file $rewrite "rewrite paths" }
   )
 
-  for item in $selected {
-    let target = (projects-dir | path join (encode-path (path-map $old $new $item.owner)))
-    $actions = ($actions ++ (
+  let moves = if $selective {
+    let encode = {|path| encode-path $path }
+    let targets = (session-move-targets $rows $old $new $encode --sidecars [".meta.json"])
+    session-merge-actions "claude" "projects" $targets
+  } else {
+    $rows
+    | where {|row| path-match $old $row.owner }
+    | select directory owner
+    | uniq
+    | each {|item|
+      let target = (projects-dir | path join (encode-path (path-map $old $new $item.owner)))
       merge-actions "claude" "projects" $item.directory $target "merge project directory"
-    ))
+    }
+    | flatten
   }
-  $actions
+  $edits ++ $moves
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -420,7 +377,7 @@ def session-deletions [records: list<record>]: nothing -> list<record> {
 
   let subtrees = (
     $files
-    | each {|file| $file | str replace --regex '\.jsonl$' "" }
+    | each {|file| $file | jsonl-stem }
     | where {|path| $path | path exists }
   )
 
@@ -515,7 +472,7 @@ def imported-elsewhere [projects: list<string>, file: record]: nothing -> bool {
 }
 
 def owns-project-entry [transcript: string, entry: string]: nothing -> bool {
-  let stem = ($transcript | str replace --regex '\.jsonl$' "")
+  let stem = ($transcript | jsonl-stem)
   (
     $entry == $transcript
     or $entry == $"($stem).meta.json"
@@ -607,7 +564,10 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
       if (matches-import $file $target) { return null }
       error make --unspanned {
         msg: $"($target) already exists with content that differs from the bundle's copy"
-        help: "Compare the two files. Delete or rename the local file if the bundle's copy should win, then rerun the import."
+        help: (
+          "Compare the two files. If you want the bundle's copy, remove or rename the local file."
+          + " Then rerun the import."
+        )
       }
     }
     let description = "import session file"

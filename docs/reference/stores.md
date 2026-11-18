@@ -16,7 +16,9 @@ Root: `$CODEX_HOME`, defaulting to `~/.codex`. The active database is the highes
 
 Moves rewrite thread cwds, JSON sandbox paths, and rollouts in `sessions/` and `archived_sessions/`, including `.zst`. Rewritten rollouts lose their `thread_history_<N>.sqlite` projections until resume, after `codex unarchive` for archived threads. Previews remain empty until then.
 
-Selection follows spawn relationships. Selected moves and exports require existing canonical rollout files, and selected moves preserve project metadata and spawn relationships. Export preserves incoming parent identities. Retirement removes project metadata only when unreferenced.
+Selection follows spawn relationships. Selected moves and exports require existing canonical rollout files, and selected moves preserve project metadata and spawn relationships. Retirement removes project metadata only when unreferenced.
+
+Export carries incoming spawn edges and `guardian_review_feedback` records for selected threads when those tables exist. Feedback retains its binary payload. Importing these rows requires the same SQLite text encoding on both hosts (UTF-8 by default). A matching edge or feedback key at the destination requires identical values in every carried column, even if the thread already exists.
 
 Export carries `project_roots` when available. Existing project IDs require identical ordered roots after mapping. Other project metadata and logical `agent_path` identities stay unchanged.
 

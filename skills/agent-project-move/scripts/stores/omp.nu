@@ -12,17 +12,19 @@ use ../lib/actions.nu [
   read-utf8
   same-content
   session-merge-actions
+  session-move-targets
 ]
 use ../lib/paths.nu [
   files-under
   home-dir
+  jsonl-stem
   outermost-paths
   path-map
   path-match
   valid-path
 ]
 use ../lib/rewrite.nu [files-with-path rewrite-text]
-use ../lib/selection.nu [select-sessions]
+use ../lib/selection.nu [scan-sessions select-sessions]
 use ./omp-blobs.nu
 
 # --------------------------------------------------------------------------------------------------
@@ -152,7 +154,7 @@ def session-records []: nothing -> list<record> {
       | where {|candidate|
         (
           $candidate.file != $file
-          and (path-match ($candidate.file | str replace --regex '\.jsonl$' "") $file)
+          and (path-match ($candidate.file | jsonl-stem) $file)
         )
       }
       | sort-by {|candidate| $candidate.file | str length }
@@ -179,31 +181,7 @@ def session-records []: nothing -> list<record> {
 }
 
 export def scan []: nothing -> list<record> {
-  let records = (session-records)
-  let paths = (
-    $records
-    | get -o cwd
-    | where {|path| valid-path $path }
-    | uniq
-  )
-
-  $paths
-  | each {|path|
-    let files = ($records | where cwd == $path | get file | uniq)
-    let last_used = (
-      ls ...$files
-      | get modified
-      | math max
-    )
-
-    {
-      assistant: "omp"
-      path: $path
-      sessions: ($files | length)
-      last_used: $last_used
-    }
-  }
-  | sort-by path
+  session-records | scan-sessions "omp"
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -345,31 +323,16 @@ def session-actions [
 export def plan-move [
   old: string
   new: string
+  --exact
   --session-ids: list<string> = []
 ]: nothing -> list<record> {
   let records = (session-records)
-  if ($session_ids | is-not-empty) {
-    let selected = (select-sessions $records $old --session-ids $session_ids)
-    let targets = (
-      $selected
-      | each {|row|
-        let directory = if (path-match $old $row.owner) {
-          let project = (path-map $old $new $row.owner)
-          $row.directory | path dirname | path join (session-encode-here $project)
-        } else {
-          $row.directory
-        }
-        {
-          store: $row.kind
-          source_path: $row.file
-          target: ($directory | path join ($row.file | path relative-to $row.directory))
-        }
-      }
-      | uniq
-    )
+  if $exact or ($session_ids | is-not-empty) {
+    let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
+    let targets = (session-move-targets $selected $old $new {|path| session-encode-here $path })
     let edits = (
-      $selected
-      | each {|row| journal-edit-action $row.kind $row.file $targets $old $new }
+      $targets
+      | each {|row| journal-edit-action $row.store $row.source_path $targets $old $new }
       | compact
     )
     return ($edits ++ (session-merge-actions "omp" "sessions" $targets))
@@ -401,7 +364,7 @@ export def plan-retire [
 
   let subtrees = (
     $session_files
-    | each {|file| $file | str replace --regex '\.jsonl$' "" }
+    | each {|file| $file | jsonl-stem }
     | where {|path| $path | path exists }
   )
 
@@ -414,20 +377,6 @@ export def plan-retire [
 # Transfer
 # --------------------------------------------------------------------------------------------------
 
-# Export canonical blobs and their aliases from a plain ID list.
-export def export-blobs [ids_file: string]: nothing -> record {
-  let ids = (open --raw $ids_file | lines | str trim | where {|id| $id != "" } | uniq)
-  if ($ids | is-empty) {
-    error make --unspanned {msg: "The blob ID file is empty"}
-  }
-  {
-    assistant: "omp"
-    old: (blob-root)
-    files: (omp-blobs resolve-files $ids (blob-root))
-    tables: []
-  }
-}
-
 export def export-bundle [
   old: string
   --exact
@@ -437,7 +386,7 @@ export def export-bundle [
   let selected = (select-sessions $records $old --exact=$exact --session-ids $session_ids)
   mut files = []
   for row in $selected {
-    let subtree = ($row.file | str replace --regex '\.jsonl$' "")
+    let subtree = ($row.file | jsonl-stem)
     for file in ([$row.file] ++ (files-under $subtree)) {
       let header = (session-header $file)
       $files = ($files | append {
@@ -456,12 +405,13 @@ export def export-bundle [
     | where {|file| $file | str ends-with ".jsonl" }
     | uniq
   )
-  let ids = (omp-blobs references $journals (blob-root))
-  $files = (($files | uniq) ++ (omp-blobs resolve-files $ids (blob-root)))
+  let pool = (blob-root)
+  $files = (($files | uniq) ++ (omp-blobs export-files $journals $pool))
 
   {
     assistant: "omp"
     old: $old
+    blob_root: $pool
     files: $files
     tables: []
   }
@@ -472,7 +422,7 @@ def artifact-target [file: record, targets: list<record>]: nothing -> string {
   let owner = (
     $targets
     | where {|candidate|
-      let stem = ($candidate.name | str replace --regex '\.jsonl$' "")
+      let stem = ($candidate.name | jsonl-stem)
       (
         $candidate.header != null and $candidate.kind == $file.kind
         and $candidate.project == $file.project
@@ -484,8 +434,8 @@ def artifact-target [file: record, targets: list<record>]: nothing -> string {
   )
 
   if $owner == null { return $file.target }
-  let source = ($owner.name | str replace --regex '\.jsonl$' "")
-  let target = (artifact-target $owner $targets | str replace --regex '\.jsonl$' "")
+  let source = ($owner.name | jsonl-stem)
+  let target = (artifact-target $owner $targets | jsonl-stem)
   path-map $source $target $file.name
 }
 
@@ -506,15 +456,8 @@ def mapped-parent [file: record, targets: list<record>, --remap]: nothing -> any
 }
 
 export def plan-import [bundle: record, --target: string]: nothing -> list<record> {
-  omp-blobs verify-files $bundle.files
+  let blob_roots = (omp-blobs import-roots $bundle)
   let destination = $target
-  let blob_roots = (
-    $bundle.files
-    | where kind == "blobs"
-    | get -o origin_path
-    | each {|path| $path | path dirname }
-    | uniq
-  )
   let rewritten = if $destination == null {
     []
   } else {
@@ -526,7 +469,7 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
     files-with-path $bundle.old $sources
   }
 
-  let blob_sources = (
+  let journals = (
     $bundle.files
     | where {|file|
       (
@@ -535,13 +478,12 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
       )
     }
     | get -o bundle
-    | where {|file|
-      let raw = (open --raw $file)
-      (
-        (($raw | describe) == "string")
-        and ($blob_roots | any {|root| (files-with-path $root [$file]) | is-not-empty })
-      )
-    }
+  )
+  let blob_sources = (
+    $blob_roots
+    | each {|root| files-with-path $root $journals }
+    | flatten
+    | uniq
   )
   let local_inventory = (session-records)
 
@@ -597,14 +539,16 @@ export def plan-import [bundle: record, --target: string]: nothing -> list<recor
 
   for file in $targets {
     let parent = (mapped-parent $file $targets --remap=($destination != null))
-    let blob_rewrite = $file.bundle in $blob_sources
-    let content = if $file.header != null or $file.bundle in $rewritten or $blob_rewrite {
+    let content = if (
+      $file.header != null or $file.bundle in $rewritten or $file.bundle in $blob_sources
+    ) {
       open --raw $file.bundle
     } else {
       null
     }
 
     let rewrite = $file.bundle in $rewritten and ($content | describe) == "string"
+    let blob_rewrite = $file.bundle in $blob_sources and ($content | describe) == "string"
     let transform = if not $rewrite and not $blob_rewrite and $parent == null {
       null
 

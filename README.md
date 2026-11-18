@@ -46,7 +46,7 @@ ln -s "$skill_dir" ~/.claude/skills/agent-project-move
 | `~/.agents/skills`                                          | Codex, OMP       |
 | `~/.claude/skills`, or `$CLAUDE_CONFIG_DIR/skills` when set | Claude Code, OMP |
 
-Link the whole skill directory, never `SKILL.md` alone, because Codex skips a `SKILL.md` that is itself a symlink. `git pull` updates the clone, and `git checkout vX.Y.Z` pins a release.
+Link the whole skill directory because Codex skips a `SKILL.md` that is itself a symlink. `git pull` updates the clone, and `git checkout vX.Y.Z` pins a release.
 
 Alternatively, use a skill installer:
 
