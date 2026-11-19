@@ -1,0 +1,27 @@
+name: Pin trial
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Nix
+        uses: hakula139/devkit/.github/actions/setup-nix@v3
+        with:
+          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Pin package
+        uses: hakula139/devkit/.github/actions/cachix-pin@feat/cachix-pin-action
+        with:
+          pins: '{"devkit-trial-agent-project-move": ".#agent-project-move"}'
